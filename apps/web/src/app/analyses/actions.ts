@@ -14,9 +14,16 @@ import {
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
 import { attempt, invalid, run, text } from "@/lib/actions";
+import { isOneOf, PROJECTION_MODES } from "@/lib/labels";
 
 const page = (analysisId: string, scenarioId?: string) =>
   `/analyses/${analysisId}${scenarioId ? `?scenario=${scenarioId}` : ""}`;
+
+function projectionMode(value: string) {
+  if (!isOneOf(PROJECTION_MODES, value))
+    throw invalid(`"${value}" isn't a projection mode.`);
+  return value;
+}
 
 // New analyses use the model's latest published version.
 export async function createAnalysisAction(
@@ -34,6 +41,7 @@ export async function createAnalysisAction(
       entityId: text(form, "entityId"),
       financialModelVersionId: version.id,
       name: text(form, "name"),
+      projectionMode: projectionMode(text(form, "projectionMode")),
       projectionYears: Number(text(form, "projectionYears") || 0),
     });
   });
@@ -43,7 +51,12 @@ export async function createAnalysisAction(
 
 export async function updateAnalysisAction(
   analysisId: string,
-  patch: { name?: string; periodIds?: string[]; projectionYears?: number },
+  patch: {
+    name?: string;
+    periodIds?: string[];
+    projectionMode?: string;
+    projectionYears?: number;
+  },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
     if (patch.periodIds !== undefined && !Array.isArray(patch.periodIds))
@@ -51,6 +64,10 @@ export async function updateAnalysisAction(
     return updateAnalysis(db, ctx, analysisId, {
       name: patch.name === undefined ? undefined : String(patch.name),
       periodIds: patch.periodIds?.map(String),
+      projectionMode:
+        patch.projectionMode === undefined
+          ? undefined
+          : projectionMode(String(patch.projectionMode)),
       projectionYears:
         patch.projectionYears === undefined
           ? undefined

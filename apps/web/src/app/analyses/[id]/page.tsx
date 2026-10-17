@@ -97,8 +97,10 @@ async function AnalysisView({ params, searchParams }: Props) {
           id: p.id,
           periodEnd: p.periodEnd,
           months: p.months,
+          projected: p.quality === "projected",
         }))}
         selected={analysis.periodIds}
+        projectionMode={analysis.projectionMode}
         projectionYears={analysis.projectionYears}
       />
 

@@ -366,6 +366,15 @@ export const financialModelLines = pgTable(
 // over chosen periods plus projected years, with scenarios that override
 // assumptions. Pinning keeps a credit file reproducible after later versions.
 
+// Where projected years come from. assumptions: computed by the model's
+// projection formulas for a number of years after the last actual period.
+// client: the borrower's own projections, spread as periods of quality
+// "projected" and read like any other period.
+export const projectionMode = pgEnum("projection_mode", [
+  "assumptions",
+  "client",
+]);
+
 export const analyses = pgTable(
   "analyses",
   {
@@ -386,6 +395,8 @@ export const analyses = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::uuid[]`),
+    projectionMode: projectionMode().notNull().default("assumptions"),
+    // Years computed from assumptions; unused with the client's projections.
     projectionYears: integer().notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

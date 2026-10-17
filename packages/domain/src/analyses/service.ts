@@ -112,9 +112,25 @@ async function publishedVersion(db: Db, ctx: Context, versionId: string) {
   return row;
 }
 
-function checkSettings(input: { name?: string; projectionYears?: number }) {
+export type ProjectionMode = Analysis["projectionMode"];
+const PROJECTION_MODES: ProjectionMode[] = ["assumptions", "client"];
+
+function checkSettings(input: {
+  name?: string;
+  projectionMode?: ProjectionMode;
+  projectionYears?: number;
+}) {
   if (input.name !== undefined && !input.name.trim()) {
     throw new DomainError("invalid", "Give the analysis a name.");
+  }
+  if (
+    input.projectionMode !== undefined &&
+    !PROJECTION_MODES.includes(input.projectionMode)
+  ) {
+    throw new DomainError(
+      "invalid",
+      `"${input.projectionMode}" isn't a projection mode.`,
+    );
   }
   const years = input.projectionYears;
   if (
@@ -154,6 +170,7 @@ export interface AnalysisInput {
   financialModelVersionId: string;
   name: string;
   periodIds?: string[];
+  projectionMode?: ProjectionMode;
   projectionYears?: number;
 }
 
@@ -192,6 +209,7 @@ export async function createAnalysis(
       financialModelVersionId: input.financialModelVersionId,
       name: input.name.trim(),
       periodIds,
+      projectionMode: input.projectionMode,
       projectionYears: input.projectionYears ?? 0,
     })
     .returning();
@@ -202,7 +220,12 @@ export async function updateAnalysis(
   db: Db,
   ctx: Context,
   analysisId: string,
-  patch: { name?: string; periodIds?: string[]; projectionYears?: number },
+  patch: {
+    name?: string;
+    periodIds?: string[];
+    projectionMode?: ProjectionMode;
+    projectionYears?: number;
+  },
 ): Promise<Analysis> {
   const analysis = await findAnalysis(db, ctx, analysisId);
   checkSettings(patch);
@@ -213,6 +236,7 @@ export async function updateAnalysis(
     .set({
       name: patch.name?.trim(),
       periodIds,
+      projectionMode: patch.projectionMode,
       projectionYears: patch.projectionYears,
     })
     .where(eq(analyses.id, analysisId))
@@ -404,9 +428,14 @@ export async function runAnalysis(
     getSpread(db, ctx, detail.entity.id),
     listItems(db, ctx, detail.version.scoringModelVersionId),
   ]);
-  const chosen = new Set(detail.analysis.periodIds);
+  const { periodIds, projectionMode, projectionYears } = detail.analysis;
+  const chosen = new Set(periodIds);
+  const client = projectionMode === "client";
+  // Projections come either from the client, as spread periods, or from the
+  // model's assumptions, never both.
   const periods = spread.periods
     .filter((p) => !chosen.size || chosen.has(p.id))
+    .filter((p) => client || p.quality !== "projected")
     .map((p) => ({
       key: p.id,
       end: p.periodEnd,
@@ -418,7 +447,7 @@ export async function runAnalysis(
   const run = (overrides: Record<string, string>) =>
     runModel({
       periods,
-      projectionYears: detail.analysis.projectionYears,
+      projectionYears: client ? 0 : projectionYears,
       lines: detail.lines,
       overrides,
       items: items
@@ -456,6 +485,7 @@ export async function repinAnalysis(
       financialModelVersionId: detail.newerVersion!.id,
       name: `${detail.analysis.name} (v${detail.newerVersion!.number})`,
       periodIds: detail.analysis.periodIds,
+      projectionMode: detail.analysis.projectionMode,
       projectionYears: detail.analysis.projectionYears,
     });
     for (const scenario of detail.scenarios) {

@@ -81,3 +81,9 @@ export const QUALITY_SHORT: Record<keyof typeof QUALITIES, string> = {
   internal: "Internal",
   projected: "Projected",
 };
+
+// Where an analysis's projected years come from.
+export const PROJECTION_MODES: Record<"assumptions" | "client", string> = {
+  assumptions: "From assumptions",
+  client: "Client's projections",
+};

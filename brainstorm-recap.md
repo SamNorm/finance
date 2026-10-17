@@ -117,6 +117,9 @@ Each financial model version contains:
 - **Statements:** values per entity and per period, keyed by input item code. They are stored once at the input layer, so every financial model reads the same data. Enter once, and every model fills.
 - **Analysis:** an entity, a financial model version, a set of periods and a set of scenarios. It is pinned and reproducible; this is what goes into a credit file.
 - **Scenario:** overrides of model assumptions within an analysis, e.g. revenue −15%.
+- **Projections** come from one of two places, chosen per analysis:
+  - **From assumptions:** the model's projection formulas compute a number of years after the last actual period.
+  - **The client's projections:** spread like any statement, as periods of quality "projected", and read with the model's regular formulas. `PROJECTED()` is true in both.
 
 ### 5.6 Data entry
 

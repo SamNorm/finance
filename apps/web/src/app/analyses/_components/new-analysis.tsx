@@ -2,9 +2,12 @@
 
 import { useActionState, useState } from "react";
 import { button, input } from "@/components/styles";
-import { Field, Icon, keepFields, Modal } from "@/components/ui";
+import { Field, Icon, keepFields, Modal, Segmented } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
+import { PROJECTION_MODES } from "@/lib/labels";
 import { createAnalysisAction } from "../actions";
+
+type ProjectionMode = keyof typeof PROJECTION_MODES;
 
 export function NewAnalysis({
   borrowers,
@@ -16,6 +19,8 @@ export function NewAnalysis({
     id: string;
     name: string;
     periods: number;
+    // Periods of the client's own projections.
+    projected: number;
     scoringModelId: string;
   }[];
   models: {
@@ -37,6 +42,10 @@ export function NewAnalysis({
   )?.scoringModelId;
   const eligible = models.filter((m) => m.scoringModelId === scoringModelId);
   const [chosenModel, setModel] = useState<string | null>(null);
+  // The client's projections when the borrower has some, unless changed.
+  const projected = borrowers.find((b) => b.id === borrower)?.projected ?? 0;
+  const [chosenMode, setMode] = useState<ProjectionMode | null>(null);
+  const mode = chosenMode ?? (projected ? "client" : "assumptions");
   const model = eligible.some((m) => m.id === chosenModel)
     ? chosenModel!
     : (eligible[0]?.id ?? "");
@@ -118,18 +127,40 @@ export function NewAnalysis({
                 className={input}
               />
             </Field>
-            <Field
-              label="Projected years"
-              hint="Years after the last period, computed with projection formulas."
-            >
-              <select name="projectionYears" defaultValue="0" className={input}>
-                {[0, 1, 2, 3, 4, 5].map((n) => (
-                  <option key={n} value={n}>
-                    {n === 0 ? "None" : n}
-                  </option>
-                ))}
-              </select>
+            <Field label="Projections" group>
+              <Segmented
+                name="projectionMode"
+                options={PROJECTION_MODES}
+                value={mode}
+                onChange={setMode}
+              />
             </Field>
+            {mode === "assumptions" ? (
+              <Field
+                label="Projected years"
+                hint="Years after the last actual period, computed with the model's projection formulas and assumptions."
+              >
+                <select
+                  name="projectionYears"
+                  defaultValue="0"
+                  className={input}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n === 0 ? "None" : n}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+              <p
+                className={`text-sm ${projected ? "text-muted" : "text-warning"}`}
+              >
+                {projected
+                  ? `Reads the client's ${projected} projected ${projected === 1 ? "period" : "periods"} from the spread, with the model's regular formulas.`
+                  : "This borrower has no projected periods yet. Spread the client's projections on the borrower's page with the quality Projected."}
+              </p>
+            )}
             {state && !state.ok && (
               <p className="text-sm text-danger">{state.message}</p>
             )}

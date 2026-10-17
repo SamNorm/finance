@@ -185,7 +185,7 @@ function LineForm({
             <IssueList issues={lineIssues} />
           </div>
         )}
-        <Field label="Kind">
+        <Field label="Kind" group>
           <Segmented
             name="kind"
             options={LINE_KINDS}

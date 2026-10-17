@@ -4,6 +4,7 @@ import {
   isError,
   isNumber,
   shiftYear,
+  type Projection,
   type Value,
 } from "@finance/engine";
 import { assumptionValue } from "../financial-models/validate";
@@ -19,7 +20,8 @@ export interface RunPeriod {
   end: string;
   months: number;
   quality: StatementQuality;
-  projected: boolean;
+  // Null for actuals; how the period is projected otherwise.
+  projection: Projection | null;
 }
 
 // A value as text: decimals in full, "true"/"false" for flags, or an error.
@@ -55,7 +57,8 @@ export interface AnalysisRun {
 }
 
 export interface RunInput {
-  // Historical periods, oldest first, with their figures.
+  // Spread periods, oldest first, with their figures. Periods of quality
+  // "projected" are the client's projections.
   periods: {
     key: string;
     end: string;
@@ -64,6 +67,7 @@ export interface RunInput {
     entered: Record<string, string>;
     summed: Record<string, string>;
   }[];
+  // Years computed from assumptions after the last period.
   projectionYears: number;
   lines: readonly ModelLine[];
   overrides: Record<string, string>;
@@ -88,7 +92,7 @@ export function runModel(input: RunInput): AnalysisRun {
       end,
       months,
       quality,
-      projected: false,
+      projection: quality === "projected" ? ("client" as const) : null,
     })),
     ...(last
       ? Array.from({ length: input.projectionYears }, (_, i) => ({
@@ -96,7 +100,7 @@ export function runModel(input: RunInput): AnalysisRun {
           end: shiftYear(last.end, i + 1),
           months: 12,
           quality: "projected" as const,
-          projected: true,
+          projection: "assumptions" as const,
         }))
       : []),
   ];
@@ -118,11 +122,11 @@ export function runModel(input: RunInput): AnalysisRun {
   }
 
   const evaluation = evaluateModel({
-    periods: periods.map(({ key, end, months, projected }) => ({
+    periods: periods.map(({ key, end, months, projection }) => ({
       key,
       end,
       months,
-      projected,
+      projection: projection ?? undefined,
     })),
     calculations: input.lines
       .filter((line) => line.kind === "calculation")

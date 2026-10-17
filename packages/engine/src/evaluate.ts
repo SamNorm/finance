@@ -20,13 +20,19 @@ export interface Period {
   // ISO date, e.g. "2024-12-31".
   end: string;
   months: number;
-  projected?: boolean;
+  // A future period, where PROJECTED() is TRUE. "assumptions": computed from
+  // the model's assumptions, so projection formulas apply. "client": the
+  // borrower's own projection, entered as figures and read like any period.
+  projection?: Projection;
 }
+
+export type Projection = "assumptions" | "client";
 
 export interface Calculation {
   code: string;
   formula: string | null;
-  // Used instead of `formula` in projected periods, when present.
+  // Used instead of `formula` in periods projected from assumptions, when
+  // present.
   projectionFormula?: string | null;
 }
 
@@ -114,7 +120,7 @@ export function evaluateModel(run: ModelRun): Evaluation {
     const known = memo.get(key);
     if (known) return known;
     const compiled =
-      run.periods[p]?.projected && source.projection
+      run.periods[p]?.projection === "assumptions" && source.projection
         ? source.projection
         : source.formula;
     if (active.has(key)) {
@@ -316,7 +322,7 @@ export function evaluateModel(run: ModelRun): Evaluation {
       case "YEAR":
         return new Dec(period.end.slice(0, 4));
       case "PROJECTED":
-        return period.projected === true;
+        return period.projection !== undefined;
     }
     return new FormulaError("#NAME?", `Unknown function ${node.name}.`);
   }

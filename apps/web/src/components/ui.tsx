@@ -77,21 +77,32 @@ export function Modal({
   );
 }
 
+// A labeled field. `group` is for controls with labels of their own, such as
+// Segmented, which can't sit inside another label.
 export function Field({
   label,
   hint,
+  group = false,
   children,
 }: {
   label: string;
   hint?: ReactNode;
+  group?: boolean;
   children: ReactNode;
 }) {
-  return (
-    <label className="flex flex-col gap-1.5">
+  const content = (
+    <>
       <span className="text-xs font-medium text-muted">{label}</span>
       {children}
       {hint && <span className="text-xs text-muted">{hint}</span>}
-    </label>
+    </>
+  );
+  return group ? (
+    <div role="group" aria-label={label} className="flex flex-col gap-1.5">
+      {content}
+    </div>
+  ) : (
+    <label className="flex flex-col gap-1.5">{content}</label>
   );
 }
 
@@ -114,7 +125,7 @@ export function Segmented<T extends string>({
       {(Object.entries(options) as [T, string][]).map(([option, label]) => (
         <label
           key={option}
-          className="flex-1 cursor-pointer rounded px-2 py-1 text-center text-sm text-muted has-checked:bg-surface has-checked:font-medium has-checked:text-foreground has-checked:shadow-xs has-disabled:cursor-default"
+          className="flex-1 cursor-pointer rounded px-2 py-1 text-center text-sm whitespace-nowrap text-muted has-checked:bg-surface has-checked:font-medium has-checked:text-foreground has-checked:shadow-xs has-disabled:cursor-default"
         >
           <input
             type="radio"

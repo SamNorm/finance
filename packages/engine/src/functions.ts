@@ -133,7 +133,7 @@ export const FUNCTIONS: Record<string, FunctionSpec> = {
     min: 0,
     max: 0,
     signature: "PROJECTED()",
-    help: "TRUE in projected periods.",
+    help: "TRUE in projected periods, whether computed from assumptions or the client's own.",
   },
 };
 

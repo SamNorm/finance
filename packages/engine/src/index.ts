@@ -13,6 +13,7 @@ export {
   type Evaluation,
   type ModelRun,
   type Period,
+  type Projection,
   type Ref,
   shiftYear,
 } from "./evaluate";

@@ -89,11 +89,11 @@ describe("runModel", () => {
 
   it("projects years after the last period with projection formulas", () => {
     const run = runModel(input);
-    expect(run.periods.map((p) => [p.end, p.quality, p.projected])).toEqual([
-      ["2023-12-31", "audited", false],
-      ["2024-12-31", "review", false],
-      ["2025-12-31", "projected", true],
-      ["2026-12-31", "projected", true],
+    expect(run.periods.map((p) => [p.end, p.quality, p.projection])).toEqual([
+      ["2023-12-31", "audited", null],
+      ["2024-12-31", "review", null],
+      ["2025-12-31", "projected", "assumptions"],
+      ["2026-12-31", "projected", "assumptions"],
     ]);
     expect(run.cells.REVENUE!.map((c) => c.value)).toEqual([
       "100",
@@ -420,6 +420,61 @@ describe("analysis service", () => {
     ]);
     await rejects(
       updateAnalysis(db, ctx, analysis.id, { projectionYears: 11 }),
+      "invalid",
+    );
+  });
+
+  it("uses the client's projections instead of assumptions when asked", async () => {
+    const { entity, v1 } = setup;
+    const forecast = await addPeriod(db, ctx, entity.id, {
+      periodEnd: "2025-12-31",
+      months: 12,
+      quality: "projected",
+    });
+    for (const [code, value] of Object.entries({
+      OPERATING_INCOME: "650",
+      DEPRECIATION: "120",
+      INTEREST_LONG_TERM_DEBT: "60",
+      CPLTD: "140",
+      REVENUE: "6200",
+    }))
+      await setValue(db, ctx, forecast.id, code, value);
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "A",
+      projectionYears: 2,
+    });
+
+    // From assumptions, the client's period is left out and the model
+    // projects from 2024.
+    let { base } = await runAnalysis(db, ctx, analysis.id);
+    expect(base.periods.map((p) => [p.end, p.projection])).toEqual([
+      ["2023-12-31", null],
+      ["2024-12-31", null],
+      ["2025-12-31", "assumptions"],
+      ["2026-12-31", "assumptions"],
+    ]);
+    expect(base.cells.SALES![2]!.value).toBe("5775");
+
+    await updateAnalysis(db, ctx, analysis.id, { projectionMode: "client" });
+    ({ base } = await runAnalysis(db, ctx, analysis.id));
+    expect(base.periods.map((p) => [p.end, p.projection])).toEqual([
+      ["2023-12-31", null],
+      ["2024-12-31", null],
+      ["2025-12-31", "client"],
+    ]);
+    // Read from the client's figures with the regular formulas.
+    expect(base.cells.SALES![2]).toMatchObject({
+      value: "6200",
+      formula: "REVENUE",
+    });
+    expect(base.cells.DSCR![2]!.value).toBe("3.85");
+    expect(base.cells.DSCR![2]!.refs[0]).toMatchObject({ code: "EBITDA" });
+    await rejects(
+      updateAnalysis(db, ctx, analysis.id, {
+        projectionMode: "guess" as never,
+      }),
       "invalid",
     );
   });

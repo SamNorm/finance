@@ -6,6 +6,7 @@ import type {
   ModelLine,
   ResultCell,
   ResultValue,
+  RunPeriod,
 } from "@finance/domain";
 import { useState } from "react";
 import { button } from "@/components/styles";
@@ -53,14 +54,12 @@ export function ResultsTable({
               {run.periods.map((p) => (
                 <th
                   key={p.key}
-                  className={`w-36 min-w-36 border-b border-l border-line px-3 py-2 text-right font-normal ${p.projected ? "bg-surface-2" : ""}`}
+                  className={`w-36 min-w-36 border-b border-l border-line px-3 py-2 text-right font-normal ${p.projection ? "bg-surface-2" : ""}`}
                 >
                   <span className="block font-medium text-foreground">
                     {formatDate(p.end)}
                   </span>
-                  {p.projected
-                    ? "Projected"
-                    : `${p.months} mo · ${QUALITY_SHORT[p.quality]}`}
+                  {periodLabel(p)}
                 </th>
               ))}
               <th className="border-b border-line" />
@@ -106,7 +105,7 @@ export function ResultsTable({
                     return (
                       <td
                         key={p.key}
-                        className={`border-b border-l border-line/60 p-0 text-right tabular-nums ${p.projected ? "bg-surface-2/60" : ""}`}
+                        className={`border-b border-l border-line/60 p-0 text-right tabular-nums ${p.projection ? "bg-surface-2/60" : ""}`}
                       >
                         {assumption ? (
                           <span className="block px-3 py-1.5">
@@ -155,6 +154,15 @@ export function ResultsTable({
       />
     </section>
   );
+}
+
+function periodLabel(period: RunPeriod) {
+  if (period.projection === "assumptions") return "Projected";
+  if (period.projection === "client")
+    return period.months === 12
+      ? "Client projection"
+      : `${period.months} mo · Client`;
+  return `${period.months} mo · ${QUALITY_SHORT[period.quality]}`;
 }
 
 const flag = (value: string | null, format: Format) =>
@@ -251,8 +259,7 @@ function Lineage({
           )}
           <div className="flex flex-col gap-1">
             <p className="text-xs text-muted">
-              {formatDate(period.end)} ·{" "}
-              {period.projected ? "Projected" : `${period.months} months`}
+              {formatDate(period.end)} · {periodLabel(period)}
             </p>
             <p className="text-lg font-semibold">{line.label}</p>
             <p className="text-2xl tabular-nums">
@@ -264,7 +271,7 @@ function Lineage({
           </div>
           <div className="flex flex-col gap-1.5">
             <p className="text-xs font-medium text-muted">
-              {period.projected && line.projectionFormula
+              {period.projection === "assumptions" && line.projectionFormula
                 ? "Projection formula"
                 : "Formula"}
             </p>

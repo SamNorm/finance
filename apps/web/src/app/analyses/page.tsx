@@ -44,6 +44,7 @@ async function AnalysesView({
     id: b.id,
     name: b.name,
     periods: b.periodCount,
+    projected: b.projectedPeriodCount,
     scoringModelId: b.scoringModelId,
   }));
   const preselected =

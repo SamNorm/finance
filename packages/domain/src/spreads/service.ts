@@ -56,6 +56,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export interface EntitySummary extends Entity {
   scoringModelName: string;
   periodCount: number;
+  projectedPeriodCount: number;
   latestPeriodEnd: string | null;
 }
 
@@ -68,6 +69,8 @@ export async function listEntities(
       ...getTableColumns(entities),
       scoringModelName: schema.scoringModels.name,
       periodCount: sql<number>`count(${periods.id})::int`,
+      // The client's own projections, spread as periods of quality "projected".
+      projectedPeriodCount: sql<number>`(count(${periods.id}) filter (where ${periods.quality} = 'projected'))::int`,
       latestPeriodEnd: sql<string | null>`max(${periods.periodEnd})::text`,
     })
     .from(entities)

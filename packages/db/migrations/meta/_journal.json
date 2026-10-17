@@ -43,6 +43,13 @@
       "when": 1792264425578,
       "tag": "0005_multiple_scoring_models",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792265340073,
+      "tag": "0006_projection_mode",
+      "breakpoints": true
     }
   ]
 }

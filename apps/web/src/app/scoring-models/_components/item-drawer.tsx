@@ -237,7 +237,7 @@ function ItemForm({
             </select>
           </Field>
         </div>
-        <Field label="Kind">
+        <Field label="Kind" group>
           <Segmented
             name="kind"
             options={KINDS}
@@ -282,6 +282,7 @@ function ItemForm({
           </Field>
         </div>
         <Field
+          group
           label={
             parent?.kind === "subtotal"
               ? `Rolls into ${parent.label} as`

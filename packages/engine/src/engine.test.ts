@@ -184,8 +184,8 @@ describe("evaluateModel", () => {
       periods: [
         annual(2023),
         annual(2024),
-        annual(2025, { projected: true }),
-        annual(2026, { projected: true }),
+        annual(2025, { projection: "assumptions" }),
+        annual(2026, { projection: "assumptions" }),
       ],
       inputs: { REVENUE: [100, 120] },
       assumptions: { GROWTH_RATE: 0.1 },
@@ -197,6 +197,22 @@ describe("evaluateModel", () => {
     expect(evaluation.cell("REV", 3).formula).toBe(
       "PREV(REV) * (1 + GROWTH_RATE)",
     );
+  });
+
+  it("reads the client's projections like any period", () => {
+    const evaluation = model({
+      periods: [annual(2024), annual(2025, { projection: "client" })],
+      inputs: { REVENUE: [120, 150] },
+      assumptions: { GROWTH_RATE: 0.1 },
+      lines: {
+        REV: ["REVENUE", "PREV(REV) * (1 + GROWTH_RATE)"],
+        LABEL: 'IF(PROJECTED(), "Forecast", "Actual")',
+      },
+    });
+    expect(show(evaluation.cell("REV", 1).value)).toBe("150");
+    expect(evaluation.cell("REV", 1).formula).toBe("REVENUE");
+    expect(show(evaluation.cell("LABEL", 0).value)).toBe("Actual");
+    expect(show(evaluation.cell("LABEL", 1).value)).toBe("Forecast");
   });
 
   it("records what each cell read, for lineage", () => {
