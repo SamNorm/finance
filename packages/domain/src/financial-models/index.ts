@@ -7,3 +7,13 @@ export {
   normalizeAssumption,
   validateLines,
 } from "./validate";
+export {
+  CHARTABLE_FORMATS,
+  chartFormat,
+  checkCharts,
+  isChartable,
+  MAX_SERIES,
+  type ChartDefinition,
+  type ChartInput,
+  type ChartMark,
+} from "./charts";

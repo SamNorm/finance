@@ -23,6 +23,7 @@ import {
   listLines,
   publishFinancialModelVersion,
   removeLine,
+  setFinancialModelCharts,
   setScoringVersion,
   updateLine,
   validateFinancialModelVersion,
@@ -296,6 +297,81 @@ describe("financial model service", () => {
         v.status,
       ]),
     ).toEqual([[1, "published"]]);
+  });
+
+  it("keeps charts with the version, following its lines", async () => {
+    const { model, draft } = await createFinancialModel(db, ctx, {
+      name: "Coverage",
+      scoringModelId: ctx.modelId,
+    });
+    const add = (l: Parameters<typeof addLine>[3]) =>
+      addLine(db, ctx, draft.id, l);
+    await add({
+      code: "MIN_DSCR",
+      label: "Minimum DSCR",
+      kind: "assumption",
+      format: "ratio",
+      defaultValue: "1.25",
+    });
+    await add({
+      code: "EBITDA_X",
+      label: "EBITDA",
+      kind: "calculation",
+      formula: "OPERATING_INCOME + DEPRECIATION",
+    });
+    await add({
+      code: "DSCR",
+      label: "DSCR",
+      kind: "calculation",
+      format: "ratio",
+      formula: "EBITDA_X / TOTAL_INTEREST_EXPENSE",
+    });
+
+    let issues = await setFinancialModelCharts(db, ctx, draft.id, [
+      {
+        title: "Coverage",
+        series: [{ code: "DSCR", mark: "line" }],
+        threshold: "MIN_DSCR",
+      },
+      {
+        title: "Mixed",
+        series: [
+          { code: "DSCR", mark: "bar" },
+          { code: "EBITDA_X", mark: "bar" },
+        ],
+      },
+    ]);
+    expect(issues.map((i) => i.code)).toEqual(["chart_formats"]);
+    await rejects(
+      setFinancialModelCharts(db, ctx, draft.id, [{ title: " ", series: [] }]),
+      "invalid",
+    );
+
+    await setFinancialModelCharts(db, ctx, draft.id, [
+      {
+        title: "Coverage",
+        series: [{ code: "DSCR", mark: "line" }],
+        threshold: "MIN_DSCR",
+      },
+    ]);
+    // Renaming a line renames it in charts; removing it breaks them.
+    await updateLine(db, ctx, draft.id, "DSCR", { code: "COVERAGE" });
+    let version = (await getFinancialModel(db, ctx, model.id)).versions[0]!;
+    expect(version.charts[0]!.series).toEqual([
+      { code: "COVERAGE", mark: "line" },
+    ]);
+    issues = await removeLine(db, ctx, draft.id, "MIN_DSCR");
+    expect(issues.map((i) => i.code)).toContain("chart_threshold");
+    await rejects(publishFinancialModelVersion(db, ctx, draft.id), "invalid");
+
+    await setFinancialModelCharts(db, ctx, draft.id, [
+      { ...version.charts[0]!, threshold: null },
+    ]);
+    await publishFinancialModelVersion(db, ctx, draft.id);
+    const next = await createFinancialModelDraft(db, ctx, model.id);
+    expect(next.charts.map((c) => c.title)).toEqual(["Coverage"]);
+    version = (await getFinancialModel(db, ctx, model.id)).versions[0]!;
+    await rejects(setFinancialModelCharts(db, ctx, version.id, []), "conflict");
   });
 
   it("duplicates a model as a variant with its own history", async () => {

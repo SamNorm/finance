@@ -2,6 +2,12 @@ import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError } from "../errors";
+import {
+  checkCharts,
+  normalizeCharts,
+  type ChartDefinition,
+  type ChartInput,
+} from "../financial-models/charts";
 import { listLines } from "../financial-models/service";
 import {
   normalizeAdjustments,
@@ -268,6 +274,8 @@ export interface AnalysisDetail {
   // The model's latest published version, when newer than the pinned one.
   newerVersion: { id: string; number: number } | null;
   lines: ModelLine[];
+  // The pinned version's charts; the analysis's own are on `analysis`.
+  modelCharts: ChartDefinition[];
   scenarios: Scenario[];
 }
 
@@ -305,6 +313,7 @@ export async function getAnalysis(
     },
     newerVersion: latest && latest.number > version.number ? latest : null,
     lines: await listLines(db, ctx, version.id),
+    modelCharts: version.charts,
     scenarios: await db
       .select()
       .from(scenarios)
@@ -580,6 +589,27 @@ export async function setModelInput(
   await touch(db, analysisId);
 }
 
+// Replaces the charts added in the analysis. They must fit the pinned
+// version's lines, which never change.
+export async function setAnalysisCharts(
+  db: Db,
+  ctx: Context,
+  analysisId: string,
+  charts: readonly ChartInput[],
+): Promise<Analysis> {
+  const detail = await getAnalysis(db, ctx, analysisId);
+  const normalized = normalizeCharts(charts);
+  const issues = checkCharts(normalized, detail.lines);
+  if (issues.length)
+    throw new DomainError("invalid", issues[0]!.message, issues);
+  const [updated] = await db
+    .update(analyses)
+    .set({ charts: normalized })
+    .where(eq(analyses.id, analysisId))
+    .returning();
+  return updated!;
+}
+
 // A copy of the analysis on the model's latest published version, with the
 // same periods and scenarios, to compare against the pinned original.
 export async function repinAnalysis(
@@ -607,6 +637,15 @@ export async function repinAnalysis(
       projectionMode: detail.analysis.projectionMode,
       projectionYears: detail.analysis.projectionYears,
     });
+    // Charts come along when the new version still has their lines.
+    await tx
+      .update(analyses)
+      .set({
+        charts: detail.analysis.charts.filter(
+          (chart) => !checkCharts([chart], lines).length,
+        ),
+      })
+      .where(eq(analyses.id, copy.id));
     for (const scenario of detail.scenarios) {
       await tx.insert(scenarios).values({
         analysisId: copy.id,

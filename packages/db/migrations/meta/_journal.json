@@ -64,6 +64,13 @@
       "when": 1792266044428,
       "tag": "0008_scenario_financing",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792266463810,
+      "tag": "0009_charts",
+      "breakpoints": true
     }
   ]
 }

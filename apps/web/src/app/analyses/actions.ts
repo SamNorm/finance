@@ -9,10 +9,12 @@ import {
   duplicateScenario,
   getFinancialModel,
   repinAnalysis,
+  setAnalysisCharts,
   setModelInput,
   updateAnalysis,
   updateScenario,
   type AdjustmentInput,
+  type ChartInput,
 } from "@finance/domain";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
@@ -105,6 +107,16 @@ export async function saveModelInputAction(
       String(raw),
     ),
   );
+}
+
+export async function saveAnalysisChartsAction(
+  analysisId: string,
+  charts: ChartInput[],
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (!Array.isArray(charts)) throw invalid("Charts must be a list.");
+    return setAnalysisCharts(db, ctx, analysisId, charts);
+  });
 }
 
 export async function addScenarioAction(

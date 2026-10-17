@@ -9,6 +9,7 @@ import {
   validateLines,
   type FinancialModelVersion,
   type Issue,
+  checkCharts,
   FINANCING_INPUTS,
 } from "@finance/domain";
 import type { Metadata } from "next";
@@ -25,6 +26,7 @@ import {
   publishFinancialModelAction,
 } from "../actions";
 import { LinesWorkspace } from "../_components/lines-workspace";
+import { ModelCharts } from "../_components/model-charts";
 import { ModelActions } from "../_components/model-actions";
 import { ScoringBinding } from "../_components/scoring-binding";
 
@@ -87,10 +89,13 @@ async function ModelView({ params, searchParams }: Props) {
     );
   const issues =
     version.status === "draft"
-      ? validateLines(
-          lines,
-          inputs.map((i) => i.code),
-        )
+      ? [
+          ...validateLines(
+            lines,
+            inputs.map((i) => i.code),
+          ),
+          ...checkCharts(version.charts, lines),
+        ]
       : [];
   const errors = issues.filter((i) => i.severity === "error").length;
 
@@ -247,6 +252,14 @@ async function ModelView({ params, searchParams }: Props) {
         lines={lines}
         issues={issues}
         inputs={inputs}
+      />
+
+      <ModelCharts
+        key={`charts:${version.id}`}
+        versionId={version.id}
+        editable={version.status === "draft"}
+        lines={lines}
+        charts={version.charts}
       />
     </div>
   );

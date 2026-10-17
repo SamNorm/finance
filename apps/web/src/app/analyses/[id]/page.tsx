@@ -11,6 +11,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { AnalysisActions } from "../_components/analysis-actions";
+import { AnalysisCharts } from "../_components/analysis-charts";
 import { AnalysisSettings } from "../_components/analysis-settings";
 import { Repin } from "../_components/repin";
 import { ResultsTable } from "../_components/results-table";
@@ -126,6 +127,19 @@ async function AnalysisView({ params, searchParams }: Props) {
       />
 
       <Breakdowns run={run} />
+
+      {run.periods.length > 0 && (
+        <AnalysisCharts
+          key={`charts:${scenario?.id ?? "base"}`}
+          analysisId={analysis.id}
+          lines={detail.lines}
+          run={run}
+          base={results.scenario ? results.base : null}
+          scenarioName={scenario?.name ?? null}
+          modelCharts={detail.modelCharts}
+          charts={analysis.charts}
+        />
+      )}
 
       {run.periods.length === 0 ? (
         <p className="rounded-lg border border-dashed border-line-strong px-6 py-12 text-center text-sm text-muted">

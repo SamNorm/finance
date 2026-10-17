@@ -10,9 +10,11 @@ import {
   moveLine,
   publishFinancialModelVersion,
   removeLine,
+  setFinancialModelCharts,
   setScoringVersion,
   updateFinancialModel,
   updateLine,
+  type ChartInput,
   type ModelLine,
 } from "@finance/domain";
 import { redirect } from "next/navigation";
@@ -122,6 +124,16 @@ export async function saveLineAction(form: FormData): Promise<ActionResult> {
         Number.isFinite(position) ? position : undefined,
       );
     }
+  });
+}
+
+export async function saveModelChartsAction(
+  versionId: string,
+  charts: ChartInput[],
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (!Array.isArray(charts)) throw invalid("Charts must be a list.");
+    return setFinancialModelCharts(db, ctx, versionId, charts);
   });
 }
 

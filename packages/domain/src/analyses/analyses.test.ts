@@ -9,6 +9,7 @@ import {
   createFinancialModelDraft,
   deleteFinancialModel,
   publishFinancialModelVersion,
+  removeLine,
   updateLine,
 } from "../financial-models/service";
 import type { ModelLine } from "../financial-models/types";
@@ -30,6 +31,7 @@ import {
   listAnalyses,
   repinAnalysis,
   runAnalysis,
+  setAnalysisCharts,
   setModelInput,
   updateAnalysis,
   updateScenario,
@@ -576,6 +578,47 @@ describe("analysis service", () => {
     expect(scenarios.map((s) => s.adjustments)).toEqual([
       project.adjustments,
       project.adjustments,
+    ]);
+  });
+
+  it("keeps charts added in the analysis, checked against its version", async () => {
+    const { entity, model, v1, context } = setup;
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "A",
+    });
+    await rejects(
+      setAnalysisCharts(db, ctx, analysis.id, [
+        { title: "Mixed", series: [{ code: "DSCR" }, { code: "SALES" }] },
+      ]),
+      "invalid",
+    );
+    const saved = await setAnalysisCharts(db, ctx, analysis.id, [
+      {
+        title: "Revenue and EBITDA",
+        series: [
+          { code: "SALES", mark: "bar" },
+          { code: "EBITDA", mark: "line" },
+        ],
+      },
+      { title: "Coverage", series: [{ code: "DSCR", mark: "line" }] },
+    ]);
+    expect(saved.charts.map((c) => c.series.map((s) => s.mark))).toEqual([
+      ["bar", "line"],
+      ["line"],
+    ]);
+
+    // v2 drops DSCR: re-running on it keeps only the charts that still fit.
+    const draft = await createFinancialModelDraft(db, context, model.id);
+    await removeLine(db, context, draft.id, "COVENANT");
+    await removeLine(db, context, draft.id, "DSCR");
+    await publishFinancialModelVersion(db, context, draft.id);
+    const copy = await repinAnalysis(db, ctx, analysis.id);
+    expect(copy.charts).toEqual([]);
+    const detail = await getAnalysis(db, ctx, copy.id);
+    expect(detail.analysis.charts.map((c) => c.title)).toEqual([
+      "Revenue and EBITDA",
     ]);
   });
 

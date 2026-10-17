@@ -1,0 +1,213 @@
+"use client";
+
+import type {
+  AnalysisRun,
+  ChartDefinition,
+  ModelLine,
+  RunPeriod,
+} from "@finance/domain";
+import { useState, useTransition } from "react";
+import { ChartBuilder, type ChartDraft } from "@/components/chart-builder";
+import {
+  MetricChart,
+  type ChartFormat,
+  type ChartPeriod,
+  type ChartSeries,
+} from "@/components/metric-chart";
+import { button } from "@/components/styles";
+import { Icon } from "@/components/ui";
+import { formatDate } from "@/lib/format";
+import { QUALITY_SHORT } from "@/lib/labels";
+import { saveAnalysisChartsAction } from "../actions";
+
+// The model's charts and the analysis's own, over the periods shown. Under a
+// scenario, a one-line chart also draws the base case, so the project's
+// effect shows at a glance.
+export function AnalysisCharts({
+  analysisId,
+  lines,
+  run,
+  base,
+  scenarioName,
+  modelCharts,
+  charts,
+}: {
+  analysisId: string;
+  lines: ModelLine[];
+  run: AnalysisRun;
+  base: AnalysisRun | null;
+  scenarioName: string | null;
+  modelCharts: ChartDefinition[];
+  charts: ChartDefinition[];
+}) {
+  const [editing, setEditing] = useState<ChartDefinition | "new" | null>(null);
+  const [removing, startRemove] = useTransition();
+  const [failure, setFailure] = useState<string | null>(null);
+  const periods = chartPeriods(run.periods);
+  const byCode = new Map(lines.map((l) => [l.code, l]));
+
+  function chartProps(chart: ChartDraft) {
+    const format = (byCode.get(chart.series[0]?.code ?? "")?.format ??
+      "amount") as ChartFormat;
+    const series: ChartSeries[] = chart.series.map((s) => ({
+      label:
+        (byCode.get(s.code)?.label ?? s.code) +
+        (base && chart.series.length === 1 ? ` · ${scenarioName}` : ""),
+      mark: s.mark,
+      values: valuesOf(run, s.code),
+    }));
+    if (base && chart.series.length === 1) {
+      series.push({
+        label: "Base case",
+        mark: "line",
+        values: valuesOf(base, chart.series[0]!.code),
+        reference: true,
+      });
+    }
+    const raw = chart.threshold
+      ? run.assumptions[chart.threshold]?.value
+      : null;
+    const threshold =
+      chart.threshold && raw !== null && raw !== undefined
+        ? {
+            label: byCode.get(chart.threshold)?.label ?? chart.threshold,
+            value: Number(raw),
+          }
+        : null;
+    return { format, periods, series, threshold };
+  }
+
+  async function save(chart: ChartDraft) {
+    const next =
+      editing === "new" || editing === null
+        ? [...charts, chart]
+        : charts.map((c) => (c.id === chart.id ? chart : c));
+    return saveAnalysisChartsAction(analysisId, next);
+  }
+
+  function remove(chart: ChartDefinition) {
+    if (!confirm(`Remove the chart "${chart.title}"?`)) return;
+    setFailure(null);
+    startRemove(async () => {
+      const result = await saveAnalysisChartsAction(
+        analysisId,
+        charts.filter((c) => c.id !== chart.id),
+      );
+      if (!result.ok) setFailure(result.message);
+    });
+  }
+
+  const all = [
+    ...modelCharts.map((chart) => ({ chart, own: false })),
+    ...charts.map((chart) => ({ chart, own: true })),
+  ];
+
+  return (
+    <section className="flex flex-col gap-3" aria-label="Charts">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-medium">
+          Charts{" "}
+          {base && (
+            <span className="font-normal text-muted">
+              · {scenarioName} against the base case
+            </span>
+          )}
+        </h2>
+        <button
+          type="button"
+          className={button.ghost}
+          onClick={() => setEditing("new")}
+        >
+          <Icon name="plus" />
+          Chart
+        </button>
+      </div>
+      {failure && <p className="text-sm text-danger">{failure}</p>}
+      {all.length > 0 && (
+        <div className="grid gap-3 lg:grid-cols-2">
+          {all.map(({ chart, own }) => (
+            <MetricChart
+              key={chart.id}
+              title={
+                <>
+                  {chart.title}
+                  {!own && (
+                    <span
+                      className="ml-2 rounded bg-surface-2 px-1 text-[11px] font-normal text-muted"
+                      title="Defined in the financial model"
+                    >
+                      model
+                    </span>
+                  )}
+                </>
+              }
+              {...chartProps(chart)}
+              actions={
+                own && (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded px-1.5 py-0.5 text-xs text-muted hover:bg-surface-2 hover:text-foreground"
+                      onClick={() => setEditing(chart)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded px-1.5 py-0.5 text-xs text-muted hover:bg-danger-soft hover:text-danger"
+                      disabled={removing}
+                      onClick={() => remove(chart)}
+                    >
+                      Remove
+                    </button>
+                  </>
+                )
+              }
+            />
+          ))}
+        </div>
+      )}
+      <ChartBuilder
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        lines={lines}
+        initial={editing === "new" ? null : editing}
+        onSave={save}
+        preview={(chart) => (
+          <MetricChart
+            title={chart.title}
+            height={180}
+            {...chartProps(chart)}
+          />
+        )}
+      />
+    </section>
+  );
+}
+
+function valuesOf(run: AnalysisRun, code: string) {
+  return (run.cells[code] ?? []).map((cell) =>
+    cell.error || cell.value === null ? null : Number(cell.value),
+  );
+}
+
+// Years when every period is a fiscal year ending on the same day; dates
+// otherwise.
+function chartPeriods(periods: RunPeriod[]): ChartPeriod[] {
+  const years = periods.map((p) => p.end.slice(0, 4));
+  const yearly =
+    periods.every(
+      (p) => p.months === 12 && p.end.slice(5) === periods[0]!.end.slice(5),
+    ) && new Set(years).size === years.length;
+  return periods.map((p, i) => ({
+    label: yearly ? years[i]! : formatDate(p.end),
+    detail: `${formatDate(p.end)} · ${
+      p.projection === "assumptions"
+        ? "Projected"
+        : p.projection === "client"
+          ? "Client projection"
+          : `${p.months} mo · ${QUALITY_SHORT[p.quality]}`
+    }`,
+    projected: p.projection !== null,
+  }));
+}

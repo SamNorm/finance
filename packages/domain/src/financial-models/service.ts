@@ -7,6 +7,13 @@ import {
   getVersion as getScoringVersion,
   listItems,
 } from "../scoring-models/service";
+import {
+  checkCharts,
+  normalizeCharts,
+  renameInCharts,
+  type ChartDefinition,
+  type ChartInput,
+} from "./charts";
 import * as edit from "./edit";
 import type { FinancialModel, FinancialModelVersion, ModelLine } from "./types";
 import {
@@ -267,6 +274,7 @@ export async function duplicateFinancialModel(
         financialModelId: model!.id,
         number: 1,
         scoringModelVersionId: scoring.id,
+        charts: base?.charts ?? [],
       })
       .returning();
     if (base) await writeLines(tx, draft!.id, await selectLines(tx, base.id));
@@ -338,7 +346,10 @@ export async function validateFinancialModelVersion(
   const version = await findVersion(db, ctx, versionId);
   const list = await selectLines(db, versionId);
   if (!list.length) return [EMPTY];
-  return validateLines(list, await inputCodesFor(db, ctx, version));
+  return [
+    ...validateLines(list, await inputCodesFor(db, ctx, version)),
+    ...checkCharts(version.charts, list),
+  ];
 }
 
 // Draft edits. Each saves unless it breaks codes or labels, and returns every
@@ -372,9 +383,35 @@ export function updateLine(
   code: string,
   patch: edit.LinePatch,
 ) {
-  return editDraft(db, ctx, versionId, (list) =>
-    edit.updateLine(list, code, patch),
+  return editDraft(
+    db,
+    ctx,
+    versionId,
+    (list) => edit.updateLine(list, code, patch),
+    // Charts follow a renamed line, as formulas do.
+    patch.code !== undefined && patch.code !== code
+      ? (charts) => renameInCharts(charts, code, patch.code!)
+      : undefined,
   );
+}
+
+// Replaces a draft's charts. Saved unless malformed; charts that don't fit
+// the lines come back as issues and block publishing.
+export async function setFinancialModelCharts(
+  db: Db,
+  ctx: Context,
+  versionId: string,
+  charts: readonly ChartInput[],
+): Promise<Issue[]> {
+  const normalized = normalizeCharts(charts);
+  await db.transaction(async (tx) => {
+    assertDraft(await findVersion(tx, ctx, versionId, true));
+    await tx
+      .update(versions)
+      .set({ charts: normalized })
+      .where(eq(versions.id, versionId));
+  });
+  return validateFinancialModelVersion(db, ctx, versionId);
 }
 
 export function moveLine(
@@ -442,7 +479,10 @@ export async function publishFinancialModelVersion(
     assertDraft(version);
     const list = await selectLines(tx, versionId);
     const issues = list.length
-      ? validateLines(list, await inputCodesFor(tx, ctx, version))
+      ? [
+          ...validateLines(list, await inputCodesFor(tx, ctx, version)),
+          ...checkCharts(version.charts, list),
+        ]
       : [EMPTY];
     if (hasErrors(issues)) {
       throw new DomainError(
@@ -497,15 +537,16 @@ export async function createFinancialModelDraft(
         `Version ${open.number} is already a draft. Publish or discard it first.`,
       );
     }
+    const base = all.find((v) => v.status === "published") ?? all[0];
     const [draft] = await tx
       .insert(versions)
       .values({
         financialModelId: model.id,
         number: (all[0]?.number ?? 0) + 1,
         scoringModelVersionId: scoring.id,
+        charts: base?.charts ?? [],
       })
       .returning();
-    const base = all.find((v) => v.status === "published") ?? all[0];
     if (base) await writeLines(tx, draft!.id, await selectLines(tx, base.id));
     return draft!;
   });
@@ -527,6 +568,7 @@ async function editDraft(
   ctx: Context,
   versionId: string,
   change: (list: ModelLine[]) => ModelLine[],
+  changeCharts?: (charts: ChartDefinition[]) => ChartDefinition[],
 ): Promise<Issue[]> {
   return db.transaction(async (tx) => {
     const version = await findVersion(tx, ctx, versionId, true);
@@ -537,11 +579,12 @@ async function editDraft(
     if (blocking.length)
       throw new DomainError("invalid", "The lines can't be saved.", blocking);
     await writeLines(tx, versionId, list);
+    const charts = changeCharts ? changeCharts(version.charts) : version.charts;
     await tx
       .update(versions)
-      .set({ updatedAt: new Date() })
+      .set({ updatedAt: new Date(), charts })
       .where(eq(versions.id, versionId));
-    return issues;
+    return [...issues, ...checkCharts(charts, list)];
   });
 }
 

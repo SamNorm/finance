@@ -307,6 +307,15 @@ export const financialModels = pgTable(
   ],
 ).enableRLS();
 
+// A chart over a model's lines: one or more series sharing one format, so they
+// share one axis, and optionally an assumption drawn as a threshold.
+export interface ChartDefinition {
+  id: string;
+  title: string;
+  series: { code: string; mark: "bar" | "line" }[];
+  threshold: string | null;
+}
+
 export const financialModelVersions = pgTable(
   "financial_model_versions",
   {
@@ -320,6 +329,8 @@ export const financialModelVersions = pgTable(
     scoringModelVersionId: uuid()
       .notNull()
       .references(() => scoringModelVersions.id),
+    // Charts every analysis on this version shows.
+    charts: jsonb().$type<ChartDefinition[]>().notNull().default([]),
     notes: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -428,6 +439,8 @@ export const analyses = pgTable(
     projectionMode: projectionMode().notNull().default("assumptions"),
     // Years computed from assumptions; unused with the client's projections.
     projectionYears: integer().notNull().default(0),
+    // Charts added in the analysis, on top of the model's.
+    charts: jsonb().$type<ChartDefinition[]>().notNull().default([]),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -103,6 +103,9 @@ Each financial model version contains:
   - **Input lines** hold those supplementary items. They are entered per borrower period in the analysis, and every model with an input of the same code reads the same figure. An input line can break down a scoring model item, such as inventory into raw materials, work in progress and finished goods. Analyses then flag periods where the parts don't add up to the item. An optional projection formula fills the input in years projected from assumptions.
 - **Calculations:** groupings and metrics written as Excel-like formulas and evaluated as a dependency graph. Formulas reference items by stable code, never by label.
 - **Views:** tables, charts and export layouts.
+  - **Charts** are defined over a model's lines, as bars, lines or both. A chart's series share one format, so they share one axis; mixing amounts and ratios takes two charts. An assumption can be drawn as a threshold, such as a covenant minimum.
+  - **Where charts are defined:** a model version's charts appear in every analysis on it, and analysts add their own per analysis.
+  - **What a chart shows:** projected periods are shaded. Under a scenario, a one-line chart also draws the base case. Every chart has a table view with the same numbers.
 
 ### 5.4 Versions vs variants
 
