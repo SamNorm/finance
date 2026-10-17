@@ -1,6 +1,6 @@
 "use client";
 
-import type { ModelLine } from "@finance/domain";
+import type { FinancingAdjustment, ModelLine } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
@@ -11,27 +11,40 @@ import { formatFigure } from "@/lib/format";
 import {
   addScenarioAction,
   deleteScenarioAction,
+  duplicateScenarioAction,
   updateScenarioAction,
 } from "../actions";
+import {
+  FinancingEditor,
+  toDraft,
+  toInput,
+  type AdjustmentDraft,
+} from "./financing-editor";
 
 interface ScenarioOption {
   id: string;
   name: string;
   overrides: Record<string, string>;
+  adjustments: FinancingAdjustment[];
 }
 
-// The base case and the analysis's scenarios, each a set of assumption
-// overrides, such as revenue growth of -15%.
+// The base case, the borrower as is, and the analysis's scenarios: each
+// overrides assumptions, such as revenue growth of -15%, and can add
+// post-project financing.
 export function ScenarioBar({
   analysisId,
   scenarios,
   current,
   assumptions,
+  years,
+  defaultYear,
 }: {
   analysisId: string;
   scenarios: ScenarioOption[];
   current: string | null;
   assumptions: ModelLine[];
+  years: number[];
+  defaultYear: number;
 }) {
   const [adding, setAdding] = useState(false);
   const [state, formAction, pending] = useActionState(
@@ -64,16 +77,14 @@ export function ScenarioBar({
             {s.name}
           </Link>
         ))}
-        {assumptions.length > 0 && (
-          <button
-            type="button"
-            className={`${button.ghost} ml-1`}
-            onClick={() => setAdding(true)}
-          >
-            <Icon name="plus" />
-            Scenario
-          </button>
-        )}
+        <button
+          type="button"
+          className={`${button.ghost} ml-1`}
+          onClick={() => setAdding(true)}
+        >
+          <Icon name="plus" />
+          Scenario
+        </button>
       </div>
       {scenario && (
         <ScenarioEditor
@@ -81,6 +92,8 @@ export function ScenarioBar({
           analysisId={analysisId}
           scenario={scenario}
           assumptions={assumptions}
+          years={years}
+          defaultYear={defaultYear}
         />
       )}
       <Modal
@@ -92,14 +105,14 @@ export function ScenarioBar({
           <div className="flex flex-col gap-4 px-5 py-4">
             <Field
               label="Name"
-              hint="Then override the assumptions that change."
+              hint="Then override the assumptions that change and add the project's financing."
             >
               <input
                 name="name"
                 required
                 autoFocus
                 className={input}
-                placeholder="Revenue −15%"
+                placeholder="Post-project"
               />
             </Field>
             {state && !state.ok && (
@@ -134,10 +147,14 @@ function ScenarioEditor({
   analysisId,
   scenario,
   assumptions,
+  years,
+  defaultYear,
 }: {
   analysisId: string;
   scenario: ScenarioOption;
   assumptions: ModelLine[];
+  years: number[];
+  defaultYear: number;
 }) {
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(
@@ -147,8 +164,12 @@ function ScenarioEditor({
       ]),
     ),
   );
+  const [financing, setFinancing] = useState<AdjustmentDraft[]>(() =>
+    scenario.adjustments.map(toDraft),
+  );
   const [pending, startTransition] = useTransition();
   const [deleting, startDelete] = useTransition();
+  const [copying, startCopy] = useTransition();
   const [feedback, setFeedback] = useState<{
     ok: boolean;
     message: string;
@@ -160,7 +181,10 @@ function ScenarioEditor({
       Object.entries(values).filter(([, v]) => v.trim()),
     );
     startTransition(async () => {
-      const result = await updateScenarioAction(scenario.id, { overrides });
+      const result = await updateScenarioAction(scenario.id, {
+        overrides,
+        adjustments: financing.map(toInput),
+      });
       // Inside the transition, so the message lands with the refreshed results.
       startTransition(() =>
         setFeedback(
@@ -176,9 +200,10 @@ function ScenarioEditor({
     <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4">
       <p className="text-sm text-muted">
         Override the assumptions that change in{" "}
-        <span className="font-medium text-foreground">{scenario.name}</span>.
-        Blank keeps the base case. Results below show the base case next to each
-        changed value.
+        <span className="font-medium text-foreground">{scenario.name}</span> and
+        add the project&apos;s financing. Blank keeps the base case, the
+        borrower as is. Results below show the base case next to each changed
+        value.
       </p>
       <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
         {assumptions.map((a) => (
@@ -208,14 +233,39 @@ function ScenarioEditor({
           </label>
         ))}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="border-t border-line pt-3">
+        <FinancingEditor
+          drafts={financing}
+          years={years}
+          defaultYear={defaultYear}
+          onChange={setFinancing}
+        />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           className={button.primary}
           onClick={save}
           disabled={pending}
         >
-          {pending ? "Saving…" : "Save overrides"}
+          {pending ? "Saving…" : "Save scenario"}
+        </button>
+        <button
+          type="button"
+          className={button.secondary}
+          disabled={copying}
+          onClick={() =>
+            startCopy(async () => {
+              const result = await duplicateScenarioAction(
+                analysisId,
+                scenario.id,
+              );
+              if (!result.ok)
+                setFeedback({ ok: false, message: result.message });
+            })
+          }
+        >
+          {copying ? "Duplicating…" : "Duplicate"}
         </button>
         <button
           type="button"

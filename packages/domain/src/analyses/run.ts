@@ -9,6 +9,14 @@ import {
 } from "@finance/engine";
 import { assumptionValue } from "../financial-models/validate";
 import type { ModelLine } from "../financial-models/types";
+import {
+  FINANCING_CODES,
+  FINANCING_INPUTS,
+  financingValues,
+  type FinancingAdjustment,
+  type FinancingCode,
+  type FinancingPart,
+} from "../financing/financing";
 import { TOLERANCE } from "../spreads/checks";
 import type { StatementQuality } from "../spreads/service";
 
@@ -36,8 +44,17 @@ export interface LineageRef extends ResultValue {
   label: string;
   period: number;
   // Where the value came from: a model line, an assumption, a figure entered
-  // in the spread, a subtotal summed from its lines, or nothing.
-  source: "calculation" | "assumption" | "entered" | "summed" | "blank";
+  // in the spread or for the model, a subtotal summed from its lines, the
+  // scenario's financing, or nothing.
+  source:
+    | "calculation"
+    | "assumption"
+    | "entered"
+    | "summed"
+    | "adjustment"
+    | "blank";
+  // For financing: each loan's or subordination's share.
+  parts?: FinancingPart[];
 }
 
 export interface ResultCell extends ResultValue {
@@ -89,6 +106,8 @@ export interface RunInput {
   projectionYears: number;
   lines: readonly ModelLine[];
   overrides: Record<string, string>;
+  // The scenario's post-project financing.
+  adjustments: readonly FinancingAdjustment[];
   // Items of the scoring model version the model is bound to.
   items: readonly { code: string; label: string; numeric: boolean }[];
 }
@@ -126,6 +145,12 @@ export function runModel(input: RunInput): AnalysisRun {
   const items = new Map(input.items.map((item) => [item.code, item]));
   const lineByCode = new Map(input.lines.map((line) => [line.code, line]));
   const inputLines = input.lines.filter((line) => line.kind === "input");
+  const financing = financingValues(input.adjustments, periods);
+  const isFinancing = (code: string): code is FinancingCode =>
+    FINANCING_CODES.includes(code);
+  const financingLabels = new Map<string, string>(
+    FINANCING_INPUTS.map((f) => [f.code, f.label]),
+  );
   const assumptions: Record<string, AssumptionValue> = {};
   const assumptionValues: Record<string, Value> = {};
   for (const line of input.lines) {
@@ -156,10 +181,14 @@ export function runModel(input: RunInput): AnalysisRun {
       })),
     assumptions: assumptionValues,
     inputCodes: [
-      ...input.items.map((item) => item.code),
+      ...input.items
+        .map((item) => item.code)
+        .filter((code) => !isFinancing(code)),
       ...inputLines.map((line) => line.code),
+      ...FINANCING_CODES,
     ],
     input: (code, p) => {
+      if (isFinancing(code)) return financing[code][p]!.value;
       const period = input.periods[p];
       const line = lineByCode.get(code);
       if (line?.kind === "input")
@@ -174,6 +203,7 @@ export function runModel(input: RunInput): AnalysisRun {
   });
 
   const sourceOf = (code: string, p: number): LineageRef["source"] => {
+    if (isFinancing(code)) return "adjustment";
     const line = lineByCode.get(code);
     if (line?.kind === "input") {
       if (periods[p]?.projection === "assumptions" && line.projectionFormula)
@@ -202,10 +232,14 @@ export function runModel(input: RunInput): AnalysisRun {
           code: ref.code,
           label:
             lineByCode.get(ref.code)?.label ??
+            financingLabels.get(ref.code) ??
             items.get(ref.code)?.label ??
             ref.code,
           period: ref.period,
           source: sourceOf(ref.code, ref.period),
+          ...(isFinancing(ref.code)
+            ? { parts: financing[ref.code][ref.period]!.parts }
+            : {}),
         })),
       };
     });

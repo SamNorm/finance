@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
+import { FINANCING_CODES } from "../financing/financing";
 import {
   getLatestPublishedVersion,
   getVersion as getScoringVersion,
@@ -316,16 +317,17 @@ export async function listLines(
 }
 
 // Codes a version's formulas can read: every item of its scoring model
-// version that holds a figure.
+// version that holds a figure, and the built-in financing inputs.
 export async function inputCodesFor(
   db: Db,
   ctx: Context,
   version: FinancialModelVersion,
 ) {
   const items = await listItems(db, ctx, version.scoringModelVersionId);
-  return items
-    .filter((item) => item.kind !== "header")
-    .map((item) => item.code);
+  return [
+    ...items.filter((item) => item.kind !== "header").map((item) => item.code),
+    ...FINANCING_CODES,
+  ];
 }
 
 export async function validateFinancialModelVersion(

@@ -25,6 +25,7 @@ import {
   addScenario,
   createAnalysis,
   deleteAnalysis,
+  duplicateScenario,
   getAnalysis,
   listAnalyses,
   repinAnalysis,
@@ -85,6 +86,7 @@ describe("runModel", () => {
       line("SHARE", { formula: "TOTAL / REV" }),
     ],
     overrides: {},
+    adjustments: [],
     items: [
       { code: "REV", label: "Revenue", numeric: true },
       { code: "TOTAL", label: "Total", numeric: true },
@@ -490,6 +492,91 @@ describe("analysis service", () => {
       updateAnalysis(db, ctx, analysis.id, { projectionYears: 11 }),
       "invalid",
     );
+  });
+
+  it("adds post-project financing in scenarios", async () => {
+    const { context, entity, model } = setup;
+    // Debt service with the new loan's interest and principal.
+    const draft = await createFinancialModelDraft(db, context, model.id);
+    await updateLine(db, context, draft.id, "DEBT_SERVICE", {
+      formula:
+        "TOTAL_INTEREST_EXPENSE + CPLTD + PROFORMA_INTEREST + PROFORMA_PRINCIPAL",
+      projectionFormula:
+        "PREV(DEBT_SERVICE) - PREV(PROFORMA_INTEREST + PROFORMA_PRINCIPAL) + PROFORMA_INTEREST + PROFORMA_PRINCIPAL",
+    });
+    const v2 = await publishFinancialModelVersion(db, context, draft.id);
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v2.id,
+      name: "A",
+      projectionYears: 1,
+    });
+    const project = await addScenario(db, ctx, analysis.id, {
+      name: "Expansion",
+      adjustments: [
+        {
+          kind: "loan",
+          name: "Equipment loan",
+          amount: "1,200",
+          rate: "6%",
+          years: "10",
+          repayment: "equal_principal",
+          fromYear: "2025",
+        },
+      ],
+    });
+    expect(project.adjustments).toMatchObject([
+      { kind: "loan", amount: "1200", rate: "0.06", fromYear: 2025 },
+    ]);
+    await rejects(
+      updateScenario(db, ctx, project.id, {
+        adjustments: [{ kind: "loan", name: "Bad", amount: "-1" }],
+      }),
+      "invalid",
+    );
+
+    const { base, scenario } = await runAnalysis(
+      db,
+      ctx,
+      analysis.id,
+      project.id,
+    );
+    expect(base.cells.DEBT_SERVICE!.map((c) => c.value)).toEqual([
+      "200",
+      "200",
+      "200",
+    ]);
+    // 2025 adds 120 of principal and 68.70 of interest.
+    expect(scenario!.cells.DEBT_SERVICE!.map((c) => c.value)).toEqual([
+      "200",
+      "200",
+      "388.7",
+    ]);
+    const interest = scenario!.cells.DEBT_SERVICE![2]!.refs.find(
+      (r) => r.code === "PROFORMA_INTEREST" && r.period === 2,
+    );
+    expect(interest).toMatchObject({
+      label: "Post-project interest",
+      source: "adjustment",
+      value: "68.7",
+      parts: [{ name: "Equipment loan", value: "68.7" }],
+    });
+
+    const copy = await duplicateScenario(db, ctx, project.id);
+    expect(copy).toMatchObject({
+      name: "Expansion (copy)",
+      position: 1,
+      adjustments: project.adjustments,
+    });
+    // Re-running on a later version keeps the financing.
+    const v3 = await createFinancialModelDraft(db, context, model.id);
+    await publishFinancialModelVersion(db, context, v3.id);
+    const repinned = await repinAnalysis(db, ctx, analysis.id);
+    const { scenarios } = await getAnalysis(db, ctx, repinned.id);
+    expect(scenarios.map((s) => s.adjustments)).toEqual([
+      project.adjustments,
+      project.adjustments,
+    ]);
   });
 
   it("uses the client's projections instead of assumptions when asked", async () => {

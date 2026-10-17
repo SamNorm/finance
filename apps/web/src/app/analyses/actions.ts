@@ -6,11 +6,13 @@ import {
   deleteAnalysis,
   deleteScenario,
   DomainError,
+  duplicateScenario,
   getFinancialModel,
   repinAnalysis,
   setModelInput,
   updateAnalysis,
   updateScenario,
+  type AdjustmentInput,
 } from "@finance/domain";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
@@ -116,27 +118,54 @@ export async function addScenarioAction(
   redirect(page(analysisId, result.value.id));
 }
 
+// Fields of an object from the client, as text.
+const textFields = (value: object) =>
+  Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [k, v === null ? "" : String(v)]),
+  );
+
 export async function updateScenarioAction(
   scenarioId: string,
-  patch: { name?: string; overrides?: Record<string, string> },
+  patch: {
+    name?: string;
+    overrides?: Record<string, string>;
+    adjustments?: AdjustmentInput[];
+  },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
-    const overrides = patch.overrides;
+    const { overrides, adjustments } = patch;
     if (
       overrides !== undefined &&
       (typeof overrides !== "object" || overrides === null)
     ) {
       throw invalid("Overrides must be assumption values.");
     }
+    if (
+      adjustments !== undefined &&
+      (!Array.isArray(adjustments) ||
+        adjustments.some((a) => typeof a !== "object" || a === null))
+    ) {
+      throw invalid("Financing must be a list of loans and subordinations.");
+    }
     return updateScenario(db, ctx, scenarioId, {
       name: patch.name === undefined ? undefined : String(patch.name),
-      overrides:
-        overrides &&
-        Object.fromEntries(
-          Object.entries(overrides).map(([k, v]) => [k, String(v)]),
-        ),
+      overrides: overrides && textFields(overrides),
+      adjustments: adjustments?.map(
+        (a) => textFields(a) as unknown as AdjustmentInput,
+      ),
     });
   });
+}
+
+export async function duplicateScenarioAction(
+  analysisId: string,
+  scenarioId: string,
+): Promise<ActionResult> {
+  const result = await attempt((db, ctx) =>
+    duplicateScenario(db, ctx, scenarioId),
+  );
+  if (!result.ok) return result;
+  redirect(page(analysisId, result.value.id));
 }
 
 export async function deleteScenarioAction(

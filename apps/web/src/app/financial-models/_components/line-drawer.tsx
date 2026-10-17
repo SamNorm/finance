@@ -288,7 +288,7 @@ function LineForm({
                 <option value="">Nothing: a figure of its own</option>
                 {STATEMENTS.map((s) => {
                   const group = inputs.filter(
-                    (i) => i.statement === s.value && i.numeric,
+                    (i) => i.statement === s.value && i.numeric && !i.builtin,
                   );
                   return group.length ? (
                     <optgroup key={s.value} label={s.label}>
@@ -457,7 +457,9 @@ function FormulaField({
               </optgroup>
             )}
             {STATEMENTS.map((s) => {
-              const group = inputs.filter((i) => i.statement === s.value);
+              const group = inputs.filter(
+                (i) => i.statement === s.value && !i.builtin,
+              );
               return group.length ? (
                 <optgroup key={s.value} label={s.label}>
                   {group.map((i) => (
@@ -468,6 +470,15 @@ function FormulaField({
                 </optgroup>
               ) : null;
             })}
+            <optgroup label="Post-project financing (from scenarios)">
+              {inputs
+                .filter((i) => i.builtin)
+                .map((i) => (
+                  <option key={i.code} value={i.code}>
+                    {i.label} ({i.code})
+                  </option>
+                ))}
+            </optgroup>
           </select>
         )}
       </div>

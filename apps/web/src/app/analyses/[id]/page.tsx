@@ -51,6 +51,7 @@ async function AnalysisView({ params, searchParams }: Props) {
   ]);
   const run = results.scenario ?? results.base;
   const { analysis, entity, model, version } = detail;
+  const years = results.base.periods.map((p) => Number(p.end.slice(0, 4)));
 
   return (
     <div className="flex flex-col gap-5">
@@ -113,9 +114,15 @@ async function AnalysisView({ params, searchParams }: Props) {
           id: s.id,
           name: s.name,
           overrides: s.overrides,
+          adjustments: s.adjustments,
         }))}
         current={scenario?.id ?? null}
         assumptions={detail.lines.filter((l) => l.kind === "assumption")}
+        years={years}
+        defaultYear={
+          years[results.base.periods.findIndex((p) => p.projection)] ??
+          (years.at(-1) ?? new Date().getFullYear()) + 1
+        }
       />
 
       <Breakdowns run={run} />

@@ -66,6 +66,7 @@ describe("demo data", () => {
         projectionYears: 2,
         lines: DEMO_MODEL.lines,
         overrides: {},
+        adjustments: [],
         items: items
           .filter((i) => i.kind !== "header")
           .map((i) => ({

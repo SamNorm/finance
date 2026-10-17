@@ -5,6 +5,8 @@ export interface InputItem {
   label: string;
   statement: Statement;
   numeric: boolean;
+  // A built-in input, such as post-project financing, not a scoring item.
+  builtin?: boolean;
 }
 
 export const LINE_KINDS: Record<LineKind, string> = {

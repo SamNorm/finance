@@ -3,6 +3,10 @@ import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError } from "../errors";
 import { listLines } from "../financial-models/service";
+import {
+  normalizeAdjustments,
+  type AdjustmentInput,
+} from "../financing/financing";
 import type { ModelLine } from "../financial-models/types";
 import { normalizeAssumption } from "../financial-models/validate";
 import {
@@ -330,11 +334,17 @@ function normalizeOverrides(
   return result;
 }
 
+export interface ScenarioInput {
+  name: string;
+  overrides?: Record<string, string>;
+  adjustments?: readonly AdjustmentInput[];
+}
+
 export async function addScenario(
   db: Db,
   ctx: Context,
   analysisId: string,
-  input: { name: string; overrides?: Record<string, string> },
+  input: ScenarioInput,
 ): Promise<Scenario> {
   const detail = await getAnalysis(db, ctx, analysisId);
   if (!input.name.trim())
@@ -346,6 +356,7 @@ export async function addScenario(
       name: input.name.trim(),
       position: detail.scenarios.length,
       overrides: normalizeOverrides(detail.lines, input.overrides ?? {}),
+      adjustments: normalizeAdjustments(input.adjustments ?? []),
     })
     .returning();
   await touch(db, analysisId);
@@ -373,7 +384,7 @@ export async function updateScenario(
   db: Db,
   ctx: Context,
   scenarioId: string,
-  patch: { name?: string; overrides?: Record<string, string> },
+  patch: Partial<ScenarioInput>,
 ): Promise<Scenario> {
   const scenario = await findScenario(db, ctx, scenarioId);
   if (patch.name !== undefined && !patch.name.trim()) {
@@ -386,11 +397,27 @@ export async function updateScenario(
       name: patch.name?.trim(),
       overrides:
         patch.overrides && normalizeOverrides(detail.lines, patch.overrides),
+      adjustments: patch.adjustments && normalizeAdjustments(patch.adjustments),
     })
     .where(eq(scenarios.id, scenarioId))
     .returning();
   await touch(db, scenario.analysisId);
   return updated!;
+}
+
+// A copy of a scenario, placed last, to vary from it.
+export async function duplicateScenario(
+  db: Db,
+  ctx: Context,
+  scenarioId: string,
+  name?: string,
+): Promise<Scenario> {
+  const source = await findScenario(db, ctx, scenarioId);
+  return addScenario(db, ctx, source.analysisId, {
+    name: name?.trim() || `${source.name} (copy)`,
+    overrides: source.overrides,
+    adjustments: source.adjustments,
+  });
 }
 
 export async function deleteScenario(
@@ -453,12 +480,16 @@ export async function runAnalysis(
     periods.map((p) => p.key),
   );
   for (const period of periods) period.modelInputs = inputs[period.key] ?? {};
-  const run = (overrides: Record<string, string>) =>
+  const run = (
+    overrides: Record<string, string>,
+    adjustments: Scenario["adjustments"],
+  ) =>
     runModel({
       periods,
       projectionYears: client ? 0 : projectionYears,
       lines: detail.lines,
       overrides,
+      adjustments,
       items: items
         .filter((item) => item.kind !== "header")
         .map((item) => ({
@@ -467,7 +498,11 @@ export async function runAnalysis(
           numeric: isNumeric(item),
         })),
     });
-  return { base: run({}), scenario: scenario ? run(scenario.overrides) : null };
+  // The base case is the borrower as is; scenarios add the project.
+  return {
+    base: run({}, []),
+    scenario: scenario ? run(scenario.overrides, scenario.adjustments) : null,
+  };
 }
 
 // Figures of model input lines by period id, then code, canonical as
@@ -582,6 +617,7 @@ export async function repinAnalysis(
             assumptions.has(code),
           ),
         ),
+        adjustments: scenario.adjustments,
       });
     }
     return copy;

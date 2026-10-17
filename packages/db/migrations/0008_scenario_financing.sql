@@ -1,0 +1,1 @@
+ALTER TABLE "analysis_scenarios" ADD COLUMN "adjustments" jsonb DEFAULT '[]'::jsonb NOT NULL;

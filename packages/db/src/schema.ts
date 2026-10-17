@@ -442,6 +442,33 @@ export const analyses = pgTable(
   ],
 ).enableRLS();
 
+// Post-project financing in a scenario, applied from a fiscal year on (by the
+// year periods end in). Amounts and rates are canonical decimal strings.
+export type FinancingAdjustment =
+  | {
+      kind: "loan";
+      id: string;
+      name: string;
+      amount: string;
+      // Annual rate, e.g. "0.065".
+      rate: string;
+      // Amortization period; unused for interest-only loans.
+      years: number;
+      repayment: "blended" | "equal_principal" | "interest_only";
+      fromYear: number;
+    }
+  | {
+      // Debt postponed in favour of the lender and treated as equity, with
+      // the annual interest and principal it no longer costs.
+      kind: "subordination";
+      id: string;
+      name: string;
+      amount: string;
+      interestSaved: string;
+      principalSaved: string;
+      fromYear: number;
+    };
+
 export const analysisScenarios = pgTable(
   "analysis_scenarios",
   {
@@ -453,6 +480,8 @@ export const analysisScenarios = pgTable(
     position: integer().notNull().default(0),
     // Assumption code → value, canonical as in financial model lines.
     overrides: jsonb().$type<Record<string, string>>().notNull().default({}),
+    // New loans and subordinations: the project the scenario adds.
+    adjustments: jsonb().$type<FinancingAdjustment[]>().notNull().default([]),
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],

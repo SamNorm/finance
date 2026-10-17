@@ -23,6 +23,7 @@ const SOURCES: Record<LineageRef["source"], string> = {
   assumption: "Assumption",
   entered: "Entered",
   summed: "Sum of lines",
+  adjustment: "Post-project financing",
   blank: "Blank",
 };
 
@@ -439,6 +440,21 @@ function Lineage({
                         <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                           {content}
                         </div>
+                      )}
+                      {ref.parts && ref.parts.length > 0 && (
+                        <ul className="flex flex-col gap-0.5 px-3 pb-2 text-xs text-muted">
+                          {ref.parts.map((part) => (
+                            <li
+                              key={part.id}
+                              className="flex justify-between gap-3"
+                            >
+                              <span className="truncate">{part.name}</span>
+                              <span className="tabular-nums">
+                                {formatFigure(part.value, "amount")}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </li>
                   );

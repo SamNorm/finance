@@ -57,6 +57,13 @@
       "when": 1792265663542,
       "tag": "0007_model_inputs",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792266044428,
+      "tag": "0008_scenario_financing",
+      "breakpoints": true
     }
   ]
 }

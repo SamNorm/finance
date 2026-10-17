@@ -9,6 +9,7 @@ import {
   validateLines,
   type FinancialModelVersion,
   type Issue,
+  FINANCING_INPUTS,
 } from "@finance/domain";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -74,7 +75,16 @@ async function ModelView({ params, searchParams }: Props) {
       label,
       statement,
       numeric: dataType !== "text" && dataType !== "date",
-    }));
+    }))
+    .concat(
+      FINANCING_INPUTS.map(({ code, label }) => ({
+        code,
+        label,
+        statement: "other" as const,
+        numeric: true,
+        builtin: true,
+      })),
+    );
   const issues =
     version.status === "draft"
       ? validateLines(
