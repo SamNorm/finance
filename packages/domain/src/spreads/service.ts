@@ -291,19 +291,21 @@ export async function deletePeriod(
   await db.delete(periods).where(eq(periods.id, periodId));
 }
 
-async function upsertValue(
-  db: Db,
-  periodId: string,
-  item: ScoringItem,
-  value: string,
-) {
-  const row = isNumeric(item)
-    ? { amount: value, text: null }
-    : { amount: null, text: value };
+const figureRow = (periodId: string, item: ScoringItem, value: string) =>
+  isNumeric(item)
+    ? { periodId, code: item.code, amount: value, text: null }
+    : { periodId, code: item.code, amount: null, text: value };
+
+// Writes figures in one statement, replacing those already entered.
+async function upsertValues(db: Db, rows: ReturnType<typeof figureRow>[]) {
+  if (!rows.length) return;
   await db
     .insert(values)
-    .values({ periodId, code: item.code, ...row })
-    .onConflictDoUpdate({ target: [values.periodId, values.code], set: row });
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [values.periodId, values.code],
+      set: { amount: sql`excluded.amount`, text: sql`excluded.text` },
+    });
 }
 
 // Enters, changes or clears (blank) one figure, read as the item's data type.
@@ -334,7 +336,7 @@ export async function setValue(
       .delete(values)
       .where(and(eq(values.periodId, periodId), eq(values.code, item.code)));
   } else {
-    await upsertValue(db, periodId, item, parsed.value);
+    await upsertValues(db, [figureRow(periodId, item, parsed.value)]);
   }
   return parsed.value;
 }
@@ -514,6 +516,7 @@ export async function pasteSpread(
       const periodId =
         (await findDuplicate(tx, entityId, target.periodEnd, target.months)) ??
         (await addPeriod(tx, ctx, entityId, target)).id;
+      const rows = [];
       for (const row of parsed.matched) {
         const item = byCode.get(row.code!)!;
         const result = parseValue(row.cells[column] ?? "", item.dataType);
@@ -523,9 +526,10 @@ export async function pasteSpread(
           item.kind === "header"
         )
           continue;
-        await upsertValue(tx, periodId, item, result.value);
-        figures++;
+        rows.push(figureRow(periodId, item, result.value));
       }
+      await upsertValues(tx, rows);
+      figures += rows.length;
     }
     return { periods: targets.length, figures };
   });
