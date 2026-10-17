@@ -84,20 +84,20 @@ export const FUNCTIONS: Record<string, FunctionSpec> = {
     min: 1,
     max: 2,
     signature: "PREV(x, periods)",
-    help: "x in the previous period, or the given number of periods back.",
+    help: "x in the previous period of the same length, or the given number of periods back. A year skips year-to-date periods.",
     shiftedArgs: [0],
   },
   CHANGE: {
     min: 1,
     max: 1,
     signature: "CHANGE(x)",
-    help: "x minus x in the previous period.",
+    help: "x minus x in the previous period of the same length.",
   },
   GROWTH: {
     min: 1,
     max: 1,
     signature: "GROWTH(x)",
-    help: "Change from the previous period, divided by the absolute previous value.",
+    help: "Change from the previous period of the same length, divided by the absolute previous value.",
   },
   CAGR: {
     min: 2,

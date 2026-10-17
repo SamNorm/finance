@@ -122,7 +122,9 @@ export function serialize(value: Value): ResultValue {
 }
 
 export function runModel(input: RunInput): AnalysisRun {
-  const last = input.periods.at(-1);
+  // Projected years follow the last fiscal year, past any year-to-date period.
+  const last =
+    input.periods.findLast((p) => p.months === 12) ?? input.periods.at(-1);
   const periods: RunPeriod[] = [
     ...input.periods.map(({ key, end, months, quality }) => ({
       key,

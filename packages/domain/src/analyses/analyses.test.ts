@@ -121,6 +121,33 @@ describe("runModel", () => {
     });
   });
 
+  it("projects from the last fiscal year when a year-to-date follows it", () => {
+    const run = runModel({
+      ...input,
+      periods: [
+        ...input.periods,
+        {
+          key: "ytd",
+          end: "2025-09-30",
+          months: 9,
+          quality: "internal",
+          entered: { REV: "99" },
+          summed: {},
+          modelInputs: {},
+        },
+      ],
+    });
+    expect(run.periods.map((p) => [p.end, p.months])).toEqual([
+      ["2023-12-31", 12],
+      ["2024-12-31", 12],
+      ["2025-09-30", 9],
+      ["2025-12-31", 12],
+      ["2026-12-31", 12],
+    ]);
+    // 2025 grows from 2024, not from the nine months.
+    expect(run.cells.REVENUE![3]!.value).toBe("132");
+  });
+
   it("applies scenario overrides to assumptions", () => {
     const run = runModel({ ...input, overrides: { GROWTH: "-0.15" } });
     expect(run.cells.REVENUE!.map((c) => c.value)).toEqual([

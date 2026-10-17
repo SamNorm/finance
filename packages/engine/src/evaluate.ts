@@ -205,15 +205,22 @@ export function evaluateModel(run: ModelRun): Evaluation {
       evaluate(node.args[i]!, period, refs);
     const period = run.periods[p]!;
 
-    // Evaluates argument 0 a number of periods back.
+    // Evaluates argument 0 a number of periods back, counting only periods
+    // as long as this one: a year steps back to the previous year past any
+    // year-to-date period, and a nine-month period to the previous one.
     const back = (steps: number): Value => {
-      if (p - steps < 0) {
-        return new FormulaError(
-          "#N/A",
-          `No period ${steps === 1 ? "before" : `${steps} periods before`} ${period.end}.`,
-        );
+      let q = p;
+      for (let found = 0; found < steps;) {
+        q--;
+        if (q < 0) {
+          return new FormulaError(
+            "#N/A",
+            `No ${period.months}-month period ${steps === 1 ? "before" : `${steps} periods before`} ${period.end}.`,
+          );
+        }
+        if (run.periods[q]!.months === period.months) found++;
       }
-      return arg(0, p - steps);
+      return arg(0, q);
     };
     const count = (i: number): number | FormulaError => {
       const value = toNumber(arg(i));

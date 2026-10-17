@@ -219,6 +219,23 @@ describe("evaluateModel", () => {
     expect(show(evaluation.cell("TOTAL", 1).value)).toBe("44");
   });
 
+  it("steps back to the previous period of the same length", () => {
+    const evaluation = model({
+      periods: [
+        annual(2023),
+        annual(2024),
+        { key: "ytd", end: "2025-09-30", months: 9 },
+        annual(2025, { projection: "client" }),
+      ],
+      inputs: { REVENUE: [100, 120, 99, 132] },
+      lines: { G: "GROWTH(REVENUE)", P: "PREV(REVENUE)" },
+    });
+    // The year compares with the previous year, not the nine months.
+    expect(show(evaluation.cell("G", 3).value)).toBe("0.1");
+    expect(show(evaluation.cell("P", 3).value)).toBe("120");
+    expect(evaluation.cell("P", 2).value).toMatchObject({ code: "#N/A" });
+  });
+
   it("reads the client's projections like any period", () => {
     const evaluation = model({
       periods: [annual(2024), annual(2025, { projection: "client" })],
