@@ -126,11 +126,12 @@ export function checkModel(
   const calculations = new Set(
     lines.filter((l) => l.kind === "calculation").map((l) => l.code),
   );
-  const edges = new Map<string, Set<string>>();
+  // A period uses either a line's formula or, when projected, its projection
+  // formula, so the two modes are checked for cycles separately.
+  const historical = new Map<string, Set<string>>();
+  const projected = new Map<string, Set<string>>();
   for (const line of lines) {
     if (line.kind !== "calculation") continue;
-    const targets = new Set<string>();
-    edges.set(line.code, targets);
     if (!line.formula?.trim()) {
       issues.push({
         lineCode: line.code,
@@ -138,24 +139,41 @@ export function checkModel(
         message: `"${line.code}" has no formula.`,
       });
     }
+    const reads: Partial<Record<"formula" | "projectionFormula", Set<string>>> =
+      {};
     for (const field of ["formula", "projectionFormula"] as const) {
       const text = line[field];
       if (!text?.trim()) continue;
       const result = checkFormula(text, known);
       for (const issue of result.issues)
         issues.push({ lineCode: line.code, field, ...issue });
-      for (const code of result.samePeriod)
-        if (calculations.has(code)) targets.add(code);
+      reads[field] = new Set(
+        result.samePeriod.filter((code) => calculations.has(code)),
+      );
     }
+    historical.set(line.code, reads.formula ?? new Set());
+    projected.set(
+      line.code,
+      reads.projectionFormula ?? reads.formula ?? new Set(),
+    );
   }
 
-  for (const cycle of findCycles(edges)) {
-    const path = [...cycle, cycle[0]].join(" → ");
-    for (const code of cycle) {
-      issues.push({
-        lineCode: code,
-        message: `Circular reference within a period: ${path}.`,
-      });
+  const reported = new Set<string>();
+  for (const [graph, where] of [
+    [historical, "within a period"],
+    [projected, "within a projected period"],
+  ] as const) {
+    for (const cycle of findCycles(graph)) {
+      const key = [...cycle].sort().join("\u0000");
+      if (reported.has(key)) continue;
+      reported.add(key);
+      const path = [...cycle, cycle[0]].join(" → ");
+      for (const code of cycle) {
+        issues.push({
+          lineCode: code,
+          message: `Circular reference ${where}: ${path}.`,
+        });
+      }
     }
   }
   return issues;

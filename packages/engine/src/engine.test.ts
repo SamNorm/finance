@@ -276,6 +276,46 @@ describe("checkModel", () => {
     ).toEqual([]);
   });
 
+  it("checks historical and projection formulas for cycles separately", () => {
+    const lines = [
+      {
+        code: "SALES",
+        kind: "calculation" as const,
+        formula: "REVENUE",
+        projectionFormula: "PREV(SALES) * 1.05",
+      },
+      {
+        code: "EBITDA_X",
+        kind: "calculation" as const,
+        formula: "EBITDA",
+        projectionFormula: "SALES * MARGIN",
+      },
+      {
+        code: "MARGIN",
+        kind: "calculation" as const,
+        formula: "EBITDA_X / SALES",
+        projectionFormula: "PREV(MARGIN)",
+      },
+    ];
+    expect(checkModel(lines, inputs)).toEqual([]);
+    const projectedCycle = checkModel(
+      [
+        {
+          code: "A",
+          kind: "calculation",
+          formula: "1",
+          projectionFormula: "B",
+        },
+        { code: "B", kind: "calculation", formula: "A" },
+      ],
+      inputs,
+    );
+    expect(projectedCycle.map((i) => i.message)).toEqual([
+      "Circular reference within a projected period: A → B → A.",
+      "Circular reference within a projected period: A → B → A.",
+    ]);
+  });
+
   it("reports syntax, function, arity and reference problems with positions", () => {
     const issues = checkModel(
       [
