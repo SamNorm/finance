@@ -26,6 +26,9 @@ importers:
       '@finance/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@finance/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       next:
         specifier: 16.4.2
         version: 16.4.2(@babel/core@7.29.7)(@types/node@24.19.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

@@ -1,31 +1,42 @@
 "use client";
 
-import type { ScoringModelVersion } from "@finance/domain";
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import {
-  createDraftAction,
-  discardDraftAction,
-  publishAction,
-} from "../actions";
-import type { ActionResult } from "../types";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
 import { Field, Modal } from "@/components/ui";
+import type { ActionResult } from "@/lib/action-result";
 
-type Version = Pick<ScoringModelVersion, "id" | "number" | "status">;
+interface Version {
+  id: string;
+  number: number;
+  status: "draft" | "published" | "retired";
+}
 
+// Publish, discard or open a draft: the version lifecycle shared by scoring
+// models and financial models. The actions are server actions passed in,
+// already bound to their model; the ones that change version navigate from
+// the server.
 export function VersionActions({
   version,
   draftNumber,
   nextNumber,
   publishBlocker,
+  publishNote,
+  publishAction,
+  createDraftAction,
+  discardDraftAction,
 }: {
   version: Version | undefined;
   draftNumber: number | null;
   nextNumber: number;
   // Why the draft can't be published yet, if it can't.
   publishBlocker: string | null;
+  // What publishing freezes, shown in the confirmation.
+  publishNote: string;
+  publishAction: (versionId: string, notes: string) => Promise<ActionResult>;
+  createDraftAction: () => Promise<ActionResult>;
+  discardDraftAction: (versionId: string) => Promise<ActionResult>;
 }) {
   const [pending, startTransition] = useTransition();
   const [failure, setFailure] = useState<Extract<
@@ -35,7 +46,6 @@ export function VersionActions({
   const [publishing, setPublishing] = useState(false);
   const [notes, setNotes] = useState("");
 
-  // Runs an action; the ones that change version navigate from the server.
   function act(action: () => Promise<ActionResult>, then?: () => void) {
     setFailure(null);
     startTransition(async () => {
@@ -104,11 +114,7 @@ export function VersionActions({
           title={`Publish v${version.number}`}
         >
           <div className="flex flex-col gap-4 px-5 py-4">
-            <p className="text-sm text-muted">
-              A published version is frozen. Financial models and analyses that
-              use it keep working exactly as they do today. Later changes go
-              into a new draft.
-            </p>
+            <p className="text-sm text-muted">{publishNote}</p>
             <Field
               label="Notes (optional)"
               hint="What changed, e.g. the template update this follows."

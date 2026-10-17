@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkModel } from "./check";
 import { evaluateModel, type Calculation, type Period } from "./evaluate";
 import { FormulaSyntaxError, parseFormula } from "./parser";
+import { referenceText, renameReferences } from "./references";
 import { Dec, FormulaError, isError, type Value } from "./values";
 
 const annual = (year: number, extra: Partial<Period> = {}): Period => ({
@@ -319,5 +320,27 @@ describe("checkModel", () => {
       "Circular reference within a period: A → B → C → A.",
       "Circular reference within a period: S → S.",
     ]);
+  });
+});
+
+describe("references", () => {
+  it("writes codes bare or bracketed", () => {
+    expect(referenceText("EBITDA")).toBe("EBITDA");
+    expect(referenceText("GROSS-PROFIT")).toBe("[GROSS-PROFIT]");
+    expect(referenceText("1000")).toBe("[1000]");
+    expect(referenceText("true")).toBe("[true]");
+  });
+
+  it("renames references and nothing else", () => {
+    expect(
+      renameReferences(
+        "=ebitda / PREV(EBITDA) + [EBITDA] + EBITDA_X",
+        "EBITDA",
+        "ADJ_EBITDA",
+      ),
+    ).toBe("=ADJ_EBITDA / PREV(ADJ_EBITDA) + [ADJ_EBITDA] + EBITDA_X");
+    expect(renameReferences("A + B", "A", "A-1")).toBe("[A-1] + B");
+    expect(renameReferences('"A" & A', "A", "Z")).toBe('"A" & Z');
+    expect(renameReferences("A +", "A", "Z")).toBe("A +");
   });
 });

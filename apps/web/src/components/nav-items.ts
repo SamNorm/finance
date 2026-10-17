@@ -6,6 +6,7 @@ export interface NavItem {
 export const navItems = (inputsLabel: string): NavItem[] => [
   { href: "/", label: "Overview" },
   { href: "/scoring-model", label: inputsLabel },
+  { href: "/financial-models", label: "Financial models" },
   { href: "/borrowers", label: "Borrowers" },
 ];
 

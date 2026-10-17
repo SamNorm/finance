@@ -1,10 +1,12 @@
 import {
   getOrganization,
   listEntities,
+  listFinancialModels,
   getScoringModel,
   listItems,
   validateItems,
   type EntitySummary,
+  type FinancialModelSummary,
   type ScoringItem,
   type ScoringModelWithVersions,
 } from "@finance/domain";
@@ -28,10 +30,11 @@ export default function Home() {
 async function Overview() {
   const db = getDb();
   const ctx = await getContext();
-  const [organization, model, borrowers] = await Promise.all([
+  const [organization, model, borrowers, models] = await Promise.all([
     getOrganization(db, ctx),
     getScoringModel(db, ctx),
     listEntities(db, ctx),
+    listFinancialModels(db, ctx),
   ]);
   const inputs = inputsLabel(model?.source);
 
@@ -78,13 +81,9 @@ async function Overview() {
           <Step
             number={2}
             title="Financial models"
-            status={<Badge tone="muted">Planned</Badge>}
+            status={<ModelsStatus models={models} />}
           >
-            <Planned>
-              Groupings, metrics, projections, scenarios and covenant tests,
-              built on the {inputs.toLowerCase()}. Versioned, so analyses stay
-              reproducible.
-            </Planned>
+            <ModelsSummary models={models} inputs={inputs} />
           </Step>
           <Step
             number={3}
@@ -216,6 +215,45 @@ function Counts({ items }: { items: ScoringItem[] }) {
         </span>
       ))}
     </>
+  );
+}
+
+function ModelsStatus({ models }: { models: FinancialModelSummary[] }) {
+  const published = models.filter((m) =>
+    m.versions.some((v) => v.status === "published"),
+  ).length;
+  if (!models.length) return <Badge tone="muted">None yet</Badge>;
+  return (
+    <Badge tone={published ? "success" : "accent"}>
+      {published} of {models.length} published
+    </Badge>
+  );
+}
+
+function ModelsSummary({
+  models,
+  inputs,
+}: {
+  models: FinancialModelSummary[];
+  inputs: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <p className="text-sm text-muted">
+        {models.length
+          ? models
+              .slice(0, 4)
+              .map((m) => m.name)
+              .join(", ") + (models.length > 4 ? " and others." : ".")
+          : `Groupings, metrics, projections, scenarios and covenant tests, built on the ${inputs.toLowerCase()}. Versioned, so analyses stay reproducible.`}
+      </p>
+      <Link
+        href="/financial-models"
+        className={models.length ? button.secondary : button.primary}
+      >
+        {models.length ? "Open financial models" : "Build a model"}
+      </Link>
+    </div>
   );
 }
 

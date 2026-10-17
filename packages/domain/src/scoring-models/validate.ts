@@ -3,7 +3,7 @@ import type { ScoringItem } from "./types";
 
 // Codes are referenced by statements and formulas, so they stay simple: no
 // spaces or brackets. Case-insensitive duplicates are rejected below.
-const CODE_PATTERN = /^[A-Za-z0-9_.:/-]{1,64}$/;
+export const CODE_PATTERN = /^[A-Za-z0-9_.:/-]{1,64}$/;
 
 // Issues a draft can't be saved with: they break identity or the tree itself.
 // Every other error is allowed in a draft and only blocks publishing, so a

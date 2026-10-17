@@ -21,6 +21,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 const createdAt = () =>
@@ -243,5 +244,108 @@ export const statementValues = pgTable(
       "statement_values_one_kind",
       sql`(${t.amount} is null) <> (${t.text} is null)`,
     ),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// Financial models (§5.3–5.4): many per organization, versioned. A version
+// binds to a scoring model version and holds lines: assumptions, calculations
+// written as formulas over item and line codes, and headers for layout.
+
+export const financialModels = pgTable(
+  "financial_models",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    description: text(),
+    // Set when the model was duplicated from another as a variant.
+    variantOfId: uuid().references((): AnyPgColumn => financialModels.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("financial_models_organization").on(t.organizationId),
+    index("financial_models_variant_of").on(t.variantOfId),
+  ],
+).enableRLS();
+
+export const financialModelVersions = pgTable(
+  "financial_model_versions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    financialModelId: uuid()
+      .notNull()
+      .references(() => financialModels.id, { onDelete: "cascade" }),
+    number: integer().notNull(),
+    status: versionStatus().notNull().default("draft"),
+    // The scoring model version whose item codes the formulas use.
+    scoringModelVersionId: uuid()
+      .notNull()
+      .references(() => scoringModelVersions.id),
+    notes: text(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    publishedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("financial_model_versions_number").on(
+      t.financialModelId,
+      t.number,
+    ),
+    uniqueIndex("financial_model_versions_one_draft")
+      .on(t.financialModelId)
+      .where(sql`${t.status} = 'draft'`),
+    index("financial_model_versions_scoring_model_version").on(
+      t.scoringModelVersionId,
+    ),
+    check(
+      "financial_model_versions_published_at",
+      sql`(${t.status} = 'draft') = (${t.publishedAt} is null)`,
+    ),
+  ],
+).enableRLS();
+
+export const lineKind = pgEnum("financial_model_line_kind", [
+  "assumption",
+  "calculation",
+  "header",
+]);
+
+// How a line's values display; "flag" is a TRUE/FALSE test such as a covenant.
+export const lineFormat = pgEnum("financial_model_line_format", [
+  "amount",
+  "percent",
+  "ratio",
+  "count",
+  "flag",
+  "text",
+]);
+
+export const financialModelLines = pgTable(
+  "financial_model_lines",
+  {
+    versionId: uuid()
+      .notNull()
+      .references(() => financialModelVersions.id, { onDelete: "cascade" }),
+    code: text().notNull(),
+    label: text().notNull(),
+    kind: lineKind().notNull(),
+    position: integer().notNull(),
+    format: lineFormat().notNull().default("amount"),
+    // Calculations: the formula, and optionally another for projected periods.
+    formula: text(),
+    projectionFormula: text(),
+    // Assumptions: the base-case value, which scenarios override.
+    defaultValue: text(),
+    description: text(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.versionId, t.code] }),
+    index("financial_model_lines_position").on(t.versionId, t.position),
   ],
 ).enableRLS();

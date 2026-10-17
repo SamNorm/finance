@@ -17,6 +17,7 @@ export {
 } from "./evaluate";
 export { canonicalFunction, FUNCTIONS, type FunctionSpec } from "./functions";
 export { FormulaSyntaxError, parseFormula, type Node } from "./parser";
+export { referenceText, renameReferences } from "./references";
 export {
   Dec,
   FormulaError,

@@ -70,6 +70,25 @@ export async function getLatestPublishedVersion(
   return row?.version ?? null;
 }
 
+// Newest first: the versions spreads and financial models can bind to.
+export async function listPublishedVersions(
+  db: Db,
+  ctx: Context,
+): Promise<ScoringModelVersion[]> {
+  const rows = await db
+    .select({ version: versions })
+    .from(versions)
+    .innerJoin(scoringModels, eq(scoringModels.id, versions.scoringModelId))
+    .where(
+      and(
+        eq(scoringModels.organizationId, ctx.organizationId),
+        eq(versions.status, "published"),
+      ),
+    )
+    .orderBy(desc(versions.number));
+  return rows.map((row) => row.version);
+}
+
 // Creates the model with an empty draft v1.
 export async function createScoringModel(
   db: Db,

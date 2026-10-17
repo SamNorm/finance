@@ -14,7 +14,12 @@ import { getContext, getDb } from "@/lib/server";
 import { CreateModel } from "./_components/create-model";
 import { IssueList } from "@/components/issue-list";
 import { ItemsWorkspace } from "./_components/items-workspace";
-import { VersionActions } from "./_components/version-actions";
+import { VersionActions } from "@/components/version-actions";
+import {
+  createDraftAction,
+  discardDraftAction,
+  publishAction,
+} from "./actions";
 
 export const metadata: Metadata = { title: "Scoring model" };
 
@@ -102,6 +107,10 @@ async function ScoringModelView({
             draftNumber={draft?.number ?? null}
             nextNumber={(model.versions.at(-1)?.number ?? 0) + 1}
             publishBlocker={publishBlocker(items.length, issues)}
+            publishNote="A published version is frozen. Financial models and analyses that use it keep working exactly as they do today. Later changes go into a new draft."
+            publishAction={publishAction}
+            createDraftAction={createDraftAction}
+            discardDraftAction={discardDraftAction}
           />
         </div>
       </div>
