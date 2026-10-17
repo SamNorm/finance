@@ -4,7 +4,8 @@
 type DataType =
   "amount" | "percent" | "ratio" | "count" | "date" | "text" | "flag";
 
-const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
+// Amounts show whole units; the exact figure is kept and shown while editing.
+const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const whole = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const percent = new Intl.NumberFormat("en-CA", {
   style: "percent",

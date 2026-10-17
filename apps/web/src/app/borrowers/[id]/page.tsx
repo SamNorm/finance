@@ -1,4 +1,9 @@
-import { DomainError, getSpread, type Issue } from "@finance/domain";
+import {
+  DomainError,
+  getSpread,
+  listAnalyses,
+  type Issue,
+} from "@finance/domain";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -36,6 +41,7 @@ async function SpreadView({ params, searchParams }: Props) {
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
+  const analyses = await listAnalyses(db, ctx, { entityId: id });
   const items = spread.layout?.items ?? [];
   const statement =
     STATEMENTS.find((s) => s.value === query.statement)?.value ??
@@ -103,6 +109,42 @@ async function SpreadView({ params, searchParams }: Props) {
           />
         </>
       )}
+
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold">Analyses</h2>
+          <Link
+            href={`/analyses?borrower=${entity.id}`}
+            className={button.secondary}
+          >
+            New analysis
+          </Link>
+        </div>
+        {analyses.length ? (
+          <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+            {analyses.map((a) => (
+              <li
+                key={a.id}
+                className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
+              >
+                <Link
+                  href={`/analyses/${a.id}`}
+                  className="font-medium hover:text-accent"
+                >
+                  {a.name}
+                </Link>
+                <span className="text-muted">
+                  {a.modelName} v{a.versionNumber}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted">
+            No analyses for {entity.name} yet.
+          </p>
+        )}
+      </section>
     </div>
   );
 }

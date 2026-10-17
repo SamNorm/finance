@@ -2,7 +2,7 @@ import { getScoringModel } from "@finance/domain";
 import Link from "next/link";
 import { inputsLabel } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
-import { navItems, navLinkClass } from "./nav-items";
+import { navClass, navItems, navLinkClass } from "./nav-items";
 import { NavLinks } from "./nav-links";
 
 // The inputs entry is named after what the organization keeps: a scoring
@@ -16,7 +16,7 @@ export async function MainNav() {
 // the static shell of any route, including ones with an ID in the path.
 export function MainNavFallback() {
   return (
-    <nav className="flex h-full items-center gap-5 text-sm">
+    <nav className={navClass}>
       {navItems(inputsLabel(undefined)).map(({ href, label }) => (
         <Link key={href} href={href} className={navLinkClass}>
           {label}

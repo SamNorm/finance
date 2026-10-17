@@ -349,3 +349,59 @@ export const financialModelLines = pgTable(
     index("financial_model_lines_position").on(t.versionId, t.position),
   ],
 ).enableRLS();
+
+// ---------------------------------------------------------------------------
+// Analyses (§5.5): a borrower run through a pinned financial model version,
+// over chosen periods plus projected years, with scenarios that override
+// assumptions. Pinning keeps a credit file reproducible after later versions.
+
+export const analyses = pgTable(
+  "analyses",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    // Always a published version, so it never changes under the analysis.
+    financialModelVersionId: uuid()
+      .notNull()
+      .references(() => financialModelVersions.id),
+    name: text().notNull(),
+    // Statement periods included; empty means all of the borrower's periods.
+    periodIds: uuid()
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    projectionYears: integer().notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("analyses_organization").on(t.organizationId),
+    index("analyses_entity").on(t.entityId),
+    index("analyses_financial_model_version").on(t.financialModelVersionId),
+    check(
+      "analyses_projection_years",
+      sql`${t.projectionYears} between 0 and 10`,
+    ),
+  ],
+).enableRLS();
+
+export const analysisScenarios = pgTable(
+  "analysis_scenarios",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    analysisId: uuid()
+      .notNull()
+      .references(() => analyses.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    position: integer().notNull().default(0),
+    // Assumption code → value, canonical as in financial model lines.
+    overrides: jsonb().$type<Record<string, string>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],
+).enableRLS();

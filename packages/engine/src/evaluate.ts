@@ -442,8 +442,9 @@ const finite = (value: Value): Value =>
     ? new FormulaError("#NUM!", "The result is too large.")
     : value;
 
-// "2024-06-30" → "2023-06-30". February 29 becomes February 28.
-function shiftYear(date: string, years: number) {
+// shiftYear("2024-06-30", -1) → "2023-06-30". February 29 becomes February 28
+// in years without one.
+export function shiftYear(date: string, years: number) {
   const year = Number(date.slice(0, 4)) + years;
   const rest = date.slice(4);
   if (

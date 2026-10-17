@@ -225,6 +225,22 @@ export async function deleteFinancialModel(
   modelId: string,
 ): Promise<void> {
   await findModel(db, ctx, modelId);
+  // Analyses pin published versions; deleting the model would break them.
+  const [used] = await db
+    .select({ id: schema.analyses.id })
+    .from(schema.analyses)
+    .innerJoin(
+      versions,
+      eq(versions.id, schema.analyses.financialModelVersionId),
+    )
+    .where(eq(versions.financialModelId, modelId))
+    .limit(1);
+  if (used) {
+    throw new DomainError(
+      "conflict",
+      "Analyses use this model. Delete them first.",
+    );
+  }
   await db.delete(models).where(eq(models.id, modelId));
 }
 

@@ -14,6 +14,7 @@ export {
   type ModelRun,
   type Period,
   type Ref,
+  shiftYear,
 } from "./evaluate";
 export { canonicalFunction, FUNCTIONS, type FunctionSpec } from "./functions";
 export { FormulaSyntaxError, parseFormula, type Node } from "./parser";

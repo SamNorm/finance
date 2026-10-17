@@ -39,7 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Suspense fallback={<MainNavFallback />}>
               <MainNav />
             </Suspense>
-            <div className="ml-auto flex items-center gap-2 text-xs text-muted">
+            <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted">
               <span className="hidden sm:inline">Dev organization</span>
               <span className="rounded bg-warning-soft px-1.5 py-0.5 font-medium text-warning">
                 No sign-in

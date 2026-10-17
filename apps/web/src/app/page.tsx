@@ -1,5 +1,6 @@
 import {
   getOrganization,
+  listAnalyses,
   listEntities,
   listFinancialModels,
   getScoringModel,
@@ -30,11 +31,12 @@ export default function Home() {
 async function Overview() {
   const db = getDb();
   const ctx = await getContext();
-  const [organization, model, borrowers, models] = await Promise.all([
+  const [organization, model, borrowers, models, analyses] = await Promise.all([
     getOrganization(db, ctx),
     getScoringModel(db, ctx),
     listEntities(db, ctx),
     listFinancialModels(db, ctx),
+    listAnalyses(db, ctx),
   ]);
   const inputs = inputsLabel(model?.source);
 
@@ -95,12 +97,33 @@ async function Overview() {
           <Step
             number={4}
             title="Analyses"
-            status={<Badge tone="muted">Planned</Badge>}
+            status={
+              analyses.length ? (
+                <Badge tone="success">
+                  {analyses.length}{" "}
+                  {analyses.length === 1 ? "analysis" : "analyses"}
+                </Badge>
+              ) : (
+                <Badge tone="muted">None yet</Badge>
+              )
+            }
           >
-            <Planned>
-              A borrower, a financial model version, periods and scenarios,
-              pinned so the credit file reproduces exactly.
-            </Planned>
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <p className="text-sm text-muted">
+                {analyses.length
+                  ? analyses
+                      .slice(0, 3)
+                      .map((a) => `${a.name} (${a.entityName})`)
+                      .join(", ") + (analyses.length > 3 ? " and others." : ".")
+                  : "A borrower, a financial model version, periods and scenarios, pinned so the credit file reproduces exactly."}
+              </p>
+              <Link
+                href="/analyses"
+                className={analyses.length ? button.secondary : button.primary}
+              >
+                {analyses.length ? "Open analyses" : "Run an analysis"}
+              </Link>
+            </div>
           </Step>
         </ol>
       </section>
@@ -333,10 +356,6 @@ function Step({
       </div>
     </li>
   );
-}
-
-function Planned({ children }: { children: ReactNode }) {
-  return <p className="text-sm text-muted">{children}</p>;
 }
 
 const tones = {
