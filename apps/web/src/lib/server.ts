@@ -1,4 +1,5 @@
 import "server-only";
+import { connection } from "next/server";
 import { createDb } from "@finance/db";
 import {
   devContext,
@@ -26,6 +27,8 @@ export function getDb() {
 // the dev organization, and a production build refuses to run unless
 // AUTH_MODE=dev says so explicitly. Real authentication replaces this function.
 export async function getContext(): Promise<Context> {
+  // Identity is per request; prerendering at build time stops here.
+  await connection();
   if (
     process.env.NODE_ENV === "production" &&
     process.env.AUTH_MODE !== "dev"
