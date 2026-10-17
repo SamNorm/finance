@@ -10,6 +10,7 @@ import {
 } from "@finance/db";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
+import { normalizeDebtSchedule } from "../financing/debt-schedule";
 import {
   getLatestPublishedVersion,
   getScoringModel,
@@ -140,6 +141,22 @@ export async function createEntity(
       riskRating: optional(input.riskRating) ?? null,
       notes: optional(input.notes) ?? null,
     })
+    .returning();
+  return entity!;
+}
+
+// Replaces the borrower's existing loans, as of a date.
+export async function setDebtSchedule(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  input: Parameters<typeof normalizeDebtSchedule>[0],
+): Promise<Entity> {
+  await getEntity(db, ctx, entityId);
+  const [entity] = await db
+    .update(entities)
+    .set({ debtSchedule: normalizeDebtSchedule(input) })
+    .where(eq(entities.id, entityId))
     .returning();
   return entity!;
 }

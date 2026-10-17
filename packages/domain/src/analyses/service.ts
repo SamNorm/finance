@@ -499,6 +499,7 @@ export async function runAnalysis(
       lines: detail.lines,
       overrides,
       adjustments,
+      debtSchedule: spread.entity.debtSchedule,
       items: items
         .filter((item) => item.kind !== "header")
         .map((item) => ({

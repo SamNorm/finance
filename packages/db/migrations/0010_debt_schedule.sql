@@ -1,0 +1,1 @@
+ALTER TABLE "entities" ADD COLUMN "debt_schedule" jsonb DEFAULT '{"asOf":null,"loans":[]}'::jsonb NOT NULL;

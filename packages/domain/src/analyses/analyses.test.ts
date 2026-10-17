@@ -20,7 +20,12 @@ import {
   replaceItems,
 } from "../scoring-models/service";
 import { fixture } from "../scoring-models/test-helpers";
-import { addPeriod, createEntity, setValue } from "../spreads/service";
+import {
+  addPeriod,
+  createEntity,
+  setDebtSchedule,
+  setValue,
+} from "../spreads/service";
 import { runModel, type RunInput } from "./run";
 import {
   addScenario,
@@ -647,6 +652,55 @@ describe("analysis service", () => {
     expect(detail.analysis.charts.map((c) => c.title)).toEqual([
       "Revenue and EBITDA",
     ]);
+  });
+
+  it("reads the borrower's existing loans in projected years", async () => {
+    const { entity, context, model } = setup;
+    const draft = await createFinancialModelDraft(db, context, model.id);
+    await updateLine(db, context, draft.id, "DEBT_SERVICE", {
+      projectionFormula:
+        "IF(ISBLANK(DEBT_SCHEDULE_PRINCIPAL), PREV(DEBT_SERVICE), DEBT_SCHEDULE_INTEREST + DEBT_SCHEDULE_PRINCIPAL)",
+    });
+    const v2 = await publishFinancialModelVersion(db, context, draft.id);
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v2.id,
+      name: "A",
+      projectionYears: 1,
+    });
+    // Without a schedule, the projection carries debt service forward.
+    let { base } = await runAnalysis(db, ctx, analysis.id);
+    expect(base.cells.DEBT_SERVICE![2]!.value).toBe("200");
+
+    await rejects(
+      setDebtSchedule(db, ctx, entity.id, {
+        asOf: "2024-12-31",
+        loans: [{ name: "Term loan", balance: "-5" }],
+      }),
+      "invalid",
+    );
+    await setDebtSchedule(db, ctx, entity.id, {
+      asOf: "2024-12-31",
+      loans: [
+        {
+          name: "Term loan",
+          balance: "1,200",
+          rate: "6%",
+          repayment: "equal_principal",
+          years: "10",
+        },
+      ],
+    });
+    ({ base } = await runAnalysis(db, ctx, analysis.id));
+    // 2025: 120 of principal and 68.70 of interest on the schedule.
+    expect(base.cells.DEBT_SERVICE![2]!.value).toBe("188.7");
+    expect(base.cells.DEBT_SERVICE![2]!.refs[0]).toMatchObject({
+      code: "DEBT_SCHEDULE_PRINCIPAL",
+      source: "schedule",
+      label: "Existing loans: principal",
+    });
+    // Actual years still read the statements.
+    expect(base.cells.DEBT_SERVICE![1]!.value).toBe("200");
   });
 
   it("uses the client's projections instead of assumptions when asked", async () => {

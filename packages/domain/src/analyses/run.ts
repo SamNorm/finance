@@ -9,13 +9,18 @@ import {
 } from "@finance/engine";
 import { assumptionValue } from "../financial-models/validate";
 import type { ModelLine } from "../financial-models/types";
+import type { FinancingPart } from "../financing/common";
+import {
+  debtScheduleValues,
+  EMPTY_SCHEDULE,
+  type DebtSchedule,
+} from "../financing/debt-schedule";
 import {
   FINANCING_CODES,
   FINANCING_INPUTS,
   financingValues,
   type FinancingAdjustment,
   type FinancingCode,
-  type FinancingPart,
 } from "../financing/financing";
 import { TOLERANCE } from "../spreads/checks";
 import type { StatementQuality } from "../spreads/service";
@@ -45,13 +50,14 @@ export interface LineageRef extends ResultValue {
   period: number;
   // Where the value came from: a model line, an assumption, a figure entered
   // in the spread or for the model, a subtotal summed from its lines, the
-  // scenario's financing, or nothing.
+  // scenario's financing, the borrower's debt schedule, or nothing.
   source:
     | "calculation"
     | "assumption"
     | "entered"
     | "summed"
     | "adjustment"
+    | "schedule"
     | "blank";
   // For financing: each loan's or subordination's share.
   parts?: FinancingPart[];
@@ -108,6 +114,8 @@ export interface RunInput {
   overrides: Record<string, string>;
   // The scenario's post-project financing.
   adjustments: readonly FinancingAdjustment[];
+  // The borrower's existing loans.
+  debtSchedule?: DebtSchedule;
   // Items of the scoring model version the model is bound to.
   items: readonly { code: string; label: string; numeric: boolean }[];
 }
@@ -148,6 +156,18 @@ export function runModel(input: RunInput): AnalysisRun {
   const lineByCode = new Map(input.lines.map((line) => [line.code, line]));
   const inputLines = input.lines.filter((line) => line.kind === "input");
   const financing = financingValues(input.adjustments, periods);
+  const schedule = debtScheduleValues(
+    input.debtSchedule ?? EMPTY_SCHEDULE,
+    periods.map((p) => ({
+      end: p.end,
+      months: p.months,
+      projected: p.projection !== null,
+    })),
+  );
+  const blank = { value: null, parts: [] };
+  financing.DEBT_SCHEDULE_INTEREST = schedule.interest.map((v) => v ?? blank);
+  financing.DEBT_SCHEDULE_PRINCIPAL = schedule.principal.map((v) => v ?? blank);
+  financing.DEBT_SCHEDULE_BALANCE = schedule.balance.map((v) => v ?? blank);
   const isFinancing = (code: string): code is FinancingCode =>
     FINANCING_CODES.includes(code);
   const financingLabels = new Map<string, string>(
@@ -205,7 +225,8 @@ export function runModel(input: RunInput): AnalysisRun {
   });
 
   const sourceOf = (code: string, p: number): LineageRef["source"] => {
-    if (isFinancing(code)) return "adjustment";
+    if (isFinancing(code))
+      return code.startsWith("DEBT_SCHEDULE_") ? "schedule" : "adjustment";
     const line = lineByCode.get(code);
     if (line?.kind === "input") {
       if (periods[p]?.projection === "assumptions" && line.projectionFormula)

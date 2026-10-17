@@ -78,7 +78,7 @@ describe("financingValues", () => {
       periods,
     );
     const show = (code: keyof typeof values) =>
-      values[code].map((v) => round(v.value));
+      values[code].map((v) => round(v.value!));
     expect(show("PROFORMA_DEBT")).toEqual(["0.00", "1080000.00", "960000.00"]);
     expect(show("PROFORMA_DEBT_CURRENT")).toEqual([
       "0.00",
@@ -104,8 +104,8 @@ describe("financingValues", () => {
       [loan()],
       [{ end: "2025-06-30", months: 6 }],
     );
-    expect(round(values.PROFORMA_PRINCIPAL[0]!.value)).toBe("60000.00");
-    expect(round(values.PROFORMA_DEBT[0]!.value)).toBe("1080000.00");
+    expect(round(values.PROFORMA_PRINCIPAL[0]!.value!)).toBe("60000.00");
+    expect(round(values.PROFORMA_DEBT[0]!.value!)).toBe("1080000.00");
   });
 });
 

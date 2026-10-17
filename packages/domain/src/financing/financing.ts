@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 import { DomainError } from "../errors";
-import { parseValue } from "../spreads/values";
+import { REPAYMENTS, type Repayment } from "./amortization";
+import {
+  MAX_YEARS,
+  parseAmount,
+  parseRate,
+  type Amount,
+  type FinancingPart,
+  type FinancingValue,
+} from "./common";
 
 // Post-project financing (§5.5): new loans and debt subordinated to equity,
 // added by a scenario from a fiscal year on. Their effect reaches formulas
@@ -15,9 +23,6 @@ export type Subordination = Extract<
   FinancingAdjustment,
   { kind: "subordination" }
 >;
-export type Repayment = Loan["repayment"];
-
-type Amount = InstanceType<typeof Dec>;
 
 // The built-in inputs every formula can read. They are zero without
 // financing, so a model can add them unconditionally.
@@ -56,20 +61,30 @@ export const FINANCING_INPUTS = [
     description:
       "Debt postponed in favour of the lender and treated as equity, from its year on.",
   },
+  {
+    code: "DEBT_SCHEDULE_INTEREST",
+    label: "Existing loans: interest",
+    description:
+      "Interest on the borrower's existing loans, from its debt schedule. Blank in actual periods, so a formula can fall back on the statements with ISBLANK.",
+  },
+  {
+    code: "DEBT_SCHEDULE_PRINCIPAL",
+    label: "Existing loans: principal",
+    description:
+      "Scheduled principal on the borrower's existing loans, from its debt schedule. Blank in actual periods.",
+  },
+  {
+    code: "DEBT_SCHEDULE_BALANCE",
+    label: "Existing loans: balance",
+    description:
+      "What the borrower's existing loans owe at the period end, from its debt schedule. Blank in actual periods.",
+  },
 ] as const;
 
 export type FinancingCode = (typeof FINANCING_INPUTS)[number]["code"];
 export const FINANCING_CODES: readonly string[] = FINANCING_INPUTS.map(
   (input) => input.code,
 );
-
-export const REPAYMENTS: Record<Repayment, string> = {
-  blended: "Blended payments",
-  equal_principal: "Equal principal",
-  interest_only: "Interest only",
-};
-
-const MAX_YEARS = 50;
 
 // An adjustment as typed in a form: every field as text.
 export type AdjustmentInput = {
@@ -102,7 +117,7 @@ export function normalizeAdjustments(
         "invalid",
         `${what}: choose the year it applies from.`,
       );
-    const amount = money(input.amount, what, "amount", true);
+    const amount = parseAmount(input.amount, what, "amount", true);
     if (input.kind === "loan") {
       const repayment = input.repayment as Repayment;
       if (!Object.hasOwn(REPAYMENTS, repayment ?? ""))
@@ -122,7 +137,7 @@ export function normalizeAdjustments(
         id,
         name,
         amount,
-        rate: rate(input.rate, what),
+        rate: parseRate(input.rate, what),
         years: repayment === "interest_only" ? 0 : years,
         repayment,
         fromYear,
@@ -134,8 +149,12 @@ export function normalizeAdjustments(
         id,
         name,
         amount,
-        interestSaved: money(input.interestSaved, what, "interest saved"),
-        principalSaved: money(input.principalSaved, what, "principal saved"),
+        interestSaved: parseAmount(input.interestSaved, what, "interest saved"),
+        principalSaved: parseAmount(
+          input.principalSaved,
+          what,
+          "principal saved",
+        ),
         fromYear,
       };
     }
@@ -144,57 +163,6 @@ export function normalizeAdjustments(
       `"${input.kind}" isn't a kind of financing.`,
     );
   });
-}
-
-function money(
-  raw: string | undefined,
-  what: string,
-  field: string,
-  required = false,
-): string {
-  const parsed = parseValue(String(raw ?? ""), "amount");
-  if ("error" in parsed)
-    throw new DomainError("invalid", `${what}: ${parsed.error}`);
-  if (parsed.value === null) {
-    if (required)
-      throw new DomainError("invalid", `${what}: enter the ${field}.`);
-    return "0";
-  }
-  const value = new Dec(parsed.value);
-  if (value.isNegative() || (required && value.isZero()))
-    throw new DomainError("invalid", `${what}: the ${field} must be positive.`);
-  return value.toFixed();
-}
-
-// "6.5%", "6.5" and "0.065" all mean 6.5%: a rate typed without a percent
-// sign and at least 1 is read as a percentage.
-function rate(raw: string | undefined, what: string): string {
-  const text = String(raw ?? "").trim();
-  const parsed = parseValue(text, "percent");
-  if ("error" in parsed)
-    throw new DomainError("invalid", `${what}: ${parsed.error}`);
-  if (parsed.value === null)
-    throw new DomainError("invalid", `${what}: enter the interest rate.`);
-  let value = new Dec(parsed.value);
-  if (!text.endsWith("%") && value.gte(1)) value = value.div(100);
-  if (value.isNegative() || value.gte(1))
-    throw new DomainError(
-      "invalid",
-      `${what}: the rate must be between 0% and 100%.`,
-    );
-  return value.toFixed();
-}
-
-// One adjustment's share of a built-in input in a period.
-export interface FinancingPart {
-  id: string;
-  name: string;
-  value: string;
-}
-
-export interface FinancingValue {
-  value: Amount;
-  parts: FinancingPart[];
 }
 
 interface LoanYear {
@@ -261,7 +229,7 @@ export function financingValues(
   ) => {
     if (value.isZero()) return;
     const cell = result[code][p]!;
-    cell.value = cell.value.plus(value);
+    cell.value = cell.value!.plus(value);
     cell.parts.push({
       id: adjustment.id,
       name: adjustment.name,

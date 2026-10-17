@@ -7,10 +7,12 @@ import {
   deletePeriod,
   pasteSpread,
   previewPaste,
+  setDebtSchedule,
   setValue,
   STATEMENT_QUALITIES,
   updateEntity,
   updatePeriod,
+  type ExistingLoanInput,
   type PastePreview,
   type PasteTarget,
   type PeriodInput,
@@ -131,5 +133,22 @@ export async function pasteSpreadAction(
       quality: quality(t.quality),
     }));
     return pasteSpread(db, ctx, entityId, String(source), clean);
+  });
+}
+
+export async function saveDebtScheduleAction(
+  entityId: string,
+  schedule: { asOf: string; loans: ExistingLoanInput[] },
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (!Array.isArray(schedule?.loans)) throw invalid("Loans must be a list.");
+    return setDebtSchedule(db, ctx, entityId, {
+      asOf: String(schedule.asOf ?? ""),
+      loans: schedule.loans.map((loan) =>
+        Object.fromEntries(
+          Object.entries(loan ?? {}).map(([k, v]) => [k, String(v ?? "")]),
+        ),
+      ),
+    });
   });
 }

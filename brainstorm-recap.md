@@ -121,6 +121,7 @@ Each financial model version contains:
 - **Statements:** values per entity and per period, keyed by input item code. They are stored once at the input layer, so every financial model reads the same data. Enter once, and every model fills.
 - **Analysis:** an entity, a financial model version, a set of periods and a set of scenarios. It is pinned and reproducible; this is what goes into a credit file.
 - **Scenario:** overrides of model assumptions within an analysis, e.g. revenue −15%.
+- **Existing debt:** each borrower has a schedule of its existing loans as of a date: balance, rate, repayment and amortization left. Projected years and post-project columns use their actual scheduled payments (`DEBT_SCHEDULE_INTEREST`, `_PRINCIPAL`, `_BALANCE`), running back before the schedule's date for a year that began earlier. Actual periods leave them blank, so a model falls back on the statements.
 - **Post-project financing:** a scenario can add new loans and subordinate existing debt to equity, each from a fiscal year on. The base case is the borrower as is, so comparing a scenario with it shows the project's effect on debt service and leverage.
   - **New loan:** amount, rate, amortization and repayment (blended, equal principal or interest only). It is drawn at the start of its first year and paid monthly.
   - **Subordination:** debt postponed in favour of the lender and treated as equity, with the annual interest and principal it no longer costs.

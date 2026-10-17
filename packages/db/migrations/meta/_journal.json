@@ -71,6 +71,13 @@
       "when": 1792266463810,
       "tag": "0009_charts",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792270205539,
+      "tag": "0010_debt_schedule",
+      "breakpoints": true
     }
   ]
 }

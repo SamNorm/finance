@@ -169,6 +169,22 @@ export const scoringModelItems = pgTable(
 // Borrowers and spreads (§5.5): figures per entity and period, keyed by input
 // item code and stored once, so every financial model reads the same data.
 
+// The borrower's existing loans as of a date, so analyses can use their
+// actual future debt service. Amounts and rates are canonical decimal strings.
+export interface DebtSchedule {
+  asOf: string | null;
+  loans: {
+    id: string;
+    name: string;
+    balance: string;
+    // Annual rate, e.g. "0.065".
+    rate: string;
+    repayment: "blended" | "equal_principal" | "interest_only";
+    // Months of amortization left; 0 for interest-only loans.
+    months: number;
+  }[];
+}
+
 // A borrower or acquisition target.
 export const entities = pgTable(
   "entities",
@@ -189,6 +205,10 @@ export const entities = pgTable(
     // the app never computes it (§3).
     riskRating: text(),
     notes: text(),
+    debtSchedule: jsonb()
+      .$type<DebtSchedule>()
+      .notNull()
+      .default({ asOf: null, loans: [] }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

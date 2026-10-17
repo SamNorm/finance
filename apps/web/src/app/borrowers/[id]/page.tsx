@@ -3,6 +3,7 @@ import {
   getSpread,
   listAnalyses,
   listScoringModels,
+  nextYearDebtService,
   type Issue,
 } from "@finance/domain";
 import type { Metadata } from "next";
@@ -15,6 +16,7 @@ import { formatDate } from "@/lib/format";
 import { STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { BorrowerActions } from "../_components/borrower-actions";
+import { DebtScheduleEditor } from "../_components/debt-schedule";
 import { SpreadGrid, type GridPeriod } from "../_components/spread-grid";
 
 export const metadata: Metadata = { title: "Borrower" };
@@ -147,6 +149,17 @@ async function SpreadView({ params, searchParams }: Props) {
           />
         </>
       )}
+
+      <DebtScheduleEditor
+        entityId={entity.id}
+        schedule={entity.debtSchedule}
+        nextYear={Object.fromEntries(
+          nextYearDebtService(entity.debtSchedule).map(({ id, ...year }) => [
+            id,
+            year,
+          ]),
+        )}
+      />
 
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-3">
