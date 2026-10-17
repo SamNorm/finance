@@ -1,0 +1,41 @@
+code,label,statement,parent,kind,data_type,aggregation,expected_sign,description
+RE_BASE_RENT,Base rent,IS,RE_GROSS_POTENTIAL_INCOME,,,,positive,Contractual rent at full occupancy
+RE_RECOVERIES,Expense recoveries,IS,RE_GROSS_POTENTIAL_INCOME,,,,positive,Taxes and operating costs billed back to tenants
+RE_PARKING,Parking income,IS,RE_GROSS_POTENTIAL_INCOME,,,,positive,
+RE_OTHER_INCOME,Other income,IS,RE_GROSS_POTENTIAL_INCOME,,,,,Laundry, storage, signage
+RE_GROSS_POTENTIAL_INCOME,Gross potential income,IS,RE_EFFECTIVE_GROSS_INCOME,subtotal,,,,
+RE_VACANCY,Vacancy and credit loss,IS,RE_EFFECTIVE_GROSS_INCOME,,,subtract,positive,Entered as a positive number
+RE_EFFECTIVE_GROSS_INCOME,Effective gross income,IS,RE_NOI,subtotal,,,,
+RE_PROPERTY_TAXES,Property taxes,IS,RE_OPERATING_EXPENSES,,,,positive,Municipal and school taxes
+RE_INSURANCE,Insurance,IS,RE_OPERATING_EXPENSES,,,,positive,
+RE_UTILITIES,Utilities,IS,RE_OPERATING_EXPENSES,,,,positive,
+RE_REPAIRS,Repairs and maintenance,IS,RE_OPERATING_EXPENSES,,,,positive,
+RE_MANAGEMENT,Management fees,IS,RE_OPERATING_EXPENSES,,,,positive,
+RE_PAYROLL,Site payroll,IS,RE_OPERATING_EXPENSES,,,,positive,Superintendent and on-site staff
+RE_OTHER_EXPENSES,Other operating expenses,IS,RE_OPERATING_EXPENSES,,,,,
+RE_OPERATING_EXPENSES,Total operating expenses,IS,RE_NOI,subtotal,,subtract,,
+RE_NOI,Net operating income,IS,,subtotal,,,,Before financing and depreciation
+RE_INTEREST,Interest on mortgages,IS,,,,,positive,Below net operating income
+RE_DEPRECIATION,Depreciation,IS,,,,,positive,Below net operating income
+RE_CASH,Cash,BS,RE_TOTAL_ASSETS,,,,,
+RE_RECEIVABLES,Rents receivable,BS,RE_TOTAL_ASSETS,,,,positive,
+RE_PROPERTY_COST,"Income property, at cost",BS,RE_TOTAL_ASSETS,,,,positive,Land and building
+RE_ACCUM_DEP,Accumulated depreciation,BS,RE_TOTAL_ASSETS,,,subtract,positive,Entered as a positive number
+RE_OTHER_ASSETS,Other assets,BS,RE_TOTAL_ASSETS,,,,,
+RE_TOTAL_ASSETS,Total assets,BS,,subtotal,,,,
+RE_PAYABLES,Accounts payable and accrued liabilities,BS,RE_TOTAL_LIABILITIES,,,,positive,
+RE_DEPOSITS,Tenant deposits,BS,RE_TOTAL_LIABILITIES,,,,positive,
+RE_MORTGAGE_CURRENT,Current portion of mortgages,BS,RE_TOTAL_LIABILITIES,,,,positive,
+RE_MORTGAGE,Mortgages payable,BS,RE_TOTAL_LIABILITIES,,,,positive,Net of the current portion
+RE_SHAREHOLDER_LOANS,Due to shareholders,BS,RE_TOTAL_LIABILITIES,,,,positive,
+RE_TOTAL_LIABILITIES,Total liabilities,BS,RE_TOTAL_LIABILITIES_AND_EQUITY,subtotal,,,,
+RE_EQUITY,Shareholders' equity,BS,RE_TOTAL_LIABILITIES_AND_EQUITY,,,,,
+RE_TOTAL_LIABILITIES_AND_EQUITY,Total liabilities and equity,BS,,subtotal,,,,
+RE_PROPERTY,Property data,Other,,header,,,,
+RE_PROPERTY_TYPE,Property type,Other,RE_PROPERTY,,text,,,"Multi-residential, office, retail, industrial"
+RE_RENTABLE_AREA,Rentable area (sq ft),Other,RE_PROPERTY,,count,,positive,
+RE_UNITS,Number of units,Other,RE_PROPERTY,,count,,positive,
+RE_OCCUPANCY,Occupancy at year end,Other,RE_PROPERTY,,percent,,positive,
+RE_MORTGAGE_PAYMENTS,Annual mortgage payments,Other,RE_PROPERTY,,,,positive,"Principal and interest due in the year"
+RE_APPRAISED_VALUE,Appraised value,Other,RE_PROPERTY,,,,positive,Latest appraisal
+RE_APPRAISAL_CAP_RATE,Appraisal cap rate,Other,RE_PROPERTY,,percent,,positive,

@@ -3,9 +3,9 @@ export interface NavItem {
   label: string;
 }
 
-export const navItems = (inputsLabel: string): NavItem[] => [
+export const navItems = (modelsLabel: string): NavItem[] => [
   { href: "/", label: "Overview" },
-  { href: "/scoring-model", label: inputsLabel },
+  { href: "/scoring-models", label: modelsLabel },
   { href: "/financial-models", label: "Financial models" },
   { href: "/borrowers", label: "Borrowers" },
   { href: "/analyses", label: "Analyses" },

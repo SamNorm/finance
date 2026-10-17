@@ -22,21 +22,21 @@ The app is AI-native through MCP. Users drive it from the AI their organization 
 
 ## 3. Decisions so far
 
-| Topic                        | Decision                                                                                                                                                    |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Risk rating / score          | **Out of scope.** The official rating stays in the institution's system. The app does not compute or replicate it.                                          |
-| Scoring model                | **0 or 1 per organization.** When present, it is a 1:1 mirror of the inputs of the institution's system. Firms without one, such as M&A boutiques, skip it. |
-| Financial models             | **Many per organization, each with versions.** They are built on the scoring model's inputs when the organization has one.                                  |
-| Data entry                   | Paste a spread from the scoring system (exact layout match) or enter it manually. Raw statements are handled in the institution's other systems.            |
-| AI                           | MCP is a hard requirement. It exposes business-level tools, not raw create/read/update/delete operations. Clients bring their own LLM.                      |
-| Expected AI stack at clients | Microsoft: Copilot, Copilot Studio, Azure OpenAI and Azure AI Foundry.                                                                                      |
-| First audience               | Commercial banking lines.                                                                                                                                   |
-| Later audiences              | Any firm that models credit deals or transactions, such as M&A advisors and private credit funds.                                                           |
-| Funding path                 | No institutional partner yet. Build a prototype, then raise capital.                                                                                        |
-| Pricing                      | Deferred.                                                                                                                                                   |
-| Excel add-in                 | Deferred, and skipped if possible.                                                                                                                          |
-| Prototype stack              | Next.js, a TypeScript API and MCP server, and Supabase used as plain Postgres.                                                                              |
-| Local testing                | Supabase runs locally, the app's MCP server is the main test surface, and local mode has no authentication (§9.5).                                          |
+| Topic                        | Decision                                                                                                                                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Risk rating / score          | **Out of scope.** The official rating stays in the institution's system. The app does not compute or replicate it.                                                                                                              |
+| Scoring model                | **One or more per organization** (changed 2026-10-17; was 0 or 1), such as commercial and real estate. Each borrower follows one. A model either mirrors the institution's system 1:1 or is the organization's own input sheet. |
+| Financial models             | **Many per organization, each with versions.** They are built on the scoring model's inputs when the organization has one.                                                                                                      |
+| Data entry                   | Paste a spread from the scoring system (exact layout match) or enter it manually. Raw statements are handled in the institution's other systems.                                                                                |
+| AI                           | MCP is a hard requirement. It exposes business-level tools, not raw create/read/update/delete operations. Clients bring their own LLM.                                                                                          |
+| Expected AI stack at clients | Microsoft: Copilot, Copilot Studio, Azure OpenAI and Azure AI Foundry.                                                                                                                                                          |
+| First audience               | Commercial banking lines.                                                                                                                                                                                                       |
+| Later audiences              | Any firm that models credit deals or transactions, such as M&A advisors and private credit funds.                                                                                                                               |
+| Funding path                 | No institutional partner yet. Build a prototype, then raise capital.                                                                                                                                                            |
+| Pricing                      | Deferred.                                                                                                                                                                                                                       |
+| Excel add-in                 | Deferred, and skipped if possible.                                                                                                                                                                                              |
+| Prototype stack              | Next.js, a TypeScript API and MCP server, and Supabase used as plain Postgres.                                                                                                                                                  |
+| Local testing                | Supabase runs locally, the app's MCP server is the main test surface, and local mode has no authentication (§9.5).                                                                                                              |
 
 ## 4. Audiences
 
@@ -59,7 +59,7 @@ The app is AI-native through MCP. Users drive it from the AI their organization 
 
 ```
 Organization
- ├── Scoring model (0..1)            mirror of CreditLens / in-house inputs
+ ├── Scoring models (1..n)          mirror of CreditLens / in-house inputs, or own input sheet
  │     └── versions
  │           └── input items         code, label, statement, hierarchy, sign, type
  │
@@ -77,7 +77,7 @@ Analysis = entity × financial model version × periods × scenarios
            (pinned to its version → reproducible, goes into the credit file)
 ```
 
-### 5.2 Scoring model (0 or 1 per organization)
+### 5.2 Scoring models (one or more per organization, one per borrower)
 
 - **Purpose:** mirror exactly what the analyst enters in the institution's system, so a spread pastes in with no mapping.
 - **What each input item records:**

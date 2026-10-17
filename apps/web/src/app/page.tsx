@@ -3,19 +3,17 @@ import {
   listAnalyses,
   listEntities,
   listFinancialModels,
-  getScoringModel,
   listItems,
+  listScoringModels,
   validateItems,
   type EntitySummary,
   type FinancialModelSummary,
-  type ScoringItem,
   type ScoringModelWithVersions,
 } from "@finance/domain";
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
-import { ScoringModelSwitch } from "@/components/scoring-model-switch";
 import { button } from "@/components/styles";
-import { inputsLabel, STATEMENTS } from "@/lib/labels";
+import { modelsLabel } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 
 export default function Home() {
@@ -31,14 +29,15 @@ export default function Home() {
 async function Overview() {
   const db = getDb();
   const ctx = await getContext();
-  const [organization, model, borrowers, models, analyses] = await Promise.all([
-    getOrganization(db, ctx),
-    getScoringModel(db, ctx),
-    listEntities(db, ctx),
-    listFinancialModels(db, ctx),
-    listAnalyses(db, ctx),
-  ]);
-  const inputs = inputsLabel(model?.source);
+  const [organization, scoringModels, borrowers, models, analyses] =
+    await Promise.all([
+      getOrganization(db, ctx),
+      listScoringModels(db, ctx),
+      listEntities(db, ctx),
+      listFinancialModels(db, ctx),
+      listAnalyses(db, ctx),
+    ]);
+  const inputs = modelsLabel(scoringModels.map((m) => m.source));
 
   return (
     <div className="flex flex-col gap-8">
@@ -63,19 +62,21 @@ async function Overview() {
             number={1}
             title={inputs}
             status={
-              model ? (
-                <InputsStatus model={model} />
+              scoringModels.length ? (
+                <Badge tone="success">
+                  {scoringModels.length}{" "}
+                  {scoringModels.length === 1 ? "model" : "models"}
+                </Badge>
               ) : (
                 <Badge tone="muted">Not set up</Badge>
               )
             }
           >
-            {model ? (
-              <Suspense
-                fallback={<p className="text-sm text-muted">Loading…</p>}
-              >
-                <InputsSummary model={model} />
-              </Suspense>
+            {scoringModels.length ? (
+              <ScoringModelsSummary
+                models={scoringModels}
+                borrowers={borrowers}
+              />
             ) : (
               <NotSetUp />
             )}
@@ -131,55 +132,48 @@ async function Overview() {
   );
 }
 
-async function InputsSummary({ model }: { model: ScoringModelWithVersions }) {
-  const db = getDb();
-  const ctx = await getContext();
-  const published = model.versions.findLast((v) => v.status === "published");
-  const draft = model.versions.find((v) => v.status === "draft");
-  const current = published ?? draft;
-  const items = current ? await listItems(db, ctx, current.id) : [];
-  const mirrored = model.source === "mirrored";
-
+function ScoringModelsSummary({
+  models,
+  borrowers,
+}: {
+  models: ScoringModelWithVersions[];
+  borrowers: EntitySummary[];
+}) {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-sm font-medium">{model.name}</p>
-          <p className="text-sm text-muted">
-            {current ? <Counts items={items} /> : "No items yet."}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {draft && published && (
-            <Link
-              href={`/scoring-model?v=${draft.number}`}
-              className={button.secondary}
+    <div className="flex flex-col gap-3">
+      <ul className="divide-y divide-line rounded-md border border-line">
+        {models.map((model) => {
+          const count = borrowers.filter(
+            (b) => b.scoringModelId === model.id,
+          ).length;
+          return (
+            <li
+              key={model.id}
+              className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
             >
-              Draft v{draft.number}
-            </Link>
-          )}
-          <Link href="/scoring-model" className={button.primary}>
-            Open {inputsLabel(model.source).toLowerCase()}
-          </Link>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-3 rounded-md bg-surface-2 p-3">
-        <ScoringModelSwitch
-          source={model.source}
-          labelledBy="scoring-model-switch"
-        />
-        <div className="flex flex-col gap-0.5">
-          <p id="scoring-model-switch" className="text-sm font-medium">
-            Mirror a scoring system
-          </p>
-          <p className="text-xs text-muted">
-            {mirrored
-              ? `On. The inputs copy ${model.sourceSystem || "the institution's scoring system"}, so its spreads paste in with no mapping.`
-              : "Off. This organization has no scoring system and keeps its own input sheet instead, as M&A advisors and private lenders usually do."}{" "}
-            Switching keeps every item.
-          </p>
-        </div>
+              <span className="flex flex-col">
+                <Link
+                  href={`/scoring-models/${model.id}`}
+                  className="font-medium hover:text-accent"
+                >
+                  {model.name}
+                </Link>
+                <span className="text-xs text-muted">
+                  {model.source === "mirrored"
+                    ? `Mirrors ${model.sourceSystem || "a scoring system"}`
+                    : "Input sheet"}{" "}
+                  · {count} {count === 1 ? "borrower" : "borrowers"}
+                </span>
+              </span>
+              <InputsStatus model={model} />
+            </li>
+          );
+        })}
+      </ul>
+      <div className="flex justify-end">
+        <Link href="/scoring-models" className={button.secondary}>
+          Open scoring models
+        </Link>
       </div>
     </div>
   );
@@ -221,24 +215,6 @@ async function DraftBadge({
       </Badge>
     );
   return <Badge tone="accent">Draft v{number}</Badge>;
-}
-
-function Counts({ items }: { items: ScoringItem[] }) {
-  const parts = STATEMENTS.map(({ value, label }) => ({
-    label,
-    count: items.filter((item) => item.statement === value).length,
-  })).filter((part) => part.count > 0);
-  return (
-    <>
-      {items.length} items
-      {parts.map((part) => (
-        <span key={part.label}>
-          {" · "}
-          {part.label} {part.count}
-        </span>
-      ))}
-    </>
-  );
 }
 
 function ModelsStatus({ models }: { models: FinancialModelSummary[] }) {
@@ -320,10 +296,10 @@ function NotSetUp() {
         your own input sheet if there is none.
       </p>
       <div className="flex flex-wrap gap-2">
-        <Link href="/scoring-model?source=mirrored" className={button.primary}>
+        <Link href="/scoring-models?source=mirrored" className={button.primary}>
           Mirror a scoring system
         </Link>
-        <Link href="/scoring-model?source=native" className={button.secondary}>
+        <Link href="/scoring-models?source=native" className={button.secondary}>
           Use our own input sheet
         </Link>
       </div>

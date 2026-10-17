@@ -1,14 +1,16 @@
 "use client";
 
 import { startTransition, useOptimistic, useState } from "react";
-import { setScoringModelSourceAction } from "@/app/scoring-model/actions";
+import { setScoringModelSourceAction } from "@/app/scoring-models/actions";
 
-// On: the inputs mirror the institution's scoring system. Off: the
-// organization has none and keeps its own input sheet. Items are kept either way.
+// On: the model mirrors an institution's scoring system. Off: it's the
+// organization's own input sheet. Items are kept either way.
 export function ScoringModelSwitch({
+  modelId,
   source,
   labelledBy,
 }: {
+  modelId: string;
   source: "mirrored" | "native";
   labelledBy: string;
 }) {
@@ -21,7 +23,7 @@ export function ScoringModelSwitch({
     setFailure(null);
     startTransition(async () => {
       setOptimistic(next);
-      const result = await setScoringModelSourceAction(next);
+      const result = await setScoringModelSourceAction(modelId, next);
       if (!result.ok) setFailure(result.message);
     });
   }

@@ -2,6 +2,7 @@ import {
   DomainError,
   getSpread,
   listAnalyses,
+  listScoringModels,
   type Issue,
 } from "@finance/domain";
 import type { Metadata } from "next";
@@ -41,7 +42,10 @@ async function SpreadView({ params, searchParams }: Props) {
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
-  const analyses = await listAnalyses(db, ctx, { entityId: id });
+  const [analyses, scoringModels] = await Promise.all([
+    listAnalyses(db, ctx, { entityId: id }),
+    listScoringModels(db, ctx),
+  ]);
   const items = spread.layout?.items ?? [];
   const statement =
     STATEMENTS.find((s) => s.value === query.statement)?.value ??
@@ -56,6 +60,9 @@ async function SpreadView({ params, searchParams }: Props) {
     consolidated: p.consolidated,
   }));
   const { entity } = spread;
+  const scoringModel = scoringModels.find(
+    (m) => m.id === entity.scoringModelId,
+  )!;
 
   return (
     <div className="flex flex-col gap-5">
@@ -69,29 +76,60 @@ async function SpreadView({ params, searchParams }: Props) {
           <h1 className="text-2xl font-semibold tracking-tight">
             {entity.name}
           </h1>
-          <p className="text-sm text-muted">
-            {[entity.industry, entity.notes].filter(Boolean).join(" · ") ||
-              "No industry set"}
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <Link
+              href={`/scoring-models/${scoringModel.id}`}
+              className="text-accent hover:underline"
+            >
+              {scoringModel.name}
+            </Link>
+            {entity.industry && <span>· {entity.industry}</span>}
+            {entity.naicsCode && (
+              <span className="font-mono text-xs">
+                NAICS {entity.naicsCode}
+              </span>
+            )}
+            {entity.riskRating && (
+              <span
+                className="rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-foreground"
+                title="The official rating from the institution's system"
+              >
+                Rating {entity.riskRating}
+              </span>
+            )}
           </p>
+          {entity.notes && <p className="text-sm text-muted">{entity.notes}</p>}
         </div>
         <BorrowerActions
           entity={{
             id: entity.id,
             name: entity.name,
+            scoringModelId: entity.scoringModelId,
             industry: entity.industry,
+            naicsCode: entity.naicsCode,
+            riskRating: entity.riskRating,
             notes: entity.notes,
           }}
+          scoringModels={scoringModels.map((m) => ({
+            id: m.id,
+            name: m.name,
+            published: m.versions.some((v) => v.status === "published"),
+          }))}
+          canSwitchModel={spread.periods.length === 0}
         />
       </header>
 
       {!spread.layout ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm">
           <span>
-            Publish the scoring model before entering this borrower&apos;s
+            Publish {scoringModel.name} before entering this borrower&apos;s
             figures.
           </span>
-          <Link href="/scoring-model" className={button.secondary}>
-            Open scoring model
+          <Link
+            href={`/scoring-models/${scoringModel.id}`}
+            className={button.secondary}
+          >
+            Open {scoringModel.name}
           </Link>
         </div>
       ) : (

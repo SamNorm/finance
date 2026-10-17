@@ -178,14 +178,21 @@ async function setUp() {
   await db
     .insert(schema.organizations)
     .values({ id: context.organizationId, name: "Test org" });
-  const { draft: scoringDraft } = await createScoringModel(db, context, {
-    name: "Template",
-    source: "mirrored",
-  });
+  const { model: scoringModel, draft: scoringDraft } = await createScoringModel(
+    db,
+    context,
+    {
+      name: "Template",
+      source: "mirrored",
+    },
+  );
   await replaceItems(db, context, scoringDraft.id, items);
   await publishVersion(db, context, scoringDraft.id);
 
-  const entity = await createEntity(db, context, { name: "Acme" });
+  const entity = await createEntity(db, context, {
+    name: "Acme",
+    scoringModelId: scoringModel.id,
+  });
   const figures = [
     {
       year: 2023,
@@ -222,6 +229,7 @@ async function setUp() {
 
   const { model, draft } = await createFinancialModel(db, context, {
     name: "Debt service",
+    scoringModelId: scoringModel.id,
   });
   const add = (l: Parameters<typeof addLine>[3]) =>
     addLine(db, context, draft.id, l);
@@ -275,7 +283,7 @@ async function setUp() {
     formula: "DSCR >= 1.25",
   });
   const v1 = await publishFinancialModelVersion(db, context, draft.id);
-  return { context, entity, periods, model, v1 };
+  return { context, entity, periods, model, v1, scoringModel };
 }
 
 let setup: Awaited<ReturnType<typeof setUp>>;
@@ -382,7 +390,10 @@ describe("analysis service", () => {
       }),
       "invalid",
     );
-    const other = await createEntity(db, ctx, { name: "Other" });
+    const other = await createEntity(db, ctx, {
+      name: "Other",
+      scoringModelId: setup.scoringModel.id,
+    });
     await rejects(
       createAnalysis(db, ctx, {
         entityId: other.id,
@@ -409,6 +420,26 @@ describe("analysis service", () => {
     ]);
     await rejects(
       updateAnalysis(db, ctx, analysis.id, { projectionYears: 11 }),
+      "invalid",
+    );
+  });
+
+  it("refuses a model built on another scoring model", async () => {
+    const { v1 } = setup;
+    const realEstate = await createScoringModel(db, ctx, {
+      name: "Real estate",
+      source: "native",
+    });
+    const tower = await createEntity(db, ctx, {
+      name: "Tower",
+      scoringModelId: realEstate.model.id,
+    });
+    await rejects(
+      createAnalysis(db, ctx, {
+        entityId: tower.id,
+        financialModelVersionId: v1.id,
+        name: "A",
+      }),
       "invalid",
     );
   });

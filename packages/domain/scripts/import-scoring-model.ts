@@ -1,6 +1,7 @@
-// Imports an item list (CSV, or TSV pasted from Excel) into the dev
-// organization's scoring model draft, creating the model or the draft when
-// needed, and shows what changed since the latest published version.
+// Imports an item list (CSV, or TSV pasted from Excel) into the draft of one of
+// the dev organization's scoring models, creating the model or the draft when
+// needed, and shows what changed since the latest published version. The
+// model is found by name (--name, or the file name), case-insensitively.
 //
 //   pnpm import-scoring-model <file> [--dry-run] [--publish]
 //     [--name <model name>] [--source mirrored|native] [--system <source system>]
@@ -14,6 +15,7 @@ import {
   ensureDevOrganization,
   diffItems,
   getScoringModel,
+  listScoringModels,
   hasErrors,
   isStructural,
   listItems,
@@ -75,19 +77,22 @@ if (args["dry-run"]) process.exit(0);
 const db = connect();
 try {
   await ensureDevOrganization(db);
-  let model = await getScoringModel(db, devContext);
+  const name = args.name ?? basename(path, extname(path));
+  let model = (await listScoringModels(db, devContext)).find(
+    (m) => m.name.toLowerCase() === name.toLowerCase(),
+  );
   if (!model) {
-    await createScoringModel(db, devContext, {
-      name: args.name ?? basename(path, extname(path)),
+    const created = await createScoringModel(db, devContext, {
+      name,
       source: args.source,
       sourceSystem: args.system,
     });
-    model = (await getScoringModel(db, devContext))!;
+    model = await getScoringModel(db, devContext, created.model.id);
     console.log(`\nCreated the scoring model "${model.name}".`);
   }
   const draft =
     model.versions.find((v) => v.status === "draft") ??
-    (await createDraft(db, devContext));
+    (await createDraft(db, devContext, model.id));
   const base = model.versions.findLast((v) => v.status === "published");
 
   await replaceItems(db, devContext, draft.id, items);

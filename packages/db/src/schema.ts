@@ -39,7 +39,8 @@ export const organizations = pgTable("organizations", {
 }).enableRLS();
 
 // ---------------------------------------------------------------------------
-// Scoring model (§5.2): 0..1 per organization, versioned, inputs only.
+// Scoring models (§5.2): one or more per organization (say, commercial and real
+// estate), each borrower using one; versioned, inputs only.
 // `mirrored` copies an institution's system; `native` is the shared input sheet
 // of an organization that has none (§5.7, option B). Same structure either way.
 
@@ -101,9 +102,7 @@ export const scoringModels = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [
-    uniqueIndex("scoring_models_one_per_organization").on(t.organizationId),
-  ],
+  (t) => [index("scoring_models_organization").on(t.organizationId)],
 ).enableRLS();
 
 export const scoringModelVersions = pgTable(
@@ -179,12 +178,24 @@ export const entities = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     name: text().notNull(),
+    // The scoring model the borrower's spreads follow.
+    scoringModelId: uuid()
+      .notNull()
+      .references(() => scoringModels.id),
     industry: text(),
+    // North American Industry Classification System, 2 to 6 digits.
+    naicsCode: text(),
+    // The official rating from the institution's system, kept for reference;
+    // the app never computes it (§3).
+    riskRating: text(),
     notes: text(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("entities_organization").on(t.organizationId)],
+  (t) => [
+    index("entities_organization").on(t.organizationId),
+    index("entities_scoring_model").on(t.scoringModelId),
+  ],
 ).enableRLS();
 
 export const statementQuality = pgEnum("statement_quality", [

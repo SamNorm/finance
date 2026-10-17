@@ -6,20 +6,28 @@ import {
   useState,
   useTransition,
 } from "react";
-import { button, input } from "@/components/styles";
-import { Field, keepFields, Modal } from "@/components/ui";
+import { button } from "@/components/styles";
+import { keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
 import { deleteEntityAction, updateEntityAction } from "../actions";
+import { BorrowerFields, type ScoringModelOption } from "./new-borrower";
 
 export function BorrowerActions({
   entity,
+  scoringModels,
+  canSwitchModel,
 }: {
   entity: {
     id: string;
     name: string;
+    scoringModelId: string;
     industry: string | null;
+    naicsCode: string | null;
+    riskRating: string | null;
     notes: string | null;
   };
+  scoringModels: ScoringModelOption[];
+  canSwitchModel: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, startDelete] = useTransition();
@@ -67,31 +75,16 @@ export function BorrowerActions({
         onClose={() => setEditing(false)}
         title="Borrower details"
       >
-        <form onSubmit={keepFields(formAction)} className="flex flex-col">
-          <div className="flex flex-col gap-4 px-5 py-4">
-            <Field label="Name">
-              <input
-                name="name"
-                required
-                defaultValue={entity.name}
-                className={input}
-              />
-            </Field>
-            <Field label="Industry">
-              <input
-                name="industry"
-                defaultValue={entity.industry ?? ""}
-                className={input}
-              />
-            </Field>
-            <Field label="Notes">
-              <textarea
-                name="notes"
-                rows={3}
-                defaultValue={entity.notes ?? ""}
-                className={input}
-              />
-            </Field>
+        <form
+          onSubmit={keepFields(formAction)}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="flex flex-col gap-4 overflow-y-auto px-5 py-4">
+            <BorrowerFields
+              scoringModels={scoringModels}
+              initial={entity}
+              canSwitchModel={canSwitchModel}
+            />
             {state && !state.ok && (
               <p className="text-sm text-danger">{state.message}</p>
             )}

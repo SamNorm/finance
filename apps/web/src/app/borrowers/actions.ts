@@ -37,15 +37,23 @@ function readPeriod(form: FormData): PeriodInput {
   };
 }
 
+// The borrower's fields; a scoring model left blank keeps the current one.
+function readEntity(form: FormData) {
+  return {
+    name: text(form, "name"),
+    scoringModelId: text(form, "scoringModelId"),
+    industry: text(form, "industry"),
+    naicsCode: text(form, "naicsCode"),
+    riskRating: text(form, "riskRating"),
+    notes: text(form, "notes"),
+  };
+}
+
 export async function createEntityAction(
   form: FormData,
 ): Promise<ActionResult> {
   const result = await attempt((db, ctx) =>
-    createEntity(db, ctx, {
-      name: text(form, "name"),
-      industry: text(form, "industry"),
-      notes: text(form, "notes"),
-    }),
+    createEntity(db, ctx, readEntity(form)),
   );
   if (!result.ok) return result;
   redirect(`/borrowers/${result.value.id}`);
@@ -55,13 +63,13 @@ export async function updateEntityAction(
   entityId: string,
   form: FormData,
 ): Promise<ActionResult> {
-  return run((db, ctx) =>
-    updateEntity(db, ctx, entityId, {
-      name: text(form, "name"),
-      industry: text(form, "industry"),
-      notes: text(form, "notes"),
-    }),
-  );
+  return run((db, ctx) => {
+    const { scoringModelId, ...rest } = readEntity(form);
+    return updateEntity(db, ctx, entityId, {
+      ...rest,
+      scoringModelId: scoringModelId || undefined,
+    });
+  });
 }
 
 export async function deleteEntityAction(

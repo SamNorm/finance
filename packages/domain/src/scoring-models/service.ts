@@ -1,13 +1,14 @@
-import { and, asc, desc, eq, schema, type Db } from "@finance/db";
+import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
 import * as edit from "./edit";
 import type { ScoringItem, ScoringModel, ScoringModelVersion } from "./types";
 import { isStructural, validateItems } from "./validate";
 
-// Scoring model lifecycle (§5.2): one model per organization, edited through a
-// single draft version, frozen on publish. A new draft starts as a copy of the
-// latest published version.
+// Scoring model lifecycle (§5.2): an organization keeps one or more scoring
+// models (say, commercial and real estate); each borrower uses one. A model is
+// edited through a single draft version, frozen on publish, and a new draft
+// starts as a copy of the latest published version.
 
 const {
   scoringModels,
@@ -33,83 +34,109 @@ export type ScoringModelInput = Pick<
   "name" | "source" | "sourceSystem" | "description"
 >;
 
+async function versionsOf(db: Db, modelIds: string[]) {
+  if (!modelIds.length) return [];
+  return db
+    .select()
+    .from(versions)
+    .where(inArray(versions.scoringModelId, modelIds))
+    .orderBy(asc(versions.number));
+}
+
+export async function listScoringModels(
+  db: Db,
+  ctx: Context,
+): Promise<ScoringModelWithVersions[]> {
+  const models = await db
+    .select()
+    .from(scoringModels)
+    .where(eq(scoringModels.organizationId, ctx.organizationId))
+    .orderBy(asc(scoringModels.name));
+  const all = await versionsOf(
+    db,
+    models.map((m) => m.id),
+  );
+  return models.map((model) => ({
+    ...model,
+    versions: all.filter((v) => v.scoringModelId === model.id),
+  }));
+}
+
 export async function getScoringModel(
   db: Db,
   ctx: Context,
-): Promise<ScoringModelWithVersions | null> {
-  const [model] = await db
-    .select()
-    .from(scoringModels)
-    .where(eq(scoringModels.organizationId, ctx.organizationId));
-  if (!model) return null;
-  const list = await db
-    .select()
-    .from(versions)
-    .where(eq(versions.scoringModelId, model.id))
-    .orderBy(asc(versions.number));
-  return { ...model, versions: list };
+  modelId: string,
+): Promise<ScoringModelWithVersions> {
+  const model = await findModel(db, ctx, modelId);
+  return { ...model, versions: await versionsOf(db, [model.id]) };
 }
 
-// The version spreads are entered against and new financial models bind to.
+async function findModel(
+  db: Db,
+  ctx: Context,
+  modelId: string,
+  forUpdate = false,
+) {
+  if (!UUID.test(modelId))
+    throw new DomainError("not_found", "No such scoring model.");
+  const query = db
+    .select()
+    .from(scoringModels)
+    .where(
+      and(
+        eq(scoringModels.id, modelId),
+        eq(scoringModels.organizationId, ctx.organizationId),
+      ),
+    );
+  const [model] = forUpdate ? await query.for("update") : await query;
+  if (!model) throw new DomainError("not_found", "No such scoring model.");
+  return model;
+}
+
+// The version a borrower's new periods are entered against and new financial
+// models bind to.
 export async function getLatestPublishedVersion(
   db: Db,
   ctx: Context,
+  modelId: string,
 ): Promise<ScoringModelVersion | null> {
-  const [row] = await db
-    .select({ version: versions })
-    .from(versions)
-    .innerJoin(scoringModels, eq(scoringModels.id, versions.scoringModelId))
-    .where(
-      and(
-        eq(scoringModels.organizationId, ctx.organizationId),
-        eq(versions.status, "published"),
-      ),
-    )
-    .orderBy(desc(versions.number))
-    .limit(1);
-  return row?.version ?? null;
+  return (await listPublishedVersions(db, ctx, modelId))[0] ?? null;
 }
 
-// Newest first: the versions spreads and financial models can bind to.
+// Newest first: the versions of a model that spreads and financial models can
+// bind to.
 export async function listPublishedVersions(
   db: Db,
   ctx: Context,
+  modelId: string,
 ): Promise<ScoringModelVersion[]> {
-  const rows = await db
-    .select({ version: versions })
+  await findModel(db, ctx, modelId);
+  return db
+    .select()
     .from(versions)
-    .innerJoin(scoringModels, eq(scoringModels.id, versions.scoringModelId))
     .where(
       and(
-        eq(scoringModels.organizationId, ctx.organizationId),
+        eq(versions.scoringModelId, modelId),
         eq(versions.status, "published"),
       ),
     )
     .orderBy(desc(versions.number));
-  return rows.map((row) => row.version);
 }
 
-// Creates the model with an empty draft v1.
+// Creates a model with an empty draft v1.
 export async function createScoringModel(
   db: Db,
   ctx: Context,
   input: ScoringModelInput,
 ): Promise<{ model: ScoringModel; draft: ScoringModelVersion }> {
+  const name = input.name.trim();
+  if (!name) throw new DomainError("invalid", "Give the scoring model a name.");
   return db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({ id: scoringModels.id })
-      .from(scoringModels)
-      .where(eq(scoringModels.organizationId, ctx.organizationId));
-    if (existing)
-      throw new DomainError(
-        "conflict",
-        "This organization already has a scoring model.",
-      );
     const [model] = await tx
       .insert(scoringModels)
       .values({
         organizationId: ctx.organizationId,
-        name: input.name,
+        name,
         source: input.source,
         sourceSystem: input.sourceSystem,
         description: input.description,
@@ -126,24 +153,55 @@ export async function createScoringModel(
 export async function updateScoringModel(
   db: Db,
   ctx: Context,
+  modelId: string,
   patch: Partial<ScoringModelInput>,
 ): Promise<ScoringModel> {
+  await findModel(db, ctx, modelId);
+  if (patch.name !== undefined && !patch.name.trim()) {
+    throw new DomainError("invalid", "Give the scoring model a name.");
+  }
   const [model] = await db
     .update(scoringModels)
     .set({
-      name: patch.name,
+      name: patch.name?.trim(),
       source: patch.source,
       sourceSystem: patch.sourceSystem,
       description: patch.description,
     })
-    .where(eq(scoringModels.organizationId, ctx.organizationId))
+    .where(eq(scoringModels.id, modelId))
     .returning();
-  if (!model)
+  return model!;
+}
+
+// Refused while borrowers or financial models use the model.
+export async function deleteScoringModel(
+  db: Db,
+  ctx: Context,
+  modelId: string,
+): Promise<void> {
+  const model = await findModel(db, ctx, modelId);
+  const [borrower] = await db
+    .select({ id: schema.entities.id })
+    .from(schema.entities)
+    .where(eq(schema.entities.scoringModelId, model.id))
+    .limit(1);
+  if (borrower)
+    throw new DomainError("conflict", "Borrowers use this scoring model.");
+  const [financial] = await db
+    .select({ id: schema.financialModelVersions.id })
+    .from(schema.financialModelVersions)
+    .innerJoin(
+      versions,
+      eq(versions.id, schema.financialModelVersions.scoringModelVersionId),
+    )
+    .where(eq(versions.scoringModelId, model.id))
+    .limit(1);
+  if (financial)
     throw new DomainError(
-      "not_found",
-      "This organization has no scoring model.",
+      "conflict",
+      "Financial models are built on this scoring model.",
     );
-  return model;
+  await db.delete(scoringModels).where(eq(scoringModels.id, model.id));
 }
 
 export async function getVersion(
@@ -264,19 +322,11 @@ export async function publishVersion(
 export async function createDraft(
   db: Db,
   ctx: Context,
+  modelId: string,
   notes?: string,
 ): Promise<ScoringModelVersion> {
   return db.transaction(async (tx) => {
-    const [model] = await tx
-      .select()
-      .from(scoringModels)
-      .where(eq(scoringModels.organizationId, ctx.organizationId))
-      .for("update");
-    if (!model)
-      throw new DomainError(
-        "not_found",
-        "This organization has no scoring model.",
-      );
+    const model = await findModel(tx, ctx, modelId, true);
     const all = await tx
       .select()
       .from(versions)

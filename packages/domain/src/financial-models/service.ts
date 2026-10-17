@@ -33,6 +33,8 @@ const EMPTY: Issue = {
 
 export interface FinancialModelSummary extends FinancialModel {
   versions: FinancialModelVersion[];
+  // The scoring model its latest version is built on.
+  scoringModel: { id: string; name: string };
 }
 
 export interface FinancialModelDetail extends FinancialModelSummary {
@@ -62,10 +64,37 @@ export async function listFinancialModels(
       ),
     )
     .orderBy(asc(versions.number));
-  return list.map((model) => ({
-    ...model,
-    versions: all.filter((v) => v.financialModelId === model.id),
-  }));
+  const bindings = await scoringModelsOf(
+    db,
+    all.map((v) => v.scoringModelVersionId),
+  );
+  return list.map((model) => {
+    const own = all.filter((v) => v.financialModelId === model.id);
+    return {
+      ...model,
+      versions: own,
+      scoringModel: bindings.get(own.at(-1)!.scoringModelVersionId)!,
+    };
+  });
+}
+
+// The scoring model of each scoring model version, by version id.
+async function scoringModelsOf(db: Db, scoringVersionIds: string[]) {
+  const ids = [...new Set(scoringVersionIds)];
+  if (!ids.length) return new Map<string, { id: string; name: string }>();
+  const rows = await db
+    .select({
+      versionId: schema.scoringModelVersions.id,
+      id: schema.scoringModels.id,
+      name: schema.scoringModels.name,
+    })
+    .from(schema.scoringModelVersions)
+    .innerJoin(
+      schema.scoringModels,
+      eq(schema.scoringModels.id, schema.scoringModelVersions.scoringModelId),
+    )
+    .where(inArray(schema.scoringModelVersions.id, ids));
+  return new Map(rows.map(({ versionId, ...model }) => [versionId, model]));
 }
 
 async function findModel(db: Db, ctx: Context, modelId: string) {
@@ -113,30 +142,55 @@ export async function getFinancialModel(
           .where(eq(models.id, model.variantOfId))
       : Promise.resolve([]),
   ]);
-  return { ...model, versions: list, variantOf: parent[0] ?? null, variants };
+  const bindings = await scoringModelsOf(
+    db,
+    list.map((v) => v.scoringModelVersionId),
+  );
+  return {
+    ...model,
+    versions: list,
+    scoringModel: bindings.get(list.at(-1)!.scoringModelVersionId)!,
+    variantOf: parent[0] ?? null,
+    variants,
+  };
 }
 
-async function requireScoringVersion(db: Db, ctx: Context) {
-  const version = await getLatestPublishedVersion(db, ctx);
+// The latest published version of a scoring model, which new versions bind to.
+async function requireScoringVersion(
+  db: Db,
+  ctx: Context,
+  scoringModelId: string,
+) {
+  const version = await getLatestPublishedVersion(db, ctx, scoringModelId);
   if (!version) {
     throw new DomainError(
       "conflict",
-      "Publish the scoring model before building financial models.",
+      "Publish the scoring model before building financial models on it.",
     );
   }
   return version;
 }
 
+// The scoring model a financial model's versions are built on.
+async function boundScoringModel(
+  db: Db,
+  ctx: Context,
+  version: FinancialModelVersion,
+) {
+  return (await getScoringVersion(db, ctx, version.scoringModelVersionId))
+    .scoringModelId;
+}
+
 // Creates the model with an empty draft v1, bound to the latest published
-// scoring model version.
+// version of the chosen scoring model.
 export async function createFinancialModel(
   db: Db,
   ctx: Context,
-  input: FinancialModelInput,
+  input: FinancialModelInput & { scoringModelId: string },
 ): Promise<{ model: FinancialModel; draft: FinancialModelVersion }> {
   const name = input.name.trim();
   if (!name) throw new DomainError("invalid", "Give the model a name.");
-  const scoring = await requireScoringVersion(db, ctx);
+  const scoring = await requireScoringVersion(db, ctx, input.scoringModelId);
   return db.transaction(async (tx) => {
     const [model] = await tx
       .insert(models)
@@ -195,7 +249,7 @@ export async function duplicateFinancialModel(
     source.versions.at(-1);
   const name = input.name.trim();
   if (!name) throw new DomainError("invalid", "Give the variant a name.");
-  const scoring = await requireScoringVersion(db, ctx);
+  const scoring = await requireScoringVersion(db, ctx, source.scoringModel.id);
   return db.transaction(async (tx) => {
     const [model] = await tx
       .insert(models)
@@ -357,7 +411,16 @@ export async function setScoringVersion(
     );
   }
   await db.transaction(async (tx) => {
-    assertDraft(await findVersion(tx, ctx, versionId, true));
+    const version = await findVersion(tx, ctx, versionId, true);
+    assertDraft(version);
+    if (
+      (await boundScoringModel(tx, ctx, version)) !== scoring.scoringModelId
+    ) {
+      throw new DomainError(
+        "invalid",
+        "A financial model stays on its scoring model; pick one of that model's versions.",
+      );
+    }
     await tx
       .update(versions)
       .set({ scoringModelVersionId: scoring.id })
@@ -400,13 +463,14 @@ export async function publishFinancialModelVersion(
 }
 
 // Opens the next version as a draft: a copy of the latest published one,
-// bound to the latest published scoring model version.
+// bound to the latest published version of the same scoring model.
 export async function createFinancialModelDraft(
   db: Db,
   ctx: Context,
   modelId: string,
 ): Promise<FinancialModelVersion> {
-  const scoring = await requireScoringVersion(db, ctx);
+  const current = await getFinancialModel(db, ctx, modelId);
+  const scoring = await requireScoringVersion(db, ctx, current.scoringModel.id);
   return db.transaction(async (tx) => {
     const [model] = await tx
       .select()

@@ -4,7 +4,10 @@ import { DomainError } from "../errors";
 import { listLines } from "../financial-models/service";
 import type { ModelLine } from "../financial-models/types";
 import { normalizeAssumption } from "../financial-models/validate";
-import { listItems } from "../scoring-models/service";
+import {
+  getVersion as getScoringVersion,
+  listItems,
+} from "../scoring-models/service";
 import { isNumeric } from "../spreads/checks";
 import { getEntity, getSpread } from "../spreads/service";
 import { runModel, type AnalysisRun } from "./run";
@@ -159,8 +162,25 @@ export async function createAnalysis(
   ctx: Context,
   input: AnalysisInput,
 ): Promise<Analysis> {
-  await getEntity(db, ctx, input.entityId);
-  await publishedVersion(db, ctx, input.financialModelVersionId);
+  const entity = await getEntity(db, ctx, input.entityId);
+  const { version, model } = await publishedVersion(
+    db,
+    ctx,
+    input.financialModelVersionId,
+  );
+  // Formulas read item codes, so the model must be built on the borrower's
+  // scoring model.
+  const scoring = await getScoringVersion(
+    db,
+    ctx,
+    version.scoringModelVersionId,
+  );
+  if (scoring.scoringModelId !== entity.scoringModelId) {
+    throw new DomainError(
+      "invalid",
+      `${model.name} is built on a different scoring model than ${entity.name}'s spreads.`,
+    );
+  }
   checkSettings(input);
   const periodIds = [...new Set(input.periodIds ?? [])];
   await checkPeriods(db, input.entityId, periodIds);

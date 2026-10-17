@@ -9,8 +9,10 @@ import {
   addItem,
   createDraft,
   createScoringModel,
+  deleteScoringModel,
   discardDraft,
   getScoringModel,
+  listScoringModels,
   listItems,
   moveItem,
   publishVersion,
@@ -37,9 +39,9 @@ beforeEach(async () => {
     .values({ id: ctx.organizationId, name: "Test org" });
 });
 
-const create = () =>
+const create = (name = "Spreading template") =>
   createScoringModel(db, ctx, {
-    name: "Spreading template",
+    name,
     source: "mirrored",
     sourceSystem: "Test",
   });
@@ -48,44 +50,58 @@ const rejects = (promise: Promise<unknown>, kind: DomainError["kind"]) =>
   expect(promise).rejects.toMatchObject({ name: "DomainError", kind });
 
 describe("scoring model service", () => {
-  it("creates one model per organization, with an empty draft v1", async () => {
+  it("creates models, each with an empty draft v1", async () => {
     const { model, draft } = await create();
     expect(draft).toMatchObject({
       number: 1,
       status: "draft",
       publishedAt: null,
     });
-    expect(await getScoringModel(db, ctx)).toMatchObject({
+    expect(await getScoringModel(db, ctx, model.id)).toMatchObject({
       id: model.id,
       versions: [{ id: draft.id }],
     });
-    await rejects(create(), "conflict");
+    const realEstate = await create("Real estate");
     expect(
-      await getScoringModel(db, { organizationId: randomUUID() }),
-    ).toBeNull();
+      (await listScoringModels(db, ctx)).map((m) => [
+        m.name,
+        m.versions.length,
+      ]),
+    ).toEqual([
+      ["Real estate", 1],
+      ["Spreading template", 1],
+    ]);
+    await rejects(create(" "), "invalid");
+    await rejects(
+      getScoringModel(db, { organizationId: randomUUID() }, model.id),
+      "not_found",
+    );
+    await deleteScoringModel(db, ctx, realEstate.model.id);
+    expect(await listScoringModels(db, ctx)).toHaveLength(1);
   });
 
   it("switches between a mirrored model and a native input sheet, keeping the rest", async () => {
-    const { draft } = await create();
+    const { model, draft } = await create();
     await replaceItems(db, ctx, draft.id, [item("A")]);
-    const native = await updateScoringModel(db, ctx, { source: "native" });
+    const native = await updateScoringModel(db, ctx, model.id, {
+      source: "native",
+    });
     expect(native).toMatchObject({
       source: "native",
       name: "Spreading template",
       sourceSystem: "Test",
     });
     expect(
-      (await updateScoringModel(db, ctx, { source: "mirrored" })).source,
+      (await updateScoringModel(db, ctx, model.id, { source: "mirrored" }))
+        .source,
     ).toBe("mirrored");
     expect((await listItems(db, ctx, draft.id)).map((i) => i.code)).toEqual([
       "A",
     ]);
     await rejects(
-      updateScoringModel(
-        db,
-        { organizationId: randomUUID() },
-        { source: "native" },
-      ),
+      updateScoringModel(db, { organizationId: randomUUID() }, model.id, {
+        source: "native",
+      }),
       "not_found",
     );
   });
@@ -177,12 +193,12 @@ describe("scoring model service", () => {
   });
 
   it("freezes published versions and opens the next draft as a copy", async () => {
-    const { draft } = await create();
+    const { model, draft } = await create();
     await replaceItems(db, ctx, draft.id, [item("A"), item("B")]);
     await publishVersion(db, ctx, draft.id);
     await rejects(addItem(db, ctx, draft.id, item("C")), "conflict");
 
-    const v2 = await createDraft(db, ctx, "Template update");
+    const v2 = await createDraft(db, ctx, model.id, "Template update");
     expect(v2).toMatchObject({
       number: 2,
       status: "draft",
@@ -192,7 +208,7 @@ describe("scoring model service", () => {
       "A",
       "B",
     ]);
-    await rejects(createDraft(db, ctx), "conflict");
+    await rejects(createDraft(db, ctx, model.id), "conflict");
 
     await removeItem(db, ctx, v2.id, "B");
     expect((await listItems(db, ctx, draft.id)).map((i) => i.code)).toEqual([
@@ -201,7 +217,7 @@ describe("scoring model service", () => {
     ]);
 
     await discardDraft(db, ctx, v2.id);
-    expect((await createDraft(db, ctx)).number).toBe(2);
+    expect((await createDraft(db, ctx, model.id)).number).toBe(2);
   });
 
   it("keeps each organization's versions to itself", async () => {

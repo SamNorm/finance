@@ -63,6 +63,7 @@ export async function createFinancialModelAction(
     createFinancialModel(db, ctx, {
       name: text(form, "name"),
       description: text(form, "description"),
+      scoringModelId: text(form, "scoringModelId"),
     }),
   );
   if (!result.ok) return result;

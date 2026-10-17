@@ -17,7 +17,6 @@ import { Suspense } from "react";
 import { IssueList } from "@/components/issue-list";
 import { VersionActions } from "@/components/version-actions";
 import { formatDate } from "@/lib/format";
-import { inputsLabel } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import {
   createFinancialModelDraftAction,
@@ -63,8 +62,8 @@ async function ModelView({ params, searchParams }: Props) {
     model.versions.at(-1)!;
   const [lines, published, scoringModel, bound, items] = await Promise.all([
     listLines(db, ctx, version.id),
-    listPublishedVersions(db, ctx),
-    getScoringModel(db, ctx),
+    listPublishedVersions(db, ctx, model.scoringModel.id),
+    getScoringModel(db, ctx, model.scoringModel.id),
     getScoringVersion(db, ctx, version.scoringModelVersionId),
     listItems(db, ctx, version.scoringModelVersionId),
   ]);
@@ -183,7 +182,7 @@ async function ModelView({ params, searchParams }: Props) {
         <ScoringBinding
           versionId={version.id}
           editable={version.status === "draft"}
-          label={inputsLabel(scoringModel?.source)}
+          label={scoringModel.name}
           bound={{ id: bound.id, number: bound.number }}
           options={published.map((v) => ({ id: v.id, number: v.number }))}
         />

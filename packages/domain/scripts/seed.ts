@@ -14,7 +14,7 @@ import {
   createScoringModel,
   devContext,
   ensureDevOrganization,
-  getScoringModel,
+  listScoringModels,
   hasErrors,
   parseItemTable,
   pasteSpread,
@@ -42,10 +42,10 @@ try {
   }
   await ensureDevOrganization(db);
 
-  const existing = await getScoringModel(db, ctx);
-  if (existing) {
+  const existing = await listScoringModels(db, ctx);
+  if (existing.length) {
     console.log(
-      `The dev organization already has "${existing.name}" (${existing.versions.length} version(s)). Run with --reset to start over.`,
+      `The dev organization already has ${existing.length} scoring model(s). Run with --reset to start over.`,
     );
   } else {
     const csv = readFileSync(
@@ -57,7 +57,7 @@ try {
       printIssues(issues, rowByCode);
       throw new Error("The fixture has errors.");
     }
-    const { draft } = await createScoringModel(db, ctx, {
+    const { model: scoringModel, draft } = await createScoringModel(db, ctx, {
       name: "Commercial banking spread (fictional)",
       source: "mirrored",
       sourceSystem: "Fictional spreading system",
@@ -73,6 +73,7 @@ try {
     for (const company of demoCompanies()) {
       const entity = await createEntity(db, ctx, {
         name: company.name,
+        scoringModelId: scoringModel.id,
         industry: company.industry,
         notes: company.notes,
       });
@@ -107,6 +108,7 @@ try {
     }
 
     const { draft: modelDraft } = await createFinancialModel(db, ctx, {
+      scoringModelId: scoringModel.id,
       name: DEMO_MODEL.name,
       description: DEMO_MODEL.description,
     });

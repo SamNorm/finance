@@ -6,7 +6,11 @@ import { Field, Icon, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
 import { createFinancialModelAction } from "../actions";
 
-export function NewModel() {
+export function NewModel({
+  scoringModels,
+}: {
+  scoringModels: { id: string; name: string }[];
+}) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) =>
@@ -28,7 +32,10 @@ export function NewModel() {
         onClose={() => setOpen(false)}
         title="New financial model"
       >
-        <form onSubmit={keepFields(formAction)} className="flex flex-col">
+        <form
+          onSubmit={keepFields(formAction)}
+          className="flex min-h-0 flex-1 flex-col"
+        >
           <div className="flex flex-col gap-4 px-5 py-4">
             <Field label="Name">
               <input
@@ -38,6 +45,18 @@ export function NewModel() {
                 className={input}
                 placeholder="Annual review: debt service"
               />
+            </Field>
+            <Field
+              label="Built on"
+              hint="Formulas read this scoring model's item codes; borrowers on it can be analysed."
+            >
+              <select name="scoringModelId" className={input}>
+                {scoringModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="Description (optional)">
               <textarea name="description" rows={2} className={input} />

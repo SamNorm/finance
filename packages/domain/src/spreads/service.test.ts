@@ -20,11 +20,13 @@ import {
   pasteSpread,
   previewPaste,
   setValue,
+  updateEntity,
   updatePeriod,
 } from "./service";
 
 let db: Db;
-let ctx: Context;
+// A test organization's context, with the scoring model its borrowers use.
+let ctx: Context & { modelId: string };
 const { items } = parseItemTable(fixture("commercial-banking.csv"));
 
 beforeAll(async () => {
@@ -36,15 +38,13 @@ async function newOrganization(published = true) {
   await db
     .insert(schema.organizations)
     .values({ id: context.organizationId, name: "Test org" });
-  if (published) {
-    const { draft } = await createScoringModel(db, context, {
-      name: "Template",
-      source: "mirrored",
-    });
-    await replaceItems(db, context, draft.id, items);
-    await publishVersion(db, context, draft.id);
-  }
-  return context;
+  const { model, draft } = await createScoringModel(db, context, {
+    name: "Template",
+    source: "mirrored",
+  });
+  await replaceItems(db, context, draft.id, items);
+  if (published) await publishVersion(db, context, draft.id);
+  return { ...context, modelId: model.id };
 }
 
 beforeEach(async () => {
@@ -63,16 +63,34 @@ const FY = (year: number) => ({
 describe("borrowers and spreads", () => {
   it("needs a published scoring model before spreading", async () => {
     const bare = await newOrganization(false);
-    const entity = await createEntity(db, bare, { name: "Acme" });
+    const entity = await createEntity(db, bare, {
+      name: "Acme",
+      scoringModelId: bare.modelId,
+    });
     await rejects(addPeriod(db, bare, entity.id, FY(2024)), "conflict");
   });
 
   it("enters figures by hand, read as each item's type", async () => {
     const entity = await createEntity(db, ctx, {
       name: " Acme Ltd ",
+      scoringModelId: ctx.modelId,
       industry: "Manufacturing",
+      naicsCode: "332710",
+      riskRating: " 4+ ",
     });
-    expect(entity.name).toBe("Acme Ltd");
+    expect(entity).toMatchObject({
+      name: "Acme Ltd",
+      naicsCode: "332710",
+      riskRating: "4+",
+    });
+    await rejects(
+      createEntity(db, ctx, {
+        name: "Bad",
+        scoringModelId: ctx.modelId,
+        naicsCode: "33-27",
+      }),
+      "invalid",
+    );
     const period = await addPeriod(db, ctx, entity.id, FY(2024));
     await rejects(addPeriod(db, ctx, entity.id, FY(2024)), "conflict");
 
@@ -102,7 +120,10 @@ describe("borrowers and spreads", () => {
   });
 
   it("pastes a spread, creating periods and reusing existing ones", async () => {
-    const entity = await createEntity(db, ctx, { name: "Acme" });
+    const entity = await createEntity(db, ctx, {
+      name: "Acme",
+      scoringModelId: ctx.modelId,
+    });
     const existing = await addPeriod(db, ctx, entity.id, FY(2023));
     await setValue(db, ctx, existing.id, "INVENTORY", "5");
     const text =
@@ -152,7 +173,10 @@ describe("borrowers and spreads", () => {
   });
 
   it("edits and deletes periods and borrowers", async () => {
-    const entity = await createEntity(db, ctx, { name: "Acme" });
+    const entity = await createEntity(db, ctx, {
+      name: "Acme",
+      scoringModelId: ctx.modelId,
+    });
     const a = await addPeriod(db, ctx, entity.id, FY(2023));
     const b = await addPeriod(db, ctx, entity.id, FY(2024));
     await rejects(
@@ -180,8 +204,56 @@ describe("borrowers and spreads", () => {
     expect(await listEntities(db, ctx)).toEqual([]);
   });
 
+  it("follows the borrower's own scoring model", async () => {
+    const realEstate = parseItemTable(fixture("real-estate.csv")).items;
+    const { model, draft } = await createScoringModel(db, ctx, {
+      name: "Real estate",
+      source: "native",
+    });
+    await replaceItems(db, ctx, draft.id, realEstate);
+    await publishVersion(db, ctx, draft.id);
+
+    const building = await createEntity(db, ctx, {
+      name: "Tower",
+      scoringModelId: model.id,
+    });
+    const period = await addPeriod(db, ctx, building.id, FY(2024));
+    expect(period.scoringModelVersionId).toBe(draft.id);
+    await setValue(db, ctx, period.id, "RE_BASE_RENT", "1,200,000");
+    await rejects(setValue(db, ctx, period.id, "CASH", "1"), "invalid");
+    const spread = await getSpread(db, ctx, building.id);
+    expect(spread.layout?.items.map((i) => i.code)).toEqual(
+      realEstate.map((i) => i.code),
+    );
+    expect(spread.computed[period.id]?.RE_NOI).toBe("1200000");
+    expect(
+      (await listEntities(db, ctx)).map((e) => [e.name, e.scoringModelName]),
+    ).toEqual([["Tower", "Real estate"]]);
+
+    await rejects(
+      updateEntity(db, ctx, building.id, { scoringModelId: ctx.modelId }),
+      "conflict",
+    );
+    const empty = await createEntity(db, ctx, {
+      name: "Empty",
+      scoringModelId: model.id,
+    });
+    expect(
+      (await updateEntity(db, ctx, empty.id, { scoringModelId: ctx.modelId }))
+        .scoringModelId,
+    ).toBe(ctx.modelId);
+    const stranger = await newOrganization();
+    await rejects(
+      createEntity(db, ctx, { name: "X", scoringModelId: stranger.modelId }),
+      "not_found",
+    );
+  });
+
   it("keeps each organization's borrowers to itself", async () => {
-    const entity = await createEntity(db, ctx, { name: "Acme" });
+    const entity = await createEntity(db, ctx, {
+      name: "Acme",
+      scoringModelId: ctx.modelId,
+    });
     const period = await addPeriod(db, ctx, entity.id, FY(2024));
     const stranger = await newOrganization();
     await rejects(getSpread(db, stranger, entity.id), "not_found");

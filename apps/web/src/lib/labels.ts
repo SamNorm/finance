@@ -51,10 +51,17 @@ export const isOneOf = <T extends string>(
   value: unknown,
 ): value is T => typeof value === "string" && Object.hasOwn(options, value);
 
-// An organization without a scoring system keeps its own input sheet: the same
-// structure with a `native` source, never called a scoring model (§5.7).
+// A model that mirrors no scoring system is the organization's own input
+// sheet: the same structure with a `native` source, never called a scoring
+// model (§5.7).
 export const inputsLabel = (source: "mirrored" | "native" | undefined) =>
   source === "native" ? "Input sheet" : "Scoring model";
+
+// What to call the organization's models together.
+export const modelsLabel = (sources: ("mirrored" | "native")[]) =>
+  sources.length > 0 && sources.every((s) => s === "native")
+    ? "Input sheets"
+    : "Scoring models";
 
 export const QUALITIES: Record<
   "audited" | "review" | "compilation" | "internal" | "projected",

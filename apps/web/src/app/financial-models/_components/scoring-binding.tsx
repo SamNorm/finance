@@ -23,13 +23,13 @@ export function ScoringBinding({
   if (!editable) {
     return (
       <p className="text-sm text-muted">
-        Built on {label.toLowerCase()} v{bound.number}
+        Built on {label} v{bound.number}
       </p>
     );
   }
   return (
     <label className="flex items-center gap-2 text-sm text-muted">
-      Built on {label.toLowerCase()}
+      Built on {label}
       <select
         value={bound.id}
         disabled={pending}

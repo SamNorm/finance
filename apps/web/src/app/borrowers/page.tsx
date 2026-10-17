@@ -1,14 +1,9 @@
-import {
-  getLatestPublishedVersion,
-  getScoringModel,
-  listEntities,
-} from "@finance/domain";
+import { listEntities, listScoringModels } from "@finance/domain";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { button } from "@/components/styles";
 import { formatDate } from "@/lib/format";
-import { inputsLabel } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { NewBorrower } from "./_components/new-borrower";
 
@@ -27,12 +22,15 @@ export default function Page() {
 async function BorrowersView() {
   const db = getDb();
   const ctx = await getContext();
-  const [borrowers, published, model] = await Promise.all([
+  const [borrowers, scoringModels] = await Promise.all([
     listEntities(db, ctx),
-    getLatestPublishedVersion(db, ctx),
-    getScoringModel(db, ctx),
+    listScoringModels(db, ctx),
   ]);
-  const inputs = inputsLabel(model?.source).toLowerCase();
+  const options = scoringModels.map((m) => ({
+    id: m.id,
+    name: m.name,
+    published: m.versions.some((v) => v.status === "published"),
+  }));
 
   return (
     <div className="flex flex-col gap-5">
@@ -49,17 +47,17 @@ async function BorrowersView() {
             financial model reads the same figures.
           </p>
         </div>
-        <NewBorrower />
+        <NewBorrower scoringModels={options} />
       </header>
 
-      {!published && (
+      {!options.some((o) => o.published) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm">
           <span>
-            Spreads follow the published {inputs}. Publish it before entering
-            figures.
+            Spreads follow a published scoring model. Set one up and publish it
+            before entering figures.
           </span>
-          <Link href="/scoring-model" className={button.secondary}>
-            Open {inputs}
+          <Link href="/scoring-models" className={button.secondary}>
+            Open scoring models
           </Link>
         </div>
       )}
@@ -78,6 +76,8 @@ async function BorrowersView() {
               <tr className="border-b border-line text-left text-xs text-muted">
                 <th className="px-4 py-2 font-medium">Name</th>
                 <th className="px-4 py-2 font-medium">Industry</th>
+                <th className="px-4 py-2 font-medium">Scoring model</th>
+                <th className="px-4 py-2 font-medium">Rating</th>
                 <th className="px-4 py-2 text-right font-medium">Periods</th>
                 <th className="px-4 py-2 text-right font-medium">
                   Latest period
@@ -98,7 +98,18 @@ async function BorrowersView() {
                       {b.name}
                     </Link>
                   </td>
-                  <td className="px-4 py-2.5 text-muted">{b.industry}</td>
+                  <td className="px-4 py-2.5 text-muted">
+                    {b.industry}
+                    {b.naicsCode && (
+                      <span className="ml-1 font-mono text-xs">
+                        ({b.naicsCode})
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-muted">
+                    {b.scoringModelName}
+                  </td>
+                  <td className="px-4 py-2.5">{b.riskRating}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums">
                     {b.periodCount}
                   </td>

@@ -12,6 +12,7 @@ import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
 import {
   getLatestPublishedVersion,
+  getScoringModel,
   listItems,
 } from "../scoring-models/service";
 import type { ScoringItem } from "../scoring-models/types";
@@ -19,8 +20,9 @@ import { checkPeriod, effectiveAmounts, isNumeric } from "./checks";
 import { parseSpreadPaste, type PasteColumn, type PasteRow } from "./paste";
 import { parseValue } from "./values";
 
-// Borrowers and their spreads (§5.5). Each period records the scoring model
-// version its figures were entered against; figures are keyed by item code.
+// Borrowers and their spreads (§5.5). A borrower follows one of the
+// organization's scoring models; each period records the version its figures
+// were entered against, and figures are keyed by item code.
 
 const { entities, statementPeriods: periods, statementValues: values } = schema;
 
@@ -29,7 +31,10 @@ export type StatementPeriod = typeof periods.$inferSelect;
 export type StatementQuality = StatementPeriod["quality"];
 export type EntityInput = {
   name: string;
+  scoringModelId: string;
   industry?: string | null;
+  naicsCode?: string | null;
+  riskRating?: string | null;
   notes?: string | null;
 };
 export type PeriodInput = Pick<
@@ -49,6 +54,7 @@ export const STATEMENT_QUALITIES: StatementQuality[] = [
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface EntitySummary extends Entity {
+  scoringModelName: string;
   periodCount: number;
   latestPeriodEnd: string | null;
 }
@@ -60,13 +66,18 @@ export async function listEntities(
   return db
     .select({
       ...getTableColumns(entities),
+      scoringModelName: schema.scoringModels.name,
       periodCount: sql<number>`count(${periods.id})::int`,
       latestPeriodEnd: sql<string | null>`max(${periods.periodEnd})::text`,
     })
     .from(entities)
+    .innerJoin(
+      schema.scoringModels,
+      eq(schema.scoringModels.id, entities.scoringModelId),
+    )
     .leftJoin(periods, eq(periods.entityId, entities.id))
     .where(eq(entities.organizationId, ctx.organizationId))
-    .groupBy(entities.id)
+    .groupBy(entities.id, schema.scoringModels.name)
     .orderBy(asc(entities.name));
 }
 
@@ -90,6 +101,21 @@ export async function getEntity(
   return entity;
 }
 
+const NAICS = /^\d{2,6}$/;
+
+// Optional text fields: trimmed, blank stored as null, undefined left alone.
+const optional = (value: string | null | undefined) =>
+  value === undefined ? undefined : value?.trim() || null;
+
+function checkNaics(code: string | null | undefined) {
+  if (code && !NAICS.test(code)) {
+    throw new DomainError(
+      "invalid",
+      `"${code}" isn't a NAICS code (2 to 6 digits).`,
+    );
+  }
+}
+
 export async function createEntity(
   db: Db,
   ctx: Context,
@@ -97,13 +123,19 @@ export async function createEntity(
 ): Promise<Entity> {
   const name = input.name.trim();
   if (!name) throw new DomainError("invalid", "Give the borrower a name.");
+  const model = await getScoringModel(db, ctx, input.scoringModelId);
+  const naicsCode = optional(input.naicsCode);
+  checkNaics(naicsCode);
   const [entity] = await db
     .insert(entities)
     .values({
       organizationId: ctx.organizationId,
       name,
-      industry: input.industry?.trim() || null,
-      notes: input.notes?.trim() || null,
+      scoringModelId: model.id,
+      industry: optional(input.industry) ?? null,
+      naicsCode: naicsCode ?? null,
+      riskRating: optional(input.riskRating) ?? null,
+      notes: optional(input.notes) ?? null,
     })
     .returning();
   return entity!;
@@ -115,20 +147,38 @@ export async function updateEntity(
   entityId: string,
   patch: Partial<EntityInput>,
 ): Promise<Entity> {
-  await getEntity(db, ctx, entityId);
+  const current = await getEntity(db, ctx, entityId);
   if (patch.name !== undefined && !patch.name.trim()) {
     throw new DomainError("invalid", "Give the borrower a name.");
+  }
+  const naicsCode = optional(patch.naicsCode);
+  checkNaics(naicsCode);
+  // The scoring model lays the spread out, so it only changes before any
+  // figures are entered.
+  let scoringModelId: string | undefined;
+  if (patch.scoringModelId && patch.scoringModelId !== current.scoringModelId) {
+    const [period] = await db
+      .select({ id: periods.id })
+      .from(periods)
+      .where(eq(periods.entityId, entityId))
+      .limit(1);
+    if (period) {
+      throw new DomainError(
+        "conflict",
+        "The borrower has periods on its scoring model. Delete them to switch models.",
+      );
+    }
+    scoringModelId = (await getScoringModel(db, ctx, patch.scoringModelId)).id;
   }
   const [entity] = await db
     .update(entities)
     .set({
       name: patch.name?.trim(),
-      industry:
-        patch.industry === undefined
-          ? undefined
-          : patch.industry?.trim() || null,
-      notes:
-        patch.notes === undefined ? undefined : patch.notes?.trim() || null,
+      scoringModelId,
+      industry: optional(patch.industry),
+      naicsCode,
+      riskRating: optional(patch.riskRating),
+      notes: optional(patch.notes),
     })
     .where(eq(entities.id, entityId))
     .returning();
@@ -193,12 +243,18 @@ async function findDuplicate(
   return existing?.id ?? null;
 }
 
-async function requireLayoutVersion(db: Db, ctx: Context) {
-  const version = await getLatestPublishedVersion(db, ctx);
+// The version new periods are entered against: the latest published version
+// of the borrower's scoring model.
+async function requireLayoutVersion(db: Db, ctx: Context, entity: Entity) {
+  const version = await getLatestPublishedVersion(
+    db,
+    ctx,
+    entity.scoringModelId,
+  );
   if (!version) {
     throw new DomainError(
       "conflict",
-      "Publish the scoring model before entering spreads.",
+      "Publish the borrower's scoring model before entering spreads.",
     );
   }
   return version;
@@ -210,9 +266,9 @@ export async function addPeriod(
   entityId: string,
   input: PeriodInput,
 ): Promise<StatementPeriod> {
-  await getEntity(db, ctx, entityId);
+  const entity = await getEntity(db, ctx, entityId);
   checkPeriodInput(input);
-  const version = await requireLayoutVersion(db, ctx);
+  const version = await requireLayoutVersion(db, ctx, entity);
   if (await findDuplicate(db, entityId, input.periodEnd, input.months)) {
     throw new DomainError(
       "conflict",
@@ -381,7 +437,11 @@ export async function getSpread(
         )
     : [];
 
-  const latest = await getLatestPublishedVersion(db, ctx);
+  const latest = await getLatestPublishedVersion(
+    db,
+    ctx,
+    entity.scoringModelId,
+  );
   const itemsByVersion = new Map<string, ScoringItem[]>();
   for (const versionId of new Set([
     ...list.map((p) => p.scoringModelVersionId),
@@ -438,8 +498,8 @@ export async function previewPaste(
   entityId: string,
   text: string,
 ): Promise<PastePreview> {
-  await getEntity(db, ctx, entityId);
-  const version = await requireLayoutVersion(db, ctx);
+  const entity = await getEntity(db, ctx, entityId);
+  const version = await requireLayoutVersion(db, ctx, entity);
   const items = await listItems(db, ctx, version.id);
   const parsed = parseSpreadPaste(text, items);
   const existing = await db
@@ -484,8 +544,8 @@ export async function pasteSpread(
   text: string,
   targets: PasteTarget[],
 ): Promise<{ periods: number; figures: number }> {
-  await getEntity(db, ctx, entityId);
-  const version = await requireLayoutVersion(db, ctx);
+  const entity = await getEntity(db, ctx, entityId);
+  const version = await requireLayoutVersion(db, ctx, entity);
   const items = await listItems(db, ctx, version.id);
   const parsed = parseSpreadPaste(text, items);
   if (hasErrors(parsed.issues)) {

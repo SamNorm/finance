@@ -34,10 +34,12 @@ export function ImportDialog({
   open,
   onClose,
   draftNumber,
+  modelId,
 }: {
   open: boolean;
   onClose: () => void;
   draftNumber: number;
+  modelId: string;
 }) {
   const [source, setSource] = useState("");
   const [preview, setPreview] = useState<{
@@ -56,7 +58,7 @@ export function ImportDialog({
   function check() {
     setFailure(null);
     startCheck(async () => {
-      const result = await previewImportAction(source);
+      const result = await previewImportAction(modelId, source);
       setPreview({ source, result });
     });
   }
@@ -65,7 +67,7 @@ export function ImportDialog({
     setFailure(null);
     startImport(async () => {
       // On success the action navigates to the draft from the server.
-      const result = await importAction(source);
+      const result = await importAction(modelId, source);
       if (!result.ok) return setFailure(result);
       startTransition(() => {
         setSource("");

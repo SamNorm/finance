@@ -13,6 +13,7 @@ import { Icon } from "@/components/ui";
 // The items of one version, one statement at a time, laid out like the source
 // system: in row order, indented by depth. Drafts are edited in place.
 export function ItemsWorkspace({
+  modelId,
   version,
   editable,
   items,
@@ -20,6 +21,7 @@ export function ItemsWorkspace({
   statement,
   counts,
 }: {
+  modelId: string;
   version: { id: string; number: number };
   editable: boolean;
   items: ScoringItem[];
@@ -302,6 +304,7 @@ export function ItemsWorkspace({
           open={importing}
           onClose={() => setImporting(false)}
           draftNumber={version.number}
+          modelId={modelId}
         />
       )}
     </section>

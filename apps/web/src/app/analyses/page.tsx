@@ -38,11 +38,13 @@ async function AnalysesView({
       id: m.id,
       name: m.name,
       version: m.versions.findLast((v) => v.status === "published")!.number,
+      scoringModelId: m.scoringModel.id,
     }));
   const borrowerOptions = borrowers.map((b) => ({
     id: b.id,
     name: b.name,
     periods: b.periodCount,
+    scoringModelId: b.scoringModelId,
   }));
   const preselected =
     typeof query.borrower === "string" ? query.borrower : undefined;

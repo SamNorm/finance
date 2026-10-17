@@ -131,7 +131,8 @@ describe("validateLines", () => {
 });
 
 let db: Db;
-let ctx: Context;
+// A test organization's context, with the scoring model its models use.
+let ctx: Context & { modelId: string };
 const { items } = parseItemTable(fixture("commercial-banking.csv"));
 
 beforeAll(async () => {
@@ -143,15 +144,13 @@ async function newOrganization(published = true) {
   await db
     .insert(schema.organizations)
     .values({ id: context.organizationId, name: "Test org" });
-  if (published) {
-    const { draft } = await createScoringModel(db, context, {
-      name: "Template",
-      source: "mirrored",
-    });
-    await replaceItems(db, context, draft.id, items);
-    await publishVersion(db, context, draft.id);
-  }
-  return context;
+  const { model, draft } = await createScoringModel(db, context, {
+    name: "Template",
+    source: "mirrored",
+  });
+  await replaceItems(db, context, draft.id, items);
+  if (published) await publishVersion(db, context, draft.id);
+  return { ...context, modelId: model.id };
 }
 
 beforeEach(async () => {
@@ -164,7 +163,12 @@ const rejects = (promise: Promise<unknown>, kind: string) =>
 describe("financial model service", () => {
   it("needs a published scoring model", async () => {
     await rejects(
-      createFinancialModel(db, await newOrganization(false), { name: "DSCR" }),
+      newOrganization(false).then((bare) =>
+        createFinancialModel(db, bare, {
+          name: "DSCR",
+          scoringModelId: bare.modelId,
+        }),
+      ),
       "conflict",
     );
   });
@@ -172,6 +176,7 @@ describe("financial model service", () => {
   it("builds, checks and publishes a version, then opens the next as a copy", async () => {
     const { model, draft } = await createFinancialModel(db, ctx, {
       name: "Debt service",
+      scoringModelId: ctx.modelId,
     });
     expect(draft).toMatchObject({ number: 1, status: "draft" });
     await rejects(publishFinancialModelVersion(db, ctx, draft.id), "invalid");
@@ -270,6 +275,7 @@ describe("financial model service", () => {
   it("duplicates a model as a variant with its own history", async () => {
     const { model, draft } = await createFinancialModel(db, ctx, {
       name: "DSCR: operating company",
+      scoringModelId: ctx.modelId,
     });
     await addLine(db, ctx, draft.id, {
       code: "X",
@@ -298,14 +304,17 @@ describe("financial model service", () => {
   });
 
   it("rebinds a draft to another published scoring model version", async () => {
-    const { draft } = await createFinancialModel(db, ctx, { name: "M" });
+    const { draft } = await createFinancialModel(db, ctx, {
+      name: "M",
+      scoringModelId: ctx.modelId,
+    });
     await addLine(db, ctx, draft.id, {
       code: "X",
       label: "X",
       kind: "calculation",
       formula: "VEHICLES",
     });
-    const scoringDraft = await createScoringDraft(db, ctx);
+    const scoringDraft = await createScoringDraft(db, ctx, ctx.modelId);
     await rejects(
       setScoringVersion(db, ctx, draft.id, scoringDraft.id),
       "invalid",
@@ -317,13 +326,26 @@ describe("financial model service", () => {
       items.filter((i) => i.code !== "VEHICLES"),
     );
     const v2 = await publishVersion(db, ctx, scoringDraft.id);
+    const other = await createScoringModel(db, ctx, {
+      name: "Other",
+      source: "native",
+    });
+    await replaceItems(db, ctx, other.draft.id, items);
+    await publishVersion(db, ctx, other.draft.id);
+    await rejects(
+      setScoringVersion(db, ctx, draft.id, other.draft.id),
+      "invalid",
+    );
     expect(
       (await setScoringVersion(db, ctx, draft.id, v2.id)).map((i) => i.message),
     ).toEqual(['Unknown item "VEHICLES".']);
   });
 
   it("keeps each organization's models to itself", async () => {
-    const { model, draft } = await createFinancialModel(db, ctx, { name: "M" });
+    const { model, draft } = await createFinancialModel(db, ctx, {
+      name: "M",
+      scoringModelId: ctx.modelId,
+    });
     const stranger = await newOrganization();
     await rejects(getFinancialModel(db, stranger, model.id), "not_found");
     await rejects(listLines(db, stranger, draft.id), "not_found");

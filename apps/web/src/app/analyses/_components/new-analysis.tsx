@@ -12,8 +12,18 @@ export function NewAnalysis({
   defaultBorrower,
   openInitially,
 }: {
-  borrowers: { id: string; name: string; periods: number }[];
-  models: { id: string; name: string; version: number }[];
+  borrowers: {
+    id: string;
+    name: string;
+    periods: number;
+    scoringModelId: string;
+  }[];
+  models: {
+    id: string;
+    name: string;
+    version: number;
+    scoringModelId: string;
+  }[];
   defaultBorrower?: string;
   openInitially: boolean;
 }) {
@@ -21,7 +31,15 @@ export function NewAnalysis({
   const [borrower, setBorrower] = useState(
     defaultBorrower ?? borrowers[0]?.id ?? "",
   );
-  const [model, setModel] = useState(models[0]?.id ?? "");
+  // Only models built on the borrower's scoring model can read its spreads.
+  const scoringModelId = borrowers.find(
+    (b) => b.id === borrower,
+  )?.scoringModelId;
+  const eligible = models.filter((m) => m.scoringModelId === scoringModelId);
+  const [chosenModel, setModel] = useState<string | null>(null);
+  const model = eligible.some((m) => m.id === chosenModel)
+    ? chosenModel!
+    : (eligible[0]?.id ?? "");
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) =>
       createAnalysisAction(form),
@@ -78,13 +96,19 @@ export function NewAnalysis({
                 onChange={(e) => setModel(e.target.value)}
                 className={input}
               >
-                {models.map((m) => (
+                {eligible.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name} (v{m.version})
                   </option>
                 ))}
               </select>
             </Field>
+            {!eligible.length && (
+              <p className="text-sm text-warning">
+                No published financial model is built on this borrower&apos;s
+                scoring model yet.
+              </p>
+            )}
             <Field label="Name">
               <input
                 key={suggested}
@@ -118,7 +142,11 @@ export function NewAnalysis({
             >
               Cancel
             </button>
-            <button type="submit" disabled={pending} className={button.primary}>
+            <button
+              type="submit"
+              disabled={pending || !model}
+              className={button.primary}
+            >
               {pending ? "Running…" : "Run analysis"}
             </button>
           </div>

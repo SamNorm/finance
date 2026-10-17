@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: { template: "%s · Modeling workspace", default: "Modeling workspace" },
   description:
-    "Credit and transaction modeling on your institution's scoring model.",
+    "Credit and transaction modeling on your institution's scoring models.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
