@@ -10,7 +10,8 @@ import { LineDrawer, type LineEditing } from "./line-drawer";
 import { FORMATS, LINE_KINDS, type InputItem } from "./line-labels";
 
 // A model version's lines in order: section headers, assumptions with their
-// base-case values, and calculations with their formulas.
+// base-case values, calculations with their formulas, and inputs entered per
+// borrower.
 export function LinesWorkspace({
   version,
   editable,
@@ -158,16 +159,24 @@ export function LinesWorkspace({
                       >
                         {line.kind === "calculation"
                           ? line.formula
-                          : line.kind === "assumption"
-                            ? formatFigure(
-                                line.defaultValue === "TRUE"
-                                  ? "true"
-                                  : line.defaultValue === "FALSE"
-                                    ? "false"
-                                    : line.defaultValue,
-                                line.format,
-                              )
-                            : ""}
+                          : line.kind === "input"
+                            ? [
+                                line.breaksDown && `Part of ${line.breaksDown}`,
+                                line.projectionFormula &&
+                                  `Projected: ${line.projectionFormula}`,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ") || "Entered in analyses"
+                            : line.kind === "assumption"
+                              ? formatFigure(
+                                  line.defaultValue === "TRUE"
+                                    ? "true"
+                                    : line.defaultValue === "FALSE"
+                                      ? "false"
+                                      : line.defaultValue,
+                                  line.format,
+                                )
+                              : ""}
                       </span>
                     </td>
                     {editable && (

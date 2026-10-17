@@ -8,11 +8,13 @@ import type {
   ResultValue,
   RunPeriod,
 } from "@finance/domain";
-import { useState } from "react";
+import { Dec } from "@finance/engine";
+import { useOptimistic, useState, useTransition } from "react";
 import { button } from "@/components/styles";
 import { Modal } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITY_SHORT } from "@/lib/labels";
+import { saveModelInputAction } from "../actions";
 
 type Format = ModelLine["format"];
 
@@ -25,13 +27,16 @@ const SOURCES: Record<LineageRef["source"], string> = {
 };
 
 // The model's lines over the analysis's periods. Every value opens its
-// lineage: the formula and each value it read, down to the spread.
+// lineage: the formula and each value it read, down to the spread. Input
+// lines are entered here, in the spread's periods.
 export function ResultsTable({
+  analysisId,
   lines,
   run,
   base,
   scenarioName,
 }: {
+  analysisId: string;
   lines: ModelLine[];
   run: AnalysisRun;
   // The base case, when a scenario is shown, to compare against.
@@ -93,6 +98,18 @@ export function ResultsTable({
                     className="sticky left-0 z-10 border-b border-line/60 bg-surface py-1.5 pr-3 pl-4"
                   >
                     {line.label}
+                    {line.kind === "input" && (
+                      <span
+                        className="ml-2 rounded bg-surface-2 px-1 text-[11px] text-muted"
+                        title={
+                          line.breaksDown
+                            ? `Entered for this model; part of ${line.breaksDown}.`
+                            : "Entered for this model."
+                        }
+                      >
+                        input
+                      </span>
+                    )}
                     {assumption?.overridden && (
                       <span className="ml-2 rounded bg-accent-soft px-1 text-[11px] text-accent">
                         scenario
@@ -114,6 +131,16 @@ export function ResultsTable({
                               line.format,
                             )}
                           </span>
+                        ) : cell &&
+                          line.kind === "input" &&
+                          p.projection !== "assumptions" ? (
+                          <InputCell
+                            key={cell.value ?? ""}
+                            analysisId={analysisId}
+                            period={p}
+                            line={line}
+                            value={cell.value}
+                          />
                         ) : cell ? (
                           <button
                             type="button"
@@ -153,6 +180,86 @@ export function ResultsTable({
         formats={formats}
       />
     </section>
+  );
+}
+
+// A value as typed: percentages as "5%", the rest as stored.
+const typed = (raw: string | null, format: Format) =>
+  raw === null
+    ? ""
+    : format === "percent"
+      ? `${new Dec(raw).times(100).toString()}%`
+      : format === "flag"
+        ? raw.toUpperCase()
+        : raw;
+
+// A model input figure, edited in place: Enter or leaving the cell saves,
+// Escape cancels, and a blank clears it.
+function InputCell({
+  analysisId,
+  period,
+  line,
+  value,
+}: {
+  analysisId: string;
+  period: RunPeriod;
+  line: ModelLine;
+  value: string | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const [saving, setSaving] = useOptimistic<string | null>(null);
+
+  function save(raw: string) {
+    setEditing(false);
+    if (raw.trim() === typed(value, line.format)) return;
+    startTransition(async () => {
+      setSaving(raw.trim());
+      const result = await saveModelInputAction(
+        analysisId,
+        period.key,
+        line.code,
+        raw,
+      );
+      startTransition(() => setFailure(result.ok ? null : result.message));
+    });
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        defaultValue={typed(value, line.format)}
+        aria-label={`${line.label}, ${formatDate(period.end)}`}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={(e) => save(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="block w-full bg-surface px-3 py-1.5 text-right tabular-nums ring-2 ring-accent outline-none ring-inset"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title={failure ?? `Enter ${line.label.toLowerCase()} for this period`}
+      className={`block w-full px-3 py-1.5 text-right hover:bg-accent-soft/60 ${failure ? "text-danger ring-1 ring-danger ring-inset" : ""} ${pending ? "text-muted" : ""}`}
+    >
+      {pending && saving !== null
+        ? saving || "–"
+        : formatFigure(flag(value, line.format), line.format) || (
+            <span className="text-xs text-muted">Enter</span>
+          )}
+      {failure && (
+        <span className="block text-[11px] whitespace-normal text-danger">
+          {failure}
+        </span>
+      )}
+    </button>
   );
 }
 

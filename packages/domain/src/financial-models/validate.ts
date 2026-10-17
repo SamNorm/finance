@@ -2,7 +2,7 @@ import { checkModel, Dec, type Value } from "@finance/engine";
 import type { Issue } from "../errors";
 import { CODE_PATTERN } from "../scoring-models/validate";
 import { parseValue } from "../spreads/values";
-import type { LineFormat, ModelLine } from "./types";
+import type { LineFormat, LineKind, ModelLine } from "./types";
 
 // Issues a draft can't be saved with; formula problems only block publishing,
 // so a model can be written in any order.
@@ -67,6 +67,21 @@ export function validateLines(
     }
     if (!line.label.trim())
       error("label_missing", line.code, `"${line.code}" has no label.`);
+    if (line.kind === "input" && line.breaksDown !== null) {
+      if (!inputCodes.includes(line.breaksDown)) {
+        error(
+          "breaks_down_unknown",
+          line.code,
+          `"${line.label}" breaks down "${line.breaksDown}", which isn't an item of the scoring model.`,
+        );
+      } else if (line.format !== "amount" && line.format !== "count") {
+        error(
+          "breaks_down_format",
+          line.code,
+          `"${line.label}" breaks down an item, so it must be an amount or a count.`,
+        );
+      }
+    }
     if (line.kind === "assumption") {
       if (line.defaultValue === null) {
         issues.push({
@@ -87,7 +102,7 @@ export function validateLines(
   for (const issue of checkModel(
     formulaLines.map((l) => ({
       code: l.code,
-      kind: l.kind as "assumption" | "calculation",
+      kind: l.kind as Exclude<LineKind, "header">,
       formula: l.formula,
       projectionFormula: l.projectionFormula,
     })),

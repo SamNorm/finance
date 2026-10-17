@@ -9,6 +9,7 @@ import {
 } from "@finance/engine";
 import { assumptionValue } from "../financial-models/validate";
 import type { ModelLine } from "../financial-models/types";
+import { TOLERANCE } from "../spreads/checks";
 import type { StatementQuality } from "../spreads/service";
 
 // Runs a financial model version over a borrower's periods, plus projected
@@ -50,10 +51,25 @@ export interface AssumptionValue {
   overridden: boolean;
 }
 
+// Input lines that break down a scoring model item, such as inventory by
+// type, against the item in one period.
+export interface Breakdown {
+  code: string;
+  label: string;
+  period: number;
+  // The item as entered or summed in the spread, and the sum of its parts.
+  total: string | null;
+  parts: string;
+  // Total less parts; zero, within rounding, when they reconcile.
+  difference: string;
+  reconciles: boolean;
+}
+
 export interface AnalysisRun {
   periods: RunPeriod[];
   cells: Record<string, ResultCell[]>;
   assumptions: Record<string, AssumptionValue>;
+  breakdowns: Breakdown[];
 }
 
 export interface RunInput {
@@ -66,6 +82,8 @@ export interface RunInput {
     quality: StatementQuality;
     entered: Record<string, string>;
     summed: Record<string, string>;
+    // Figures for the model's input lines, by line code.
+    modelInputs: Record<string, string>;
   }[];
   // Years computed from assumptions after the last period.
   projectionYears: number;
@@ -107,6 +125,7 @@ export function runModel(input: RunInput): AnalysisRun {
 
   const items = new Map(input.items.map((item) => [item.code, item]));
   const lineByCode = new Map(input.lines.map((line) => [line.code, line]));
+  const inputLines = input.lines.filter((line) => line.kind === "input");
   const assumptions: Record<string, AssumptionValue> = {};
   const assumptionValues: Record<string, Value> = {};
   for (const line of input.lines) {
@@ -136,17 +155,33 @@ export function runModel(input: RunInput): AnalysisRun {
         projectionFormula: line.projectionFormula,
       })),
     assumptions: assumptionValues,
-    inputCodes: input.items.map((item) => item.code),
+    inputCodes: [
+      ...input.items.map((item) => item.code),
+      ...inputLines.map((line) => line.code),
+    ],
     input: (code, p) => {
       const period = input.periods[p];
+      const line = lineByCode.get(code);
+      if (line?.kind === "input")
+        return assumptionValue(period?.modelInputs[code] ?? null, line.format);
       const raw = period?.entered[code] ?? period?.summed[code];
       if (raw === undefined) return null;
       return items.get(code)?.numeric ? new Dec(raw) : raw;
     },
+    inputProjections: Object.fromEntries(
+      inputLines.map((line) => [line.code, line.projectionFormula]),
+    ),
   });
 
   const sourceOf = (code: string, p: number): LineageRef["source"] => {
     const line = lineByCode.get(code);
+    if (line?.kind === "input") {
+      if (periods[p]?.projection === "assumptions" && line.projectionFormula)
+        return "calculation";
+      return input.periods[p]?.modelInputs[code] !== undefined
+        ? "entered"
+        : "blank";
+    }
     if (line) return line.kind === "assumption" ? "assumption" : "calculation";
     const period = input.periods[p];
     if (period?.entered[code] !== undefined) return "entered";
@@ -175,5 +210,43 @@ export function runModel(input: RunInput): AnalysisRun {
       };
     });
   }
-  return { periods, cells, assumptions };
+  return {
+    periods,
+    cells,
+    assumptions,
+    breakdowns: reconcile(input, inputLines),
+  };
+}
+
+// Each item broken down by input lines, in every spread period where at least
+// one part is entered.
+function reconcile(input: RunInput, inputLines: ModelLine[]): Breakdown[] {
+  const parts = new Map<string, ModelLine[]>();
+  for (const line of inputLines) {
+    if (line.breaksDown)
+      parts.set(line.breaksDown, [...(parts.get(line.breaksDown) ?? []), line]);
+  }
+  const breakdowns: Breakdown[] = [];
+  for (const [code, lines] of parts) {
+    const label = input.items.find((item) => item.code === code)?.label ?? code;
+    input.periods.forEach((period, p) => {
+      const entered = lines
+        .map((line) => period.modelInputs[line.code])
+        .filter((raw) => raw !== undefined);
+      if (!entered.length) return;
+      const sum = entered.reduce((a, raw) => a.plus(raw), new Dec(0));
+      const raw = period.entered[code] ?? period.summed[code] ?? null;
+      const difference = new Dec(raw ?? 0).minus(sum);
+      breakdowns.push({
+        code,
+        label,
+        period: p,
+        total: raw,
+        parts: sum.toFixed(),
+        difference: difference.toFixed(),
+        reconciles: difference.abs().lte(TOLERANCE),
+      });
+    });
+  }
+  return breakdowns;
 }

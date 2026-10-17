@@ -199,6 +199,26 @@ describe("evaluateModel", () => {
     );
   });
 
+  it("projects inputs that have a projection formula", () => {
+    const evaluation = evaluateModel({
+      periods: [annual(2024), annual(2025, { projection: "assumptions" })],
+      calculations: [{ code: "TOTAL", formula: "RAW + FINISHED" }],
+      assumptions: { GROWTH_RATE: new Dec("0.1") },
+      inputCodes: ["RAW", "FINISHED"],
+      input: (code, p) => (p === 0 ? new Dec(code === "RAW" ? 40 : 60) : null),
+      inputProjections: { RAW: "PREV(RAW) * (1 + GROWTH_RATE)" },
+    });
+    expect(show(evaluation.cell("RAW", 0).value)).toBe("40");
+    expect(evaluation.cell("RAW", 0).formula).toBeNull();
+    expect(show(evaluation.cell("RAW", 1).value)).toBe("44");
+    expect(evaluation.cell("RAW", 1).refs.map((r) => r.code)).toEqual([
+      "RAW",
+      "GROWTH_RATE",
+    ]);
+    // Without a projection formula an input stays blank when projected.
+    expect(show(evaluation.cell("TOTAL", 1).value)).toBe("44");
+  });
+
   it("reads the client's projections like any period", () => {
     const evaluation = model({
       periods: [annual(2024), annual(2025, { projection: "client" })],
@@ -329,6 +349,46 @@ describe("checkModel", () => {
     expect(projectedCycle.map((i) => i.message)).toEqual([
       "Circular reference within a projected period: A → B → A.",
       "Circular reference within a projected period: A → B → A.",
+    ]);
+  });
+
+  it("checks input lines' projection formulas only", () => {
+    expect(
+      checkModel(
+        [
+          { code: "RAW", kind: "input" },
+          {
+            code: "FINISHED",
+            kind: "input",
+            projectionFormula: "PREV(FINISHED) + RAW",
+          },
+          { code: "STOCK", kind: "calculation", formula: "RAW + FINISHED" },
+        ],
+        inputs,
+      ),
+    ).toEqual([]);
+    const issues = checkModel(
+      [
+        { code: "RAW", kind: "input", projectionFormula: "STOCK / 2" },
+        {
+          code: "STOCK",
+          kind: "calculation",
+          formula: "RAW",
+          projectionFormula: "RAW + NOPE",
+        },
+      ],
+      inputs,
+    );
+    expect(issues.map((i) => [i.lineCode, i.message])).toEqual([
+      ["STOCK", 'Unknown item "NOPE".'],
+      [
+        "RAW",
+        "Circular reference within a projected period: RAW → STOCK → RAW.",
+      ],
+      [
+        "STOCK",
+        "Circular reference within a projected period: RAW → STOCK → RAW.",
+      ],
     ]);
   });
 

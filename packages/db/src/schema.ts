@@ -258,6 +258,28 @@ export const statementValues = pgTable(
   ],
 ).enableRLS();
 
+// Figures for financial model input lines, per period and keyed by the line's
+// code. Like statement values, they belong to the borrower, so every model
+// with an input of that code reads the same figure.
+export const modelInputValues = pgTable(
+  "model_input_values",
+  {
+    periodId: uuid()
+      .notNull()
+      .references(() => statementPeriods.id, { onDelete: "cascade" }),
+    code: text().notNull(),
+    amount: numeric(),
+    text: text(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.periodId, t.code] }),
+    check(
+      "model_input_values_one_kind",
+      sql`(${t.amount} is null) <> (${t.text} is null)`,
+    ),
+  ],
+).enableRLS();
+
 // ---------------------------------------------------------------------------
 // Financial models (§5.3–5.4): many per organization, versioned. A version
 // binds to a scoring model version and holds lines: assumptions, calculations
@@ -321,10 +343,13 @@ export const financialModelVersions = pgTable(
   ],
 ).enableRLS();
 
+// input: a figure the scoring model doesn't capture, entered per borrower
+// period for models that need it, such as inventory by type.
 export const lineKind = pgEnum("financial_model_line_kind", [
   "assumption",
   "calculation",
   "header",
+  "input",
 ]);
 
 // How a line's values display; "flag" is a TRUE/FALSE test such as a covenant.
@@ -349,10 +374,15 @@ export const financialModelLines = pgTable(
     position: integer().notNull(),
     format: lineFormat().notNull().default("amount"),
     // Calculations: the formula, and optionally another for projected periods.
+    // Inputs: only the projection formula, for periods computed from
+    // assumptions, where nothing is entered.
     formula: text(),
     projectionFormula: text(),
     // Assumptions: the base-case value, which scenarios override.
     defaultValue: text(),
+    // Inputs: the scoring model item this input is part of, such as raw
+    // materials of INVENTORY, so the parts can be reconciled with it.
+    breaksDown: text(),
     description: text(),
   },
   (t) => [

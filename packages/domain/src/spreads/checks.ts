@@ -9,7 +9,7 @@ import type { ScoringItem } from "../scoring-models/types";
 type Amount = InstanceType<typeof Dec>;
 
 // Differences up to this much are rounding, not errors.
-const TOLERANCE = new Dec(1);
+export const TOLERANCE = new Dec(1);
 
 const NUMERIC = new Set(["amount", "percent", "ratio", "count"]);
 export const isNumeric = (item: ScoringItem) => NUMERIC.has(item.dataType);

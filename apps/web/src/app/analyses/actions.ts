@@ -8,6 +8,7 @@ import {
   DomainError,
   getFinancialModel,
   repinAnalysis,
+  setModelInput,
   updateAnalysis,
   updateScenario,
 } from "@finance/domain";
@@ -84,6 +85,24 @@ export async function deleteAnalysisAction(
   );
   if (!result.ok) return result;
   redirect("/analyses");
+}
+
+export async function saveModelInputAction(
+  analysisId: string,
+  periodId: string,
+  code: string,
+  raw: string,
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    setModelInput(
+      db,
+      ctx,
+      analysisId,
+      String(periodId),
+      String(code),
+      String(raw),
+    ),
+  );
 }
 
 export async function addScenarioAction(

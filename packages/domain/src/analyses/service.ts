@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
+import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError } from "../errors";
 import { listLines } from "../financial-models/service";
@@ -22,6 +23,8 @@ const {
   entities,
   financialModels: models,
   financialModelVersions: versions,
+  modelInputValues,
+  statementPeriods,
 } = schema;
 
 export type Analysis = typeof analyses.$inferSelect;
@@ -443,7 +446,13 @@ export async function runAnalysis(
       quality: p.quality,
       entered: spread.values[p.id] ?? {},
       summed: spread.computed[p.id] ?? {},
+      modelInputs: {} as Record<string, string>,
     }));
+  const inputs = await modelInputsOf(
+    db,
+    periods.map((p) => p.key),
+  );
+  for (const period of periods) period.modelInputs = inputs[period.key] ?? {};
   const run = (overrides: Record<string, string>) =>
     runModel({
       periods,
@@ -459,6 +468,81 @@ export async function runAnalysis(
         })),
     });
   return { base: run({}), scenario: scenario ? run(scenario.overrides) : null };
+}
+
+// Figures of model input lines by period id, then code, canonical as
+// assumption values are.
+async function modelInputsOf(db: Db, periodIds: string[]) {
+  const result: Record<string, Record<string, string>> = {};
+  if (!periodIds.length) return result;
+  const rows = await db
+    .select()
+    .from(modelInputValues)
+    .where(inArray(modelInputValues.periodId, periodIds));
+  for (const row of rows) {
+    (result[row.periodId] ??= {})[row.code] =
+      row.amount !== null ? normalizeNumber(row.amount) : row.text!;
+  }
+  return result;
+}
+
+// Postgres pads numerics to their scale ("12.50"); keep the canonical form.
+const normalizeNumber = (raw: string) => new Dec(raw).toFixed();
+
+// Enters, changes or (when blank) clears the figure of one of the analysis's
+// input lines in one of its borrower's periods. Figures belong to the
+// borrower, so other models with an input of the same code read them too.
+export async function setModelInput(
+  db: Db,
+  ctx: Context,
+  analysisId: string,
+  periodId: string,
+  code: string,
+  raw: string,
+): Promise<void> {
+  const detail = await getAnalysis(db, ctx, analysisId);
+  const line = detail.lines.find((l) => l.code === code && l.kind === "input");
+  if (!line)
+    throw new DomainError("invalid", `"${code}" isn't an input of this model.`);
+  if (!UUID.test(periodId)) throw new DomainError("invalid", "Unknown period.");
+  const [period] = await db
+    .select({ quality: statementPeriods.quality })
+    .from(statementPeriods)
+    .where(
+      and(
+        eq(statementPeriods.id, periodId),
+        eq(statementPeriods.entityId, detail.entity.id),
+      ),
+    );
+  if (!period)
+    throw new DomainError(
+      "invalid",
+      "The period must belong to the analysis's borrower.",
+    );
+  const parsed = normalizeAssumption(raw, line.format);
+  if ("error" in parsed)
+    throw new DomainError("invalid", `${line.label}: ${parsed.error}`);
+  const key = and(
+    eq(modelInputValues.periodId, periodId),
+    eq(modelInputValues.code, code),
+  );
+  if (parsed.value === null) {
+    await db.delete(modelInputValues).where(key);
+  } else {
+    const numeric = line.format !== "text" && line.format !== "flag";
+    const values = {
+      amount: numeric ? parsed.value : null,
+      text: numeric ? null : parsed.value,
+    };
+    await db
+      .insert(modelInputValues)
+      .values({ periodId, code, ...values })
+      .onConflictDoUpdate({
+        target: [modelInputValues.periodId, modelInputValues.code],
+        set: values,
+      });
+  }
+  await touch(db, analysisId);
 }
 
 // A copy of the analysis on the model's latest published version, with the

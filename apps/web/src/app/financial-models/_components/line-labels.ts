@@ -4,11 +4,13 @@ export interface InputItem {
   code: string;
   label: string;
   statement: Statement;
+  numeric: boolean;
 }
 
 export const LINE_KINDS: Record<LineKind, string> = {
   calculation: "Calculation",
   assumption: "Assumption",
+  input: "Input",
   header: "Header",
 };
 

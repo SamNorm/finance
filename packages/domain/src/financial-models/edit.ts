@@ -31,6 +31,7 @@ export function insertLine(
     formula: null,
     projectionFormula: null,
     defaultValue: null,
+    breaksDown: null,
     description: null,
     ...line,
   });

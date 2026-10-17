@@ -22,7 +22,7 @@ import { attempt, invalid, run, text } from "@/lib/actions";
 const page = (modelId: string, version?: number) =>
   `/financial-models/${modelId}${version ? `?v=${version}` : ""}`;
 
-const KINDS = ["assumption", "calculation", "header"] as const;
+const KINDS = ["assumption", "calculation", "input", "header"] as const;
 const FORMATS = [
   "amount",
   "percent",
@@ -52,6 +52,7 @@ function readLine(form: FormData): ModelLine {
     formula: text(form, "formula") || null,
     projectionFormula: text(form, "projectionFormula") || null,
     defaultValue: text(form, "defaultValue") || null,
+    breaksDown: text(form, "breaksDown") || null,
     description: text(form, "description") || null,
   };
 }

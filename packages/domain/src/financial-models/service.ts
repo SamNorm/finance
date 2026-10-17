@@ -552,6 +552,7 @@ function normalizeLine(line: ModelLine): ModelLine {
       formula: null,
       projectionFormula: null,
       defaultValue: null,
+      breaksDown: null,
     };
   }
   if (line.kind === "calculation") {
@@ -560,6 +561,16 @@ function normalizeLine(line: ModelLine): ModelLine {
       formula: blank(line.formula),
       projectionFormula: blank(line.projectionFormula),
       defaultValue: null,
+      breaksDown: null,
+    };
+  }
+  if (line.kind === "input") {
+    return {
+      ...line,
+      formula: null,
+      projectionFormula: blank(line.projectionFormula),
+      defaultValue: null,
+      breaksDown: blank(line.breaksDown),
     };
   }
   const parsed =
@@ -570,6 +581,7 @@ function normalizeLine(line: ModelLine): ModelLine {
     ...line,
     formula: null,
     projectionFormula: null,
+    breaksDown: null,
     // An unreadable value is kept as typed; validation reports it.
     defaultValue: "value" in parsed ? parsed.value : line.defaultValue,
   };

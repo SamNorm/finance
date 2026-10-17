@@ -219,6 +219,7 @@ export const DEMO_MODEL = {
     formula: null,
     projectionFormula: null,
     defaultValue: null,
+    breaksDown: null,
     description: null,
     ...line,
   })),

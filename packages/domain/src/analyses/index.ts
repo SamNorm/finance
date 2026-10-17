@@ -3,6 +3,7 @@ export {
   serialize,
   type AnalysisRun,
   type AssumptionValue,
+  type Breakdown,
   type LineageRef,
   type ResultCell,
   type ResultValue,

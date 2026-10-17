@@ -100,6 +100,7 @@ Each financial model version contains:
 - **Inputs:**
   - References to scoring model items.
   - Model-specific inputs: assumptions (growth rate, interest rate, purchase price) and supplementary items the scoring model doesn't capture.
+  - **Input lines** hold those supplementary items. They are entered per borrower period in the analysis, and every model with an input of the same code reads the same figure. An input line can break down a scoring model item, such as inventory into raw materials, work in progress and finished goods. Analyses then flag periods where the parts don't add up to the item. An optional projection formula fills the input in years projected from assumptions.
 - **Calculations:** groupings and metrics written as Excel-like formulas and evaluated as a dependency graph. Formulas reference items by stable code, never by label.
 - **Views:** tables, charts and export layouts.
 

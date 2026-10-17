@@ -35,6 +35,7 @@ const BLANK: ModelLine = {
   formula: null,
   projectionFormula: null,
   defaultValue: null,
+  breaksDown: null,
   description: null,
 };
 
@@ -266,6 +267,52 @@ function LineForm({
               disabled={!editable}
             />
             <FunctionHelp />
+          </>
+        )}
+        {kind === "input" && (
+          <>
+            <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
+              A figure the scoring model doesn&apos;t capture, entered for each
+              borrower in the analysis. It belongs to the borrower, so other
+              models with an input of the same code read it too.
+            </p>
+            <Field
+              label="Breaks down (optional)"
+              hint="The scoring model item this is part of, such as raw materials of inventory. Analyses flag periods where the parts don't add up to it."
+            >
+              <select
+                name="breaksDown"
+                defaultValue={initial.breaksDown ?? ""}
+                className={input}
+              >
+                <option value="">Nothing: a figure of its own</option>
+                {STATEMENTS.map((s) => {
+                  const group = inputs.filter(
+                    (i) => i.statement === s.value && i.numeric,
+                  );
+                  return group.length ? (
+                    <optgroup key={s.value} label={s.label}>
+                      {group.map((i) => (
+                        <option key={i.code} value={i.code}>
+                          {i.label} ({i.code})
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null;
+                })}
+              </select>
+            </Field>
+            <FormulaField
+              name="projectionFormula"
+              label="Projection formula (optional)"
+              hint="Computes the input in years projected from assumptions, where nothing is entered."
+              value={projection}
+              onChange={setProjection}
+              known={known}
+              inputs={inputs}
+              lines={lines.filter((l) => l.kind !== "header")}
+              disabled={!editable}
+            />
           </>
         )}
         {kind === "assumption" && (

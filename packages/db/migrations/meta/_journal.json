@@ -50,6 +50,13 @@
       "when": 1792265340073,
       "tag": "0006_projection_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792265663542,
+      "tag": "0007_model_inputs",
+      "breakpoints": true
     }
   ]
 }

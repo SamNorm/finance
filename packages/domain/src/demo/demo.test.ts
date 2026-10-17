@@ -60,6 +60,7 @@ describe("demo data", () => {
                 ([code, v]) => [code, v.toFixed()],
               ),
             ),
+            modelInputs: {},
           };
         }),
         projectionYears: 2,

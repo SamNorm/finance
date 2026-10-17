@@ -69,7 +69,12 @@ async function ModelView({ params, searchParams }: Props) {
   ]);
   const inputs = items
     .filter((item) => item.kind !== "header")
-    .map(({ code, label, statement }) => ({ code, label, statement }));
+    .map(({ code, label, statement, dataType }) => ({
+      code,
+      label,
+      statement,
+      numeric: dataType !== "text" && dataType !== "date",
+    }));
   const issues =
     version.status === "draft"
       ? validateLines(

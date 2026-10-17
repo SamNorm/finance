@@ -3,7 +3,9 @@ import {
   getAnalysis,
   getSpread,
   runAnalysis,
+  type AnalysisRun,
 } from "@finance/domain";
+import { Dec } from "@finance/engine";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -13,6 +15,7 @@ import { AnalysisSettings } from "../_components/analysis-settings";
 import { Repin } from "../_components/repin";
 import { ResultsTable } from "../_components/results-table";
 import { ScenarioBar } from "../_components/scenario-bar";
+import { formatDate, formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
 
 export const metadata: Metadata = { title: "Analysis" };
@@ -115,6 +118,8 @@ async function AnalysisView({ params, searchParams }: Props) {
         assumptions={detail.lines.filter((l) => l.kind === "assumption")}
       />
 
+      <Breakdowns run={run} />
+
       {run.periods.length === 0 ? (
         <p className="rounded-lg border border-dashed border-line-strong px-6 py-12 text-center text-sm text-muted">
           {entity.name} has no periods in this analysis. Add figures on the{" "}
@@ -129,12 +134,40 @@ async function AnalysisView({ params, searchParams }: Props) {
       ) : (
         <ResultsTable
           key={scenario?.id ?? "base"}
+          analysisId={analysis.id}
           lines={detail.lines}
           run={run}
           base={results.scenario ? results.base : null}
           scenarioName={scenario?.name ?? null}
         />
       )}
+    </div>
+  );
+}
+
+// Input lines that break down an item but don't add up to it.
+function Breakdowns({ run }: { run: AnalysisRun }) {
+  const off = run.breakdowns.filter((b) => !b.reconciles);
+  if (!off.length) return null;
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-warning/40 bg-warning-soft px-4 py-3 text-sm">
+      <p className="font-medium text-warning">
+        Breakdowns that don&apos;t add up
+      </p>
+      <ul className="flex flex-col gap-0.5 text-muted">
+        {off.map((b) => {
+          const difference = new Dec(b.difference);
+          return (
+            <li key={`${b.code}:${b.period}`}>
+              {b.label}, {formatDate(run.periods[b.period]!.end)}: the parts add
+              up to {formatFigure(b.parts, "amount")},{" "}
+              {formatFigure(difference.abs().toFixed(), "amount")}{" "}
+              {difference.isPositive() ? "less" : "more"} than the{" "}
+              {formatFigure(b.total ?? "0", "amount")} in the spread.
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

@@ -5,9 +5,11 @@ import { FormulaSyntaxError, parseFormula, type Node } from "./parser";
 // parses, calls known functions correctly and references known items, no line
 // shadows an input, and no line depends on itself within a period.
 
+// Inputs are entered per period; they only have a projection formula, for
+// periods projected from assumptions.
 export interface ModelLine {
   code: string;
-  kind: "assumption" | "calculation";
+  kind: "assumption" | "calculation" | "input";
   formula?: string | null;
   projectionFormula?: string | null;
 }
@@ -123,16 +125,17 @@ export function checkModel(
     known.set(line.code.toUpperCase(), line.code);
   }
 
-  const calculations = new Set(
-    lines.filter((l) => l.kind === "calculation").map((l) => l.code),
+  const computed = new Set(
+    lines.filter((l) => l.kind !== "assumption").map((l) => l.code),
   );
   // A period uses either a line's formula or, when projected, its projection
   // formula, so the two modes are checked for cycles separately.
   const historical = new Map<string, Set<string>>();
   const projected = new Map<string, Set<string>>();
   for (const line of lines) {
-    if (line.kind !== "calculation") continue;
-    if (!line.formula?.trim()) {
+    if (line.kind === "assumption") continue;
+    const calculation = line.kind === "calculation";
+    if (calculation && !line.formula?.trim()) {
       issues.push({
         lineCode: line.code,
         field: "formula",
@@ -141,14 +144,17 @@ export function checkModel(
     }
     const reads: Partial<Record<"formula" | "projectionFormula", Set<string>>> =
       {};
-    for (const field of ["formula", "projectionFormula"] as const) {
+    const fields = calculation
+      ? (["formula", "projectionFormula"] as const)
+      : (["projectionFormula"] as const);
+    for (const field of fields) {
       const text = line[field];
       if (!text?.trim()) continue;
       const result = checkFormula(text, known);
       for (const issue of result.issues)
         issues.push({ lineCode: line.code, field, ...issue });
       reads[field] = new Set(
-        result.samePeriod.filter((code) => calculations.has(code)),
+        result.samePeriod.filter((code) => computed.has(code)),
       );
     }
     historical.set(line.code, reads.formula ?? new Set());

@@ -38,6 +38,7 @@ const line = (code: string, overrides: Partial<ModelLine> = {}): ModelLine => ({
   formula: null,
   projectionFormula: null,
   defaultValue: null,
+  breaksDown: null,
   description: null,
   ...overrides,
 });
@@ -95,6 +96,31 @@ describe("validateLines", () => {
     expect(
       issues.find((i) => i.message.startsWith("Projection formula"))?.message,
     ).toBe('Projection formula: Expected ")" but found the end.');
+  });
+
+  it("checks inputs that break down a scoring model item", () => {
+    const issues = validateLines(
+      [
+        line("RAW", { kind: "input", breaksDown: "REVENUE" }),
+        line("FINISHED", {
+          kind: "input",
+          breaksDown: "REVENUE",
+          projectionFormula: "PREV(FINISHED)",
+        }),
+        line("STOCK", { formula: "RAW + FINISHED" }),
+        line("GHOST", { kind: "input", breaksDown: "NOPE" }),
+        line("SHARE", {
+          kind: "input",
+          format: "percent",
+          breaksDown: "REVENUE",
+        }),
+      ],
+      INPUTS,
+    );
+    expect(issues.map((i) => [i.code, i.itemCode])).toEqual([
+      ["breaks_down_unknown", "GHOST"],
+      ["breaks_down_format", "SHARE"],
+    ]);
   });
 
   it("reads assumption values in their format", () => {

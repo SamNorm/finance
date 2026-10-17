@@ -29,6 +29,7 @@ import {
   listAnalyses,
   repinAnalysis,
   runAnalysis,
+  setModelInput,
   updateAnalysis,
   updateScenario,
 } from "./service";
@@ -41,6 +42,7 @@ const line = (code: string, overrides: Partial<ModelLine>): ModelLine => ({
   formula: null,
   projectionFormula: null,
   defaultValue: null,
+  breaksDown: null,
   description: null,
   ...overrides,
 });
@@ -55,6 +57,7 @@ describe("runModel", () => {
         quality: "audited" as const,
         entered: { REV: "100" },
         summed: { TOTAL: "40" },
+        modelInputs: {},
       },
       {
         key: "b",
@@ -63,6 +66,7 @@ describe("runModel", () => {
         quality: "review" as const,
         entered: { REV: "120" },
         summed: {},
+        modelInputs: {},
       },
     ],
     projectionYears: 2,
@@ -126,6 +130,70 @@ describe("runModel", () => {
       value: "-0.15",
       overridden: true,
     });
+  });
+
+  it("reads model inputs and reconciles breakdowns with their item", () => {
+    const run = runModel({
+      ...input,
+      periods: input.periods.map((p, i) => ({
+        ...p,
+        entered: { ...p.entered, TOTAL: i === 0 ? "40" : "50" },
+        modelInputs: (i === 0
+          ? { PART_A: "25", PART_B: "15" }
+          : { PART_A: "30" }) as Record<string, string>,
+      })),
+      lines: [
+        ...input.lines,
+        line("PART_A", {
+          kind: "input",
+          breaksDown: "TOTAL",
+          projectionFormula: "PREV(PART_A) * (1 + GROWTH)",
+        }),
+        line("PART_B", { kind: "input", breaksDown: "TOTAL" }),
+        line("A_SHARE", { format: "percent", formula: "PART_A / TOTAL" }),
+      ],
+    });
+    expect(run.cells.PART_A!.map((c) => c.value)).toEqual([
+      "25",
+      "30",
+      "33",
+      "36.3",
+    ]);
+    expect(run.cells.PART_B!.map((c) => c.value)).toEqual([
+      "15",
+      null,
+      null,
+      null,
+    ]);
+    expect(run.cells.A_SHARE![0]!.value).toBe("0.625");
+    expect(run.cells.A_SHARE![0]!.refs.map((r) => [r.code, r.source])).toEqual([
+      ["PART_A", "entered"],
+      ["TOTAL", "entered"],
+    ]);
+    expect(run.cells.PART_A![2]!.refs[0]).toMatchObject({
+      code: "PART_A",
+      source: "entered",
+    });
+    expect(run.breakdowns).toEqual([
+      {
+        code: "TOTAL",
+        label: "Total",
+        period: 0,
+        total: "40",
+        parts: "40",
+        difference: "0",
+        reconciles: true,
+      },
+      {
+        code: "TOTAL",
+        label: "Total",
+        period: 1,
+        total: "50",
+        parts: "30",
+        difference: "20",
+        reconciles: false,
+      },
+    ]);
   });
 
   it("traces every value to its sources", () => {
@@ -477,6 +545,79 @@ describe("analysis service", () => {
       }),
       "invalid",
     );
+  });
+
+  it("keeps model inputs with the borrower's periods", async () => {
+    const { context, entity, periods, model } = setup;
+    const draft = await createFinancialModelDraft(db, context, model.id);
+    await addLine(db, context, draft.id, {
+      code: "RAW_MATERIALS",
+      label: "Raw materials",
+      kind: "input",
+      breaksDown: "INVENTORY",
+    });
+    await addLine(db, context, draft.id, {
+      code: "RAW_SHARE",
+      label: "Raw materials share",
+      kind: "calculation",
+      format: "percent",
+      formula: "RAW_MATERIALS / INVENTORY",
+    });
+    const v2 = await publishFinancialModelVersion(db, context, draft.id);
+    await setValue(db, ctx, periods[1]!.id, "INVENTORY", "800");
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v2.id,
+      name: "A",
+    });
+    await setModelInput(
+      db,
+      ctx,
+      analysis.id,
+      periods[1]!.id,
+      "RAW_MATERIALS",
+      "300",
+    );
+    let { base } = await runAnalysis(db, ctx, analysis.id);
+    expect(base.cells.RAW_SHARE![1]!.value).toBe("0.375");
+    expect(base.breakdowns).toMatchObject([
+      { code: "INVENTORY", period: 1, difference: "500", reconciles: false },
+    ]);
+
+    await rejects(
+      setModelInput(db, ctx, analysis.id, periods[1]!.id, "SALES", "1"),
+      "invalid",
+    );
+    await rejects(
+      setModelInput(db, ctx, analysis.id, periods[1]!.id, "RAW_MATERIALS", "x"),
+      "invalid",
+    );
+    const other = await createEntity(db, ctx, {
+      name: "Other",
+      scoringModelId: setup.scoringModel.id,
+    });
+    const foreign = await addPeriod(db, ctx, other.id, {
+      periodEnd: "2024-12-31",
+      months: 12,
+      quality: "audited",
+    });
+    await rejects(
+      setModelInput(db, ctx, analysis.id, foreign.id, "RAW_MATERIALS", "1"),
+      "invalid",
+    );
+
+    // Blank clears the figure.
+    await setModelInput(
+      db,
+      ctx,
+      analysis.id,
+      periods[1]!.id,
+      "RAW_MATERIALS",
+      "",
+    );
+    ({ base } = await runAnalysis(db, ctx, analysis.id));
+    expect(base.cells.RAW_SHARE![1]!.value).toBe("0");
+    expect(base.breakdowns).toEqual([]);
   });
 
   it("refuses a model built on another scoring model", async () => {

@@ -42,8 +42,11 @@ export interface ModelRun {
   calculations: Calculation[];
   assumptions: Record<string, Value>;
   inputCodes: readonly string[];
-  // Entered statement values, by input code and period index.
+  // Entered values, by input code and period index.
   input: (code: string, period: number) => Value;
+  // Formulas that compute inputs in periods projected from assumptions,
+  // where nothing is entered, by input code.
+  inputProjections?: Readonly<Record<string, string | null>>;
 }
 
 export interface Ref {
@@ -64,12 +67,12 @@ export interface Evaluation {
 }
 
 type Source =
-  | { kind: "input"; code: string }
   | { kind: "assumption"; code: string; value: Value }
   | {
-      kind: "calculation";
+      kind: "input" | "calculation";
       code: string;
-      formula: Compiled;
+      // Null for inputs, which read entered values.
+      formula: Compiled | null;
       projection: Compiled | null;
     };
 
@@ -92,8 +95,15 @@ function compile(text: string | null | undefined): Compiled {
 
 export function evaluateModel(run: ModelRun): Evaluation {
   const sources = new Map<string, Source>();
-  for (const code of run.inputCodes)
-    sources.set(code.toUpperCase(), { kind: "input", code });
+  for (const code of run.inputCodes) {
+    const projection = run.inputProjections?.[code];
+    sources.set(code.toUpperCase(), {
+      kind: "input",
+      code,
+      formula: null,
+      projection: projection?.trim() ? compile(projection) : null,
+    });
+  }
   for (const [code, value] of Object.entries(run.assumptions)) {
     sources.set(code.toUpperCase(), { kind: "assumption", code, value });
   }
@@ -112,17 +122,17 @@ export function evaluateModel(run: ModelRun): Evaluation {
   const active = new Set<string>();
 
   function cellOf(source: Source, p: number): Cell {
-    if (source.kind === "input")
-      return { value: run.input(source.code, p), formula: null, refs: [] };
     if (source.kind === "assumption")
       return { value: source.value, formula: null, refs: [] };
-    const key = `${source.code}\u0000${p}`;
-    const known = memo.get(key);
-    if (known) return known;
     const compiled =
       run.periods[p]?.projection === "assumptions" && source.projection
         ? source.projection
         : source.formula;
+    if (!compiled)
+      return { value: run.input(source.code, p), formula: null, refs: [] };
+    const key = `${source.code}\u0000${p}`;
+    const known = memo.get(key);
+    if (known) return known;
     if (active.has(key)) {
       return {
         value: new FormulaError("#CYCLE!", `${source.code} depends on itself.`),
