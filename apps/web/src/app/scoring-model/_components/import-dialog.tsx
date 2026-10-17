@@ -4,7 +4,7 @@ import { startTransition, useState, useTransition } from "react";
 import { statementLabel } from "@/lib/labels";
 import { importAction, previewImportAction } from "../actions";
 import type { ActionResult, ImportPreview } from "../types";
-import { IssueList } from "./issue-list";
+import { IssueList } from "@/components/issue-list";
 import { button } from "@/components/styles";
 import { Icon, Modal } from "@/components/ui";
 

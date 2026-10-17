@@ -9,7 +9,7 @@ import {
   publishAction,
 } from "../actions";
 import type { ActionResult } from "../types";
-import { IssueList } from "./issue-list";
+import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
 import { Field, Modal } from "@/components/ui";
 

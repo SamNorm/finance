@@ -6,11 +6,14 @@
 // get nothing. Authorization lives in the domain layer, not in policies (§9.3).
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -159,5 +162,86 @@ export const scoringModelItems = pgTable(
     }),
     index("scoring_model_items_position").on(t.versionId, t.position),
     index("scoring_model_items_parent_code").on(t.versionId, t.parentCode),
+  ],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// Borrowers and spreads (§5.5): figures per entity and period, keyed by input
+// item code and stored once, so every financial model reads the same data.
+
+// A borrower or acquisition target.
+export const entities = pgTable(
+  "entities",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    industry: text(),
+    notes: text(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("entities_organization").on(t.organizationId)],
+).enableRLS();
+
+export const statementQuality = pgEnum("statement_quality", [
+  "audited",
+  "review",
+  "compilation",
+  "internal",
+  "projected",
+]);
+
+export const statementPeriods = pgTable(
+  "statement_periods",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    periodEnd: date({ mode: "string" }).notNull(),
+    months: integer().notNull().default(12),
+    quality: statementQuality().notNull(),
+    currency: text().notNull().default("CAD"),
+    consolidated: boolean().notNull().default(false),
+    // The scoring model version the figures were entered against.
+    scoringModelVersionId: uuid()
+      .notNull()
+      .references(() => scoringModelVersions.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("statement_periods_unique").on(
+      t.entityId,
+      t.periodEnd,
+      t.months,
+    ),
+    index("statement_periods_scoring_model_version").on(
+      t.scoringModelVersionId,
+    ),
+    check("statement_periods_months", sql`${t.months} between 1 and 24`),
+  ],
+).enableRLS();
+
+// One figure: a number for numeric items, text for text and date items.
+export const statementValues = pgTable(
+  "statement_values",
+  {
+    periodId: uuid()
+      .notNull()
+      .references(() => statementPeriods.id, { onDelete: "cascade" }),
+    code: text().notNull(),
+    amount: numeric(),
+    text: text(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.periodId, t.code] }),
+    check(
+      "statement_values_one_kind",
+      sql`(${t.amount} is null) <> (${t.text} is null)`,
+    ),
   ],
 ).enableRLS();

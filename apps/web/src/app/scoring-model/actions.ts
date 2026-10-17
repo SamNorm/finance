@@ -23,8 +23,9 @@ import {
   type Context,
   type ScoringItem,
 } from "@finance/domain";
-import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
+import type { ActionResult } from "@/lib/action-result";
+import { attempt, invalid, run, text } from "@/lib/actions";
 import {
   AGGREGATIONS,
   DATA_TYPES,
@@ -34,37 +35,9 @@ import {
   STATEMENTS,
 } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
-import type { ActionResult, ImportPreview } from "./types";
-
-// Thin wrappers over the domain package. Inputs are untrusted: every action
-// resolves the caller's context itself and passes only IDs and field values on.
+import type { ImportPreview } from "./types";
 
 const PAGE = "/scoring-model";
-
-// Runs a change. Domain errors come back as values for the UI to show;
-// anything else is a bug and throws.
-async function attempt<T>(
-  work: (db: Db, ctx: Context) => Promise<T>,
-): Promise<ActionResult<T>> {
-  try {
-    return { ok: true, value: await work(getDb(), await getContext()) };
-  } catch (error) {
-    if (error instanceof DomainError) {
-      return { ok: false, message: error.message, issues: error.issues };
-    }
-    throw error;
-  }
-}
-
-// Runs a change and re-renders the current page in the same response.
-async function run(
-  work: (db: Db, ctx: Context) => Promise<unknown>,
-): Promise<ActionResult> {
-  const result = await attempt(work);
-  if (!result.ok) return result;
-  refresh();
-  return { ok: true, value: undefined };
-}
 
 // Runs a change, then navigates to the version it returns. Navigating from the
 // server keeps the change and the new page in one response; a refresh followed
@@ -75,13 +48,6 @@ async function runAndShow(
   const result = await attempt(work);
   if (!result.ok) return result;
   redirect(result.value === null ? PAGE : `${PAGE}?v=${result.value}`);
-}
-
-const invalid = (message: string) => new DomainError("invalid", message);
-
-function text(form: FormData, name: string) {
-  const value = form.get(name);
-  return typeof value === "string" ? value.trim() : "";
 }
 
 function choice<T extends string>(

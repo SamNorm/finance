@@ -15,6 +15,13 @@
       "when": 1792256139230,
       "tag": "0001_index_item_parents",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792260726931,
+      "tag": "0002_borrowers_and_spreads",
+      "breakpoints": true
     }
   ]
 }

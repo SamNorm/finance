@@ -1,8 +1,10 @@
 import {
   getOrganization,
+  listEntities,
   getScoringModel,
   listItems,
   validateItems,
+  type EntitySummary,
   type ScoringItem,
   type ScoringModelWithVersions,
 } from "@finance/domain";
@@ -26,9 +28,10 @@ export default function Home() {
 async function Overview() {
   const db = getDb();
   const ctx = await getContext();
-  const [organization, model] = await Promise.all([
+  const [organization, model, borrowers] = await Promise.all([
     getOrganization(db, ctx),
     getScoringModel(db, ctx),
+    listEntities(db, ctx),
   ]);
   const inputs = inputsLabel(model?.source);
 
@@ -86,12 +89,9 @@ async function Overview() {
           <Step
             number={3}
             title="Borrowers and spreads"
-            status={<Badge tone="muted">Planned</Badge>}
+            status={<BorrowersStatus count={borrowers.length} />}
           >
-            <Planned>
-              Paste a borrower&apos;s spread or enter it by hand, checked before
-              saving. Every financial model fills from it.
-            </Planned>
+            <BorrowersSummary borrowers={borrowers} />
           </Step>
           <Step
             number={4}
@@ -216,6 +216,37 @@ function Counts({ items }: { items: ScoringItem[] }) {
         </span>
       ))}
     </>
+  );
+}
+
+function BorrowersStatus({ count }: { count: number }) {
+  if (!count) return <Badge tone="muted">None yet</Badge>;
+  return (
+    <Badge tone="success">
+      {count} {count === 1 ? "borrower" : "borrowers"}
+    </Badge>
+  );
+}
+
+function BorrowersSummary({ borrowers }: { borrowers: EntitySummary[] }) {
+  const periods = borrowers.reduce((n, b) => n + b.periodCount, 0);
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <p className="text-sm text-muted">
+        {borrowers.length
+          ? `${periods} ${periods === 1 ? "period" : "periods"} spread across ${borrowers
+              .slice(0, 3)
+              .map((b) => b.name)
+              .join(", ")}${borrowers.length > 3 ? " and others" : ""}.`
+          : "Paste a borrower's spread or enter it by hand, checked as you go. Every financial model fills from it."}
+      </p>
+      <Link
+        href="/borrowers"
+        className={borrowers.length ? button.secondary : button.primary}
+      >
+        {borrowers.length ? "Open borrowers" : "Add a borrower"}
+      </Link>
+    </div>
   );
 }
 

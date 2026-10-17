@@ -2,16 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { navLinkClass, type NavItem } from "./nav-items";
 
-export function NavLinks({ inputsLabel }: { inputsLabel: string }) {
+export function NavLinks({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
-  const links = [
-    { href: "/", label: "Overview" },
-    { href: "/scoring-model", label: inputsLabel },
-  ];
   return (
     <nav className="flex h-full items-center gap-5 text-sm">
-      {links.map(({ href, label }) => (
+      {items.map(({ href, label }) => (
         <Link
           key={href}
           href={href}
@@ -20,7 +17,7 @@ export function NavLinks({ inputsLabel }: { inputsLabel: string }) {
               ? "page"
               : undefined
           }
-          className="flex h-full items-center border-b-2 border-transparent text-muted hover:text-foreground aria-[current=page]:border-accent aria-[current=page]:font-medium aria-[current=page]:text-foreground"
+          className={navLinkClass}
         >
           {label}
         </Link>

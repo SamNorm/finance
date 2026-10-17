@@ -91,6 +91,9 @@ importers:
       '@finance/db':
         specifier: workspace:*
         version: link:../db
+      '@finance/engine':
+        specifier: workspace:*
+        version: link:../engine
       papaparse:
         specifier: ^5.7.0
         version: 5.7.0

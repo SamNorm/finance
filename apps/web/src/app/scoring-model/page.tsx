@@ -12,7 +12,7 @@ import { Suspense } from "react";
 import { inputsLabel, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { CreateModel } from "./_components/create-model";
-import { IssueList } from "./_components/issue-list";
+import { IssueList } from "@/components/issue-list";
 import { ItemsWorkspace } from "./_components/items-workspace";
 import { VersionActions } from "./_components/version-actions";
 

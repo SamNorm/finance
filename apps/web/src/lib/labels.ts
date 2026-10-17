@@ -55,3 +55,22 @@ export const isOneOf = <T extends string>(
 // structure with a `native` source, never called a scoring model (§5.7).
 export const inputsLabel = (source: "mirrored" | "native" | undefined) =>
   source === "native" ? "Input sheet" : "Scoring model";
+
+export const QUALITIES: Record<
+  "audited" | "review" | "compilation" | "internal" | "projected",
+  string
+> = {
+  audited: "Audited",
+  review: "Review engagement",
+  compilation: "Compilation",
+  internal: "Internal",
+  projected: "Projected",
+};
+
+export const QUALITY_SHORT: Record<keyof typeof QUALITIES, string> = {
+  audited: "Audited",
+  review: "Review",
+  compilation: "Compilation",
+  internal: "Internal",
+  projected: "Projected",
+};

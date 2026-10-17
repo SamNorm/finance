@@ -1,7 +1,6 @@
 import type { Issue, ItemChange, Statement } from "@finance/domain";
 
-export type ActionResult<T = void> =
-  { ok: true; value: T } | { ok: false; message: string; issues: Issue[] };
+export type { ActionResult } from "@/lib/action-result";
 
 export interface ImportPreview {
   total: number;

@@ -50,6 +50,26 @@ export async function getScoringModel(
   return { ...model, versions: list };
 }
 
+// The version spreads are entered against and new financial models bind to.
+export async function getLatestPublishedVersion(
+  db: Db,
+  ctx: Context,
+): Promise<ScoringModelVersion | null> {
+  const [row] = await db
+    .select({ version: versions })
+    .from(versions)
+    .innerJoin(scoringModels, eq(scoringModels.id, versions.scoringModelId))
+    .where(
+      and(
+        eq(scoringModels.organizationId, ctx.organizationId),
+        eq(versions.status, "published"),
+      ),
+    )
+    .orderBy(desc(versions.number))
+    .limit(1);
+  return row?.version ?? null;
+}
+
 // Creates the model with an empty draft v1.
 export async function createScoringModel(
   db: Db,

@@ -1,5 +1,5 @@
-import Papa from "papaparse";
 import type { Issue } from "../errors";
+import { readTable } from "../tabular";
 import type {
   ItemAggregation,
   ItemDataType,
@@ -244,18 +244,6 @@ interface Draft extends Omit<ScoringItem, "statement" | "kind"> {
   kind: ItemKind | undefined;
 }
 
-// Papa's own guess fails on short pastes, so the header row decides: whichever
-// delimiter it contains most, tabs first (cells copied out of Excel).
-function detectDelimiter(text: string) {
-  const header = text.split(/\r?\n/, 1)[0] ?? "";
-  let best = { delimiter: ",", count: 0 };
-  for (const delimiter of ["\t", ";", ",", "|"]) {
-    const count = header.split(delimiter).length - 1;
-    if (count > best.count) best = { delimiter, count };
-  }
-  return best.delimiter;
-}
-
 export function parseItemTable(text: string): ParseResult {
   const issues: Issue[] = [];
   const rowByCode = new Map<string, number>();
@@ -265,22 +253,9 @@ export function parseItemTable(text: string): ParseResult {
     rowByCode,
   });
 
-  const source = text.replace(/^﻿/, "");
-  const parsed = Papa.parse<string[]>(source, {
-    delimiter: detectDelimiter(source),
-    skipEmptyLines: false,
-  });
-  for (const e of parsed.errors) {
-    if (e.type === "Quotes") {
-      issues.push({
-        severity: "error",
-        code: "file_invalid",
-        row: (e.row ?? 0) + 1,
-        message: e.message,
-      });
-    }
-  }
-  const rows = parsed.data;
+  const table = readTable(text);
+  issues.push(...table.issues);
+  const { rows } = table;
   const header = rows[0];
   if (!header || header.every((cell) => !cell.trim()))
     return fail("The file is empty.");

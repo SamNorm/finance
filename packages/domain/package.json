@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@finance/db": "workspace:*",
+    "@finance/engine": "workspace:*",
     "papaparse": "^5.7.0"
   },
   "devDependencies": {
