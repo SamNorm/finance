@@ -1,0 +1,1 @@
+CREATE INDEX "scoring_model_items_parent_code" ON "scoring_model_items" USING btree ("version_id","parent_code");

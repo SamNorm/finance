@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# environment (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# build output and caches
+.next/
+dist/
+out/
+.turbo/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# misc
+.DS_Store
+*.log

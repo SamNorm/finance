@@ -1,0 +1,26 @@
+{
+  "name": "@finance/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "seed": "tsx --env-file-if-exists=../../.env scripts/seed.ts",
+    "import-scoring-model": "tsx --env-file-if-exists=../../.env scripts/import-scoring-model.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@finance/db": "workspace:*",
+    "papaparse": "^5.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/papaparse": "^5.5.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

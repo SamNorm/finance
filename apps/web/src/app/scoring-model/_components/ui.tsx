@@ -1,0 +1,172 @@
+"use client";
+
+import {
+  startTransition,
+  useEffect,
+  useRef,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+
+const base =
+  "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+
+export const button = {
+  primary: `${base} bg-accent text-accent-fg hover:opacity-90`,
+  secondary: `${base} border border-line bg-surface hover:bg-surface-2`,
+  ghost: `${base} text-muted hover:bg-surface-2 hover:text-foreground`,
+  danger: `${base} text-danger hover:bg-danger-soft`,
+  icon: "inline-flex size-7 items-center justify-center rounded text-muted hover:bg-surface hover:text-foreground disabled:opacity-30",
+};
+
+export const input =
+  "w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm outline-none placeholder:text-muted/70 focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:bg-surface-2";
+
+// React resets a form after its `action` prop runs, which would wipe what the
+// user typed when the server rejects it. Submitting through onSubmit with the
+// same action keeps the fields.
+export function keepFields(dispatch: (form: FormData) => void) {
+  return (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    const form = new FormData(event.currentTarget, submitter);
+    startTransition(() => dispatch(form));
+  };
+}
+
+// A native <dialog>, opened as a modal while `open` is true. Escape and the
+// close button call onClose. `side` turns it into a full-height panel.
+export function Modal({
+  open,
+  onClose,
+  title,
+  side = false,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  side?: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (open && !dialog?.open) dialog?.showModal();
+    if (!open && dialog?.open) dialog.close();
+  }, [open]);
+
+  return (
+    <dialog
+      ref={ref}
+      onClose={onClose}
+      className={
+        side
+          ? "fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-none w-[min(460px,100vw)] max-w-none border-l border-line bg-surface p-0 text-foreground shadow-2xl"
+          : "m-auto w-[min(720px,calc(100vw-2rem))] max-w-none rounded-xl border border-line bg-surface p-0 text-foreground shadow-2xl"
+      }
+    >
+      {open && (
+        <div
+          className={
+            side ? "flex h-full flex-col" : "flex max-h-[85dvh] flex-col"
+          }
+        >
+          <div className="flex items-center gap-3 border-b border-line px-5 py-3">
+            <h2 className="text-base font-semibold">{title}</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className={`${button.icon} ml-auto`}
+              aria-label="Close"
+            >
+              <Icon name="close" />
+            </button>
+          </div>
+          {children}
+        </div>
+      )}
+    </dialog>
+  );
+}
+
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted">{label}</span>
+      {children}
+      {hint && <span className="text-xs text-muted">{hint}</span>}
+    </label>
+  );
+}
+
+// Radio buttons styled as a segmented control; the value is submitted as `name`.
+export function Segmented<T extends string>({
+  name,
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  name: string;
+  options: Record<T, string>;
+  value: T;
+  onChange?: (value: T) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex rounded-md border border-line bg-surface-2 p-0.5">
+      {(Object.entries(options) as [T, string][]).map(([option, label]) => (
+        <label
+          key={option}
+          className="flex-1 cursor-pointer rounded px-2 py-1 text-center text-sm text-muted has-checked:bg-surface has-checked:font-medium has-checked:text-foreground has-checked:shadow-xs has-disabled:cursor-default"
+        >
+          <input
+            type="radio"
+            name={name}
+            value={option}
+            defaultChecked={onChange ? undefined : option === value}
+            checked={onChange ? option === value : undefined}
+            onChange={() => onChange?.(option)}
+            disabled={disabled}
+            className="sr-only"
+          />
+          {label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+const paths = {
+  close: "M4 4l8 8M12 4l-8 8",
+  up: "M8 12V4M4.5 7.5L8 4l3.5 3.5",
+  down: "M8 4v8M4.5 8.5L8 12l3.5-3.5",
+  plus: "M8 3.5v9M3.5 8h9",
+  upload: "M8 10.5V3M5 6l3-3 3 3M3.5 10.5v2h9v-2",
+};
+
+export function Icon({ name }: { name: keyof typeof paths }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d={paths[name]} />
+    </svg>
+  );
+}

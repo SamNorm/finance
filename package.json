@@ -1,0 +1,27 @@
+{
+  "name": "finance",
+  "private": true,
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:check": "pnpm --filter @finance/db check",
+    "db:generate": "pnpm --filter @finance/db generate",
+    "db:migrate": "pnpm --filter @finance/db migrate",
+    "db:seed": "pnpm --filter @finance/domain seed",
+    "scoring-model:import": "pnpm --filter @finance/domain import-scoring-model"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10",
+    "turbo": "^2.11.9",
+    "typescript": "^5.9.3"
+  }
+}

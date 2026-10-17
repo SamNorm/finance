@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792255562382,
+      "tag": "0000_scoring_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792256139230,
+      "tag": "0001_index_item_parents",
+      "breakpoints": true
+    }
+  ]
+}
