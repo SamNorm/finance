@@ -4,8 +4,9 @@ import type { StatementQuality } from "../spreads/service";
 // banking template (fixtures/commercial-banking.csv). Each company is
 // simulated year by year so its statements hold together: the balance sheet
 // balances, retained earnings roll forward, and the cash flow statement
-// explains the change in cash. Any resemblance to real companies is
-// coincidental (§10.1: fictional data only).
+// explains the change in cash. One company also has its own projections.
+// Any resemblance to real companies is coincidental (§10.1: fictional data
+// only).
 
 export interface DemoPeriod {
   year: number;
@@ -17,6 +18,9 @@ export interface DemoPeriod {
 export interface DemoCompany {
   name: string;
   industry: string;
+  naicsCode: string;
+  // The institution's rating, for reference; the app never computes it.
+  riskRating: string;
   notes: string;
   periods: DemoPeriod[];
 }
@@ -24,12 +28,15 @@ export interface DemoCompany {
 interface Profile {
   name: string;
   industry: string;
+  naicsCode: string;
+  riskRating: string;
   notes: string;
-  quality: [StatementQuality, StatementQuality, StatementQuality];
+  // One per year from 2022: three actual years, then any the client
+  // projects (quality "projected"). The yearly arrays below follow it.
+  quality: StatementQuality[];
   revenue2021: number;
-  // 2022, 2023, 2024.
-  growth: [number, number, number];
-  grossMargin: [number, number, number];
+  growth: number[];
+  grossMargin: number[];
   sellingPct: number;
   adminPct: number;
   officerPay: number;
@@ -40,7 +47,7 @@ interface Profile {
   vehicles: number;
   accumDep2021: number;
   // Into machinery, or vehicles for a fleet.
-  capex: [number, number, number];
+  capex: number[];
   capexInto: "machinery" | "vehicles";
   maintenanceShare: number;
   depRate: number;
@@ -49,7 +56,7 @@ interface Profile {
   amortization: number;
   debt2021: number;
   repayment: number;
-  newDebt: [number, number, number];
+  newDebt: number[];
   debtRate: number;
   lineAuthorized: number;
   lineRate: number;
@@ -61,9 +68,9 @@ interface Profile {
   minCash: number;
   shareCapital: number;
   retained2021: number;
-  dividends: [number, number, number];
+  dividends: number[];
   shareholderLoans: number;
-  employees: [number, number, number];
+  employees: number[];
   taxRate: number;
 }
 
@@ -71,6 +78,8 @@ const PROFILES: Profile[] = [
   {
     name: "Northwind Precision Inc.",
     industry: "Machined parts manufacturing",
+    naicsCode: "332710",
+    riskRating: "3",
     notes: "Owner-managed since 1998. Owns its plant.",
     quality: ["audited", "audited", "audited"],
     revenue2021: 16_800_000,
@@ -106,7 +115,7 @@ const PROFILES: Profile[] = [
     minCash: 250_000,
     shareCapital: 100_000,
     retained2021: 6_400_000,
-    dividends: [400_000, 450_000, 500_000],
+    dividends: [1_200_000, 1_500_000, 1_400_000],
     shareholderLoans: 300_000,
     employees: [92, 97, 101],
     taxRate: 0.265,
@@ -114,6 +123,8 @@ const PROFILES: Profile[] = [
   {
     name: "Laurentian Foods Ltd.",
     industry: "Food distribution",
+    naicsCode: "424410",
+    riskRating: "5",
     notes:
       "Regional distributor to grocers and restaurants. Leases its warehouse.",
     quality: ["review", "review", "review"],
@@ -158,11 +169,14 @@ const PROFILES: Profile[] = [
   {
     name: "Saint-Laurent Logistics Corp.",
     industry: "Regional trucking",
+    naicsCode: "484121",
+    riskRating: "6",
     notes: "Truckload carrier. Fleet financed with term loans.",
-    quality: ["compilation", "review", "review"],
+    // With management's turnaround projections for 2025 and 2026.
+    quality: ["compilation", "review", "review", "projected", "projected"],
     revenue2021: 12_500_000,
-    growth: [0.09, 0.03, -0.06],
-    grossMargin: [0.315, 0.285, 0.25],
+    growth: [0.09, 0.03, -0.06, 0.08, 0.06],
+    grossMargin: [0.315, 0.285, 0.25, 0.27, 0.285],
     sellingPct: 0.02,
     adminPct: 0.08,
     officerPay: 380_000,
@@ -172,7 +186,7 @@ const PROFILES: Profile[] = [
     machinery: 0,
     vehicles: 7_500_000,
     accumDep2021: 3_200_000,
-    capex: [1_800_000, 900_000, 400_000],
+    capex: [1_800_000, 900_000, 400_000, 600_000, 1_000_000],
     capexInto: "vehicles",
     maintenanceShare: 0.3,
     depRate: 0.12,
@@ -181,7 +195,7 @@ const PROFILES: Profile[] = [
     amortization: 0,
     debt2021: 4_800_000,
     repayment: 800_000,
-    newDebt: [1_200_000, 0, 0],
+    newDebt: [1_200_000, 0, 0, 0, 800_000],
     debtRate: 0.07,
     lineAuthorized: 1_500_000,
     lineRate: 0.08,
@@ -193,9 +207,9 @@ const PROFILES: Profile[] = [
     minCash: 100_000,
     shareCapital: 250_000,
     retained2021: 3_100_000,
-    dividends: [150_000, 100_000, 0],
+    dividends: [150_000, 100_000, 0, 0, 0],
     shareholderLoans: 600_000,
-    employees: [85, 88, 80],
+    employees: [85, 88, 80, 82, 86],
     taxRate: 0.265,
   },
 ];
@@ -237,10 +251,10 @@ const round = Math.round;
 function simulate(p: Profile): Year[] {
   const years: Year[] = [];
   let revenue = p.revenue2021;
-  for (let i = -1; i < 3; i++) {
+  for (let i = -1; i < p.quality.length; i++) {
     const prior = years.at(-1);
     if (i >= 0) revenue = revenue * (1 + p.growth[i]!);
-    const margin = i >= 0 ? p.grossMargin[i]! : p.grossMargin[0];
+    const margin = p.grossMargin[Math.max(i, 0)]!;
     const capex = i >= 0 ? p.capex[i]! : 0;
     const newDebt = i >= 0 ? p.newDebt[i]! : 0;
     const machinery =
@@ -417,10 +431,12 @@ export function demoCompanies(): DemoCompany[] {
     return {
       name: p.name,
       industry: p.industry,
+      naicsCode: p.naicsCode,
+      riskRating: p.riskRating,
       notes: p.notes,
-      periods: [0, 1, 2].map((i) => ({
+      periods: p.quality.map((quality, i) => ({
         year: 2022 + i,
-        quality: p.quality[i]!,
+        quality,
         values: figures(p, years[i + 1]!, years[i]!, i),
       })),
     };
