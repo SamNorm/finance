@@ -50,3 +50,8 @@ export const isOneOf = <T extends string>(
   options: Record<T, string>,
   value: unknown,
 ): value is T => typeof value === "string" && Object.hasOwn(options, value);
+
+// An organization without a scoring system keeps its own input sheet: the same
+// structure with a `native` source, never called a scoring model (§5.7).
+export const inputsLabel = (source: "mirrored" | "native" | undefined) =>
+  source === "native" ? "Input sheet" : "Scoring model";

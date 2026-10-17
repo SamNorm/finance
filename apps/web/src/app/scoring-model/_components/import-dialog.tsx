@@ -5,10 +5,11 @@ import { statementLabel } from "@/lib/labels";
 import { importAction, previewImportAction } from "../actions";
 import type { ActionResult, ImportPreview } from "../types";
 import { IssueList } from "./issue-list";
-import { button, Icon, Modal } from "./ui";
+import { button } from "@/components/styles";
+import { Icon, Modal } from "@/components/ui";
 
 const COLUMNS: [string, string][] = [
-  ["code", "Required. The source system's identifier for the line."],
+  ["code", "Required. A stable identifier, such as the source system's code."],
   ["label", "Required. The line's name as analysts see it."],
   [
     "statement",

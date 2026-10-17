@@ -9,7 +9,7 @@ import {
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { STATEMENTS } from "@/lib/labels";
+import { inputsLabel, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { CreateModel } from "./_components/create-model";
 import { IssueList } from "./_components/issue-list";
@@ -39,7 +39,13 @@ async function ScoringModelView({
   const db = getDb();
   const ctx = await getContext();
   const model = await getScoringModel(db, ctx);
-  if (!model) return <CreateModel />;
+  if (!model) {
+    return (
+      <CreateModel
+        defaultSource={params.source === "native" ? "native" : "mirrored"}
+      />
+    );
+  }
 
   const draft = model.versions.find((v) => v.status === "draft");
   const version =
@@ -58,13 +64,13 @@ async function ScoringModelView({
     <div className="flex flex-col gap-5">
       <header className="flex flex-col gap-1">
         <p className="text-xs font-medium tracking-wide text-muted uppercase">
-          Scoring model
+          {inputsLabel(model.source)}
         </p>
         <h1 className="text-2xl font-semibold tracking-tight">{model.name}</h1>
         <p className="text-sm text-muted">
           {model.source === "mirrored"
             ? `Mirrors ${model.sourceSystem || "an external system"}`
-            : "Native input sheet"}
+            : "The organization's own input sheet, used in place of a scoring system"}
           {model.description ? ` · ${model.description}` : ""}
         </p>
       </header>

@@ -7,7 +7,8 @@ import { DATA_TYPES, KINDS, STATEMENTS } from "@/lib/labels";
 import { moveItemAction } from "../actions";
 import { ImportDialog } from "./import-dialog";
 import { ItemDrawer, type Editing } from "./item-drawer";
-import { button, Icon } from "./ui";
+import { button } from "@/components/styles";
+import { Icon } from "@/components/ui";
 
 // The items of one version, one statement at a time, laid out like the source
 // system: in row order, indented by depth. Drafts are edited in place.
@@ -352,7 +353,7 @@ function Empty({
         <>
           <p className="max-w-md text-sm text-muted">
             {empty
-              ? "Import the item list exported from the source system, or paste it from Excel. You can also add items one by one."
+              ? "Import the item list from a CSV export, or paste it from Excel. You can also add items one by one."
               : "Add items here, or import the whole list again."}
           </p>
           <div className="flex gap-2">

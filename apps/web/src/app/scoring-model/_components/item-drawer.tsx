@@ -17,7 +17,8 @@ import {
 import { removeItemAction, saveItemAction } from "../actions";
 import type { ActionResult } from "../types";
 import { IssueList } from "./issue-list";
-import { button, Field, input, keepFields, Modal, Segmented } from "./ui";
+import { button, input } from "@/components/styles";
+import { Field, keepFields, Modal, Segmented } from "@/components/ui";
 
 export type Editing =
   | { mode: "new"; position: number; defaults: Partial<ScoringItem> }
@@ -191,7 +192,7 @@ function ItemForm({
         </Field>
         <Field
           label="Code"
-          hint="The identifier the source system uses. Letters, digits and _ . : / -"
+          hint="A stable identifier; in a mirror, the source system's own code. Letters, digits and _ . : / -"
         >
           <input
             name="code"

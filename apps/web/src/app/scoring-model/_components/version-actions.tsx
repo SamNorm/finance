@@ -10,7 +10,8 @@ import {
 } from "../actions";
 import type { ActionResult } from "../types";
 import { IssueList } from "./issue-list";
-import { button, Field, input, Modal } from "./ui";
+import { button, input } from "@/components/styles";
+import { Field, Modal } from "@/components/ui";
 
 type Version = Pick<ScoringModelVersion, "id" | "number" | "status">;
 

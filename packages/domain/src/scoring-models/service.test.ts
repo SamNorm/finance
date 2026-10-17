@@ -17,6 +17,7 @@ import {
   removeItem,
   replaceItems,
   updateItem,
+  updateScoringModel,
   validateVersion,
 } from "./service";
 import { fixture, item } from "./test-helpers";
@@ -62,6 +63,31 @@ describe("scoring model service", () => {
     expect(
       await getScoringModel(db, { organizationId: randomUUID() }),
     ).toBeNull();
+  });
+
+  it("switches between a mirrored model and a native input sheet, keeping the rest", async () => {
+    const { draft } = await create();
+    await replaceItems(db, ctx, draft.id, [item("A")]);
+    const native = await updateScoringModel(db, ctx, { source: "native" });
+    expect(native).toMatchObject({
+      source: "native",
+      name: "Spreading template",
+      sourceSystem: "Test",
+    });
+    expect(
+      (await updateScoringModel(db, ctx, { source: "mirrored" })).source,
+    ).toBe("mirrored");
+    expect((await listItems(db, ctx, draft.id)).map((i) => i.code)).toEqual([
+      "A",
+    ]);
+    await rejects(
+      updateScoringModel(
+        db,
+        { organizationId: randomUUID() },
+        { source: "native" },
+      ),
+      "not_found",
+    );
   });
 
   it("imports the fictional template, keeping order, and publishes it", async () => {

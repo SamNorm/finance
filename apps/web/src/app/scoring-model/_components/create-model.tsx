@@ -3,7 +3,8 @@
 import { useActionState, useState } from "react";
 import { createModelAction } from "../actions";
 import type { ActionResult } from "../types";
-import { button, Field, input, keepFields } from "./ui";
+import { button, input } from "@/components/styles";
+import { Field, keepFields } from "@/components/ui";
 
 const SOURCES = {
   mirrored: {
@@ -16,8 +17,12 @@ const SOURCES = {
   },
 };
 
-export function CreateModel() {
-  const [source, setSource] = useState<keyof typeof SOURCES>("mirrored");
+export function CreateModel({
+  defaultSource,
+}: {
+  defaultSource: keyof typeof SOURCES;
+}) {
+  const [source, setSource] = useState(defaultSource);
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) => createModelAction(form),
     null,

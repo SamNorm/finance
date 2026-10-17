@@ -18,6 +18,7 @@ import {
   removeItem,
   replaceItems,
   updateItem,
+  updateScoringModel,
   validateItems,
   type Context,
   type ScoringItem,
@@ -125,6 +126,19 @@ export async function createModelAction(form: FormData): Promise<ActionResult> {
         source === "mirrored" ? text(form, "sourceSystem") || null : null,
       description: text(form, "description") || null,
     });
+  });
+}
+
+// Turns the scoring model on (mirrored) or off (the organization's own input
+// sheet). Only the label and wording change; the items stay.
+export async function setScoringModelSourceAction(
+  source: "mirrored" | "native",
+): Promise<ActionResult> {
+  return run(async (db, ctx) => {
+    if (source !== "mirrored" && source !== "native") {
+      throw invalid(`"${source}" isn't a valid source.`);
+    }
+    await updateScoringModel(db, ctx, { source });
   });
 }
 

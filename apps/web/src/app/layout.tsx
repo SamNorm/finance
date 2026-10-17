@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { Suspense } from "react";
+import { MainNav, MainNavFallback } from "@/components/main-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,17 +30,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col">
         <header className="border-b border-line bg-surface">
           <div className="mx-auto flex h-12 w-full max-w-[1400px] items-center gap-5 px-4 whitespace-nowrap sm:gap-8 sm:px-6">
-            <Link href="/" className="text-sm font-semibold tracking-tight">
+            <Link
+              href="/"
+              className="hidden text-sm font-semibold tracking-tight sm:block"
+            >
               Modeling workspace
             </Link>
-            <nav className="flex h-full items-center gap-5 text-sm">
-              <Link
-                href="/scoring-model"
-                className="flex h-full items-center border-b-2 border-accent font-medium"
-              >
-                Scoring model
-              </Link>
-            </nav>
+            <Suspense fallback={<MainNavFallback />}>
+              <MainNav />
+            </Suspense>
             <div className="ml-auto flex items-center gap-2 text-xs text-muted">
               <span className="hidden sm:inline">Dev organization</span>
               <span className="rounded bg-warning-soft px-1.5 py-0.5 font-medium text-warning">
