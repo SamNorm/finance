@@ -1,5 +1,6 @@
 import type { ScenarioInput } from "../analyses/service";
 import type { ChartDefinition } from "../financial-models/charts";
+import type { DebtSchedule } from "../financing/debt-schedule";
 import type { DemoPeriod } from "./companies";
 import { assumption, calc, complete, header } from "./lines";
 
@@ -15,6 +16,7 @@ export interface DemoProperty {
   riskRating: string;
   notes: string;
   periods: DemoPeriod[];
+  debtSchedule: DebtSchedule;
 }
 
 const UNITS = 48;
@@ -125,12 +127,15 @@ export function demoProperty(): DemoProperty {
     };
     return {
       year,
+      end: `${year}-12-31`,
+      months: 12,
       quality: i === 2 ? "review" : "compilation",
       values: Object.fromEntries(
         Object.entries(values).map(([code, v]) => [code, String(v)]),
       ),
     };
   });
+  const owed = schedule.get(2024)!.balance;
   return {
     name: "Rue Saint-Denis Holdings Inc.",
     industry: "Multi-residential rental",
@@ -138,6 +143,20 @@ export function demoProperty(): DemoProperty {
     riskRating: "4",
     notes: "48-unit apartment building in Montréal, owned since 2019.",
     periods,
+    // The mortgage after five years of payments.
+    debtSchedule: {
+      asOf: "2024-12-31",
+      loans: [
+        {
+          id: "mortgage",
+          name: "First mortgage",
+          balance: String(Math.round(owed)),
+          rate: String(MORTGAGE.rate),
+          repayment: "blended",
+          months: (MORTGAGE.years - (2024 - MORTGAGE.from + 1)) * 12,
+        },
+      ],
+    },
   };
 }
 
@@ -221,26 +240,12 @@ export const REAL_ESTATE_MODEL = {
       "ECONOMIC_VALUE / UNITS",
     ),
     calc(
-      "EXISTING_PRINCIPAL",
-      "Principal on the existing mortgage",
-      "amount",
-      "RE_MORTGAGE_PAYMENTS - RE_INTEREST",
-      "PREV(EXISTING_PRINCIPAL)",
-    ),
-    calc(
-      "EXISTING_MORTGAGE",
-      "Existing mortgage",
-      "amount",
-      "RE_MORTGAGE + RE_MORTGAGE_CURRENT",
-      "MAX(0, PREV(EXISTING_MORTGAGE) - EXISTING_PRINCIPAL)",
-    ),
-    calc(
       "MORTGAGES",
       "Mortgages",
       "amount",
-      "EXISTING_MORTGAGE + PROFORMA_DEBT",
-      null,
-      "The existing mortgage plus new loans outstanding.",
+      "RE_MORTGAGE + RE_MORTGAGE_CURRENT",
+      "IF(ISBLANK(DEBT_SCHEDULE_BALANCE), PREV(MORTGAGES), DEBT_SCHEDULE_BALANCE) + PROFORMA_DEBT",
+      "From the balance sheet, which post-project includes new loans; projected from the debt schedule.",
     ),
     calc("LTV", "Loan to value", "percent", "MORTGAGES / ECONOMIC_VALUE"),
     calc("DEBT_YIELD", "Debt yield", "percent", "NOI / MORTGAGES"),
@@ -250,16 +255,17 @@ export const REAL_ESTATE_MODEL = {
       "EXISTING_DEBT_SERVICE",
       "Existing mortgage payments",
       "amount",
-      "RE_MORTGAGE_PAYMENTS",
-      "PREV(EXISTING_DEBT_SERVICE)",
+      "IF(ISBLANK(DEBT_SCHEDULE_PRINCIPAL), RE_MORTGAGE_PAYMENTS, DEBT_SCHEDULE_INTEREST + DEBT_SCHEDULE_PRINCIPAL)",
+      "IF(ISBLANK(DEBT_SCHEDULE_PRINCIPAL), PREV(EXISTING_DEBT_SERVICE), DEBT_SCHEDULE_INTEREST + DEBT_SCHEDULE_PRINCIPAL)",
+      "From the statements; post-project and projected, the debt schedule's payments.",
     ),
     calc(
       "DEBT_SERVICE",
       "Debt service",
       "amount",
-      "EXISTING_DEBT_SERVICE + PROFORMA_INTEREST + PROFORMA_PRINCIPAL",
+      "EXISTING_DEBT_SERVICE + PROFORMA_INTEREST + PROFORMA_PRINCIPAL + PROFORMA_LINE_INTEREST",
       null,
-      "Existing payments plus the scenario's post-project financing.",
+      "Existing payments plus the project's new loans and line of credit.",
     ),
     calc("DSCR", "Debt service coverage", "ratio", "NOI / DEBT_SERVICE"),
 
@@ -316,16 +322,31 @@ export const REAL_ESTATE_SCENARIOS: ScenarioInput[] = [
   {
     name: "Post-project: renovation",
     overrides: { RENT_GROWTH: "0.055" },
-    adjustments: [
-      {
-        kind: "loan",
-        name: "Renovation loan",
-        amount: "1800000",
-        rate: "0.054",
-        years: 25,
-        repayment: "blended",
-        fromYear: 2025,
-      },
-    ],
+    project: {
+      closing: "2025-01-31",
+      sources: [
+        {
+          kind: "loan",
+          name: "Renovation loan",
+          amount: "1500000",
+          rate: "5.4%",
+          repayment: "blended",
+          years: "25",
+        },
+        {
+          kind: "funds",
+          name: "Cash on hand",
+          amount: "300000",
+          item: "RE_CASH",
+        },
+      ],
+      uses: [
+        {
+          name: "Kitchens, windows and balconies",
+          amount: "1800000",
+          item: "RE_PROPERTY_COST",
+        },
+      ],
+    },
   },
 ];

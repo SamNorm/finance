@@ -78,6 +78,20 @@
       "when": 1792270205539,
       "tag": "0010_debt_schedule",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792270561534,
+      "tag": "0011_project",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792270562247,
+      "tag": "0012_drop_adjustments",
+      "breakpoints": true
     }
   ]
 }

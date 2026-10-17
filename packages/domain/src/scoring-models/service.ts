@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
+import { balanceSheetSides, type FinancingItems } from "../financing/financing";
 import * as edit from "./edit";
 import type { ScoringItem, ScoringModel, ScoringModelVersion } from "./types";
 import { isStructural, validateItems } from "./validate";
@@ -167,6 +168,47 @@ export async function updateScoringModel(
       source: patch.source,
       sourceSystem: patch.sourceSystem,
       description: patch.description,
+    })
+    .where(eq(scoringModels.id, modelId))
+    .returning();
+  return model!;
+}
+
+// Where a project's new loans post: two liability items (long-term debt and
+// its current portion) and the cash their repayments come out of. Checked
+// against the latest published version.
+export async function setFinancingItems(
+  db: Db,
+  ctx: Context,
+  modelId: string,
+  input: Partial<Record<keyof FinancingItems, string | null>>,
+): Promise<ScoringModel> {
+  await findModel(db, ctx, modelId);
+  const version = await getLatestPublishedVersion(db, ctx, modelId);
+  if (!version)
+    throw new DomainError("conflict", "Publish the scoring model first.");
+  const sides = balanceSheetSides(await listItems(db, ctx, version.id));
+  const pick = (
+    raw: string | null | undefined,
+    side: "assets" | "claims",
+    what: string,
+  ) => {
+    const code = raw?.trim() || null;
+    if (code && sides.get(code) !== side)
+      throw new DomainError(
+        "invalid",
+        `${what} must be ${side === "assets" ? "an asset" : "a liability"} amount on the balance sheet.`,
+      );
+    return code;
+  };
+  const [model] = await db
+    .update(scoringModels)
+    .set({
+      financingItems: {
+        longTermDebt: pick(input.longTermDebt, "claims", "Long-term debt"),
+        currentDebt: pick(input.currentDebt, "claims", "The current portion"),
+        cash: pick(input.cash, "assets", "Cash"),
+      },
     })
     .where(eq(scoringModels.id, modelId))
     .returning();

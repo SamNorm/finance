@@ -1,15 +1,18 @@
+import type { DebtSchedule } from "../financing/debt-schedule";
 import type { StatementQuality } from "../spreads/service";
 
 // Fictional borrowers for demos and tests, spread on the fictional commercial
 // banking template (fixtures/commercial-banking.csv). Each company is
 // simulated year by year so its statements hold together: the balance sheet
 // balances, retained earnings roll forward, and the cash flow statement
-// explains the change in cash. One company also has its own projections.
-// Any resemblance to real companies is coincidental (§10.1: fictional data
-// only).
+// explains the change in cash. One company also has a year to date and its
+// own projections. Any resemblance to real companies is coincidental (§10.1:
+// fictional data only).
 
 export interface DemoPeriod {
   year: number;
+  end: string;
+  months: number;
   quality: StatementQuality;
   // Figures by item code, in whole dollars; only inputs, never subtotals.
   values: Record<string, string>;
@@ -23,6 +26,8 @@ export interface DemoCompany {
   riskRating: string;
   notes: string;
   periods: DemoPeriod[];
+  // Its term debt as of its latest actual period.
+  debtSchedule: DebtSchedule;
 }
 
 interface Profile {
@@ -34,6 +39,9 @@ interface Profile {
   // One per year from 2022: three actual years, then any the client
   // projects (quality "projected"). The yearly arrays below follow it.
   quality: StatementQuality[];
+  // Months of a year to date after the actual years, part way to the first
+  // projected year.
+  yearToDate?: number;
   revenue2021: number;
   growth: number[];
   grossMargin: number[];
@@ -172,8 +180,10 @@ const PROFILES: Profile[] = [
     naicsCode: "484121",
     riskRating: "6",
     notes: "Truckload carrier. Fleet financed with term loans.",
-    // With management's turnaround projections for 2025 and 2026.
+    // With nine months of 2025 and management's turnaround projections for
+    // 2025 and 2026.
     quality: ["compilation", "review", "review", "projected", "projected"],
+    yearToDate: 9,
     revenue2021: 12_500_000,
     growth: [0.09, 0.03, -0.06, 0.08, 0.06],
     grossMargin: [0.315, 0.285, 0.25, 0.27, 0.285],
@@ -425,20 +435,117 @@ function figures(
   return values;
 }
 
+// Balance sheet items, which a year to date takes part way between the year
+// end before it and the next; flows are prorated, and the rest kept.
+const BALANCES = [
+  "CASH",
+  "AR_TRADE",
+  "INVENTORY",
+  "PREPAIDS",
+  "LAND",
+  "BUILDINGS",
+  "MACHINERY",
+  "VEHICLES",
+  "ACCUM_DEPRECIATION",
+  "GOODWILL",
+  "INTANGIBLES",
+  "BANK_INDEBTEDNESS",
+  "AP_TRADE",
+  "ACCRUED_LIABILITIES",
+  "CPLTD",
+  "LONG_TERM_DEBT",
+  "SHAREHOLDER_LOANS",
+  "SHARE_CAPITAL",
+  "RETAINED_EARNINGS",
+];
+const KEPT = ["EMPLOYEES", "OPERATING_LINE_AUTHORIZED", "OPERATING_LINE_RATE"];
+const ASSETS = BALANCES.slice(1, 11);
+
+function yearToDate(
+  before: Record<string, string>,
+  after: Record<string, string>,
+  months: number,
+): Record<string, string> {
+  const share = months / 12;
+  const n = (values: Record<string, string>, code: string) =>
+    Number(values[code] ?? 0);
+  const values: Record<string, number> = {};
+  for (const code of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (KEPT.includes(code)) continue;
+    values[code] = BALANCES.includes(code)
+      ? Math.round(n(before, code) + share * (n(after, code) - n(before, code)))
+      : Math.round(share * n(after, code));
+  }
+  // Cash balances the sheet, absorbing rounding.
+  const claims = BALANCES.slice(11).reduce((t, c) => t + (values[c] ?? 0), 0);
+  const assets = ASSETS.reduce(
+    (t, c) =>
+      c === "ACCUM_DEPRECIATION" ? t - (values[c] ?? 0) : t + (values[c] ?? 0),
+    0,
+  );
+  values.CASH = claims - assets;
+  const result = Object.fromEntries(
+    Object.entries(values)
+      .filter(([, v]) => v !== 0)
+      .map(([code, v]) => [code, String(v)]),
+  );
+  for (const code of KEPT) if (after[code]) result[code] = after[code];
+  return result;
+}
+
 export function demoCompanies(): DemoCompany[] {
   return PROFILES.map((p) => {
     const years = simulate(p);
+    const periods: DemoPeriod[] = p.quality.map((quality, i) => ({
+      year: 2022 + i,
+      end: `${2022 + i}-12-31`,
+      months: 12,
+      quality,
+      values: figures(p, years[i + 1]!, years[i]!, i),
+    }));
+    const actual = periods.filter((period) => period.quality !== "projected");
+    if (p.yearToDate) {
+      const last = actual.at(-1)!;
+      const next = periods[actual.length]!;
+      const months = p.yearToDate;
+      const ytd: DemoPeriod = {
+        year: next.year,
+        end: new Date(Date.UTC(next.year, months, 0))
+          .toISOString()
+          .slice(0, 10),
+        months,
+        quality: "internal",
+        values: yearToDate(last.values, next.values, months),
+      };
+      periods.splice(actual.length, 0, ytd);
+      actual.push(ytd);
+    }
+    const latest = actual.at(-1)!;
+    const balance =
+      Number(latest.values.LONG_TERM_DEBT ?? 0) +
+      Number(latest.values.CPLTD ?? 0);
     return {
       name: p.name,
       industry: p.industry,
       naicsCode: p.naicsCode,
       riskRating: p.riskRating,
       notes: p.notes,
-      periods: p.quality.map((quality, i) => ({
-        year: 2022 + i,
-        quality,
-        values: figures(p, years[i + 1]!, years[i]!, i),
-      })),
+      periods,
+      debtSchedule: {
+        asOf: latest.end,
+        loans: balance
+          ? [
+              {
+                id: "term-loans",
+                name: "Term loans",
+                balance: String(balance),
+                rate: String(p.debtRate),
+                repayment: "equal_principal" as const,
+                months: Math.round((balance / p.repayment) * 12),
+              },
+            ]
+          : [],
+      },
     };
   });
 }

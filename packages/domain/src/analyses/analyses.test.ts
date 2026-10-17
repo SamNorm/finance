@@ -18,6 +18,7 @@ import {
   createScoringModel,
   publishVersion,
   replaceItems,
+  setFinancingItems,
 } from "../scoring-models/service";
 import { fixture } from "../scoring-models/test-helpers";
 import {
@@ -93,7 +94,6 @@ describe("runModel", () => {
       line("SHARE", { formula: "TOTAL / REV" }),
     ],
     overrides: {},
-    adjustments: [],
     items: [
       { code: "REV", label: "Revenue", numeric: true },
       { code: "TOTAL", label: "Total", numeric: true },
@@ -528,15 +528,21 @@ describe("analysis service", () => {
     );
   });
 
-  it("adds post-project financing in scenarios", async () => {
-    const { context, entity, model } = setup;
-    // Debt service with the new loan's interest and principal.
+  it("shows a scenario's project in post-project columns", async () => {
+    const { context, entity, model, periods, scoringModel } = setup;
     const draft = await createFinancialModelDraft(db, context, model.id);
+    // Next year's principal is the current portion, which post-project
+    // includes the new loan's; its interest comes from PROFORMA_INTEREST.
     await updateLine(db, context, draft.id, "DEBT_SERVICE", {
-      formula:
-        "TOTAL_INTEREST_EXPENSE + CPLTD + PROFORMA_INTEREST + PROFORMA_PRINCIPAL",
+      formula: "TOTAL_INTEREST_EXPENSE + PROFORMA_INTEREST + CPLTD",
       projectionFormula:
-        "PREV(DEBT_SERVICE) - PREV(PROFORMA_INTEREST + PROFORMA_PRINCIPAL) + PROFORMA_INTEREST + PROFORMA_PRINCIPAL",
+        "PREV(TOTAL_INTEREST_EXPENSE + CPLTD) + PROFORMA_INTEREST",
+    });
+    await addLine(db, context, draft.id, {
+      code: "FUNDED",
+      label: "Funded debt",
+      kind: "calculation",
+      formula: "LONG_TERM_DEBT + CPLTD",
     });
     const v2 = await publishFinancialModelVersion(db, context, draft.id);
     const analysis = await createAnalysis(db, ctx, {
@@ -545,71 +551,101 @@ describe("analysis service", () => {
       name: "A",
       projectionYears: 1,
     });
-    const project = await addScenario(db, ctx, analysis.id, {
-      name: "Expansion",
-      adjustments: [
+    const project = {
+      closing: "2024-12-31",
+      sources: [
         {
           kind: "loan",
           name: "Equipment loan",
           amount: "1,200",
           rate: "6%",
-          years: "10",
           repayment: "equal_principal",
-          fromYear: "2025",
+          years: "10",
         },
       ],
-    });
-    expect(project.adjustments).toMatchObject([
-      { kind: "loan", amount: "1200", rate: "0.06", fromYear: 2025 },
-    ]);
+      uses: [{ name: "Machinery", amount: "1200", item: "MACHINERY" }],
+    };
+    // Loans need the scoring model to say where new debt posts.
     await rejects(
-      updateScenario(db, ctx, project.id, {
-        adjustments: [{ kind: "loan", name: "Bad", amount: "-1" }],
+      addScenario(db, ctx, analysis.id, { name: "Expansion", project }),
+      "invalid",
+    );
+    await setFinancingItems(db, context, scoringModel.id, {
+      longTermDebt: "LONG_TERM_DEBT",
+      currentDebt: "CPLTD",
+      cash: "CASH",
+    });
+    const expansion = await addScenario(db, ctx, analysis.id, {
+      name: "Expansion",
+      project,
+    });
+    expect(expansion.project).toMatchObject({
+      closing: "2024-12-31",
+      sources: [{ kind: "loan", amount: "1200", rate: "0.06", months: 120 }],
+    });
+    await rejects(
+      updateScenario(db, ctx, expansion.id, {
+        project: { ...project, uses: [{ name: "Truck", amount: "1" }] },
       }),
       "invalid",
     );
 
-    const { base, scenario } = await runAnalysis(
-      db,
-      ctx,
-      analysis.id,
-      project.id,
-    );
-    expect(base.cells.DEBT_SERVICE!.map((c) => c.value)).toEqual([
+    let results = await runAnalysis(db, ctx, analysis.id, expansion.id);
+    // As is, the scenario changes nothing.
+    expect(results.scenario!.cells.DEBT_SERVICE!.map((c) => c.value)).toEqual([
       "200",
       "200",
       "200",
     ]);
-    // 2025 adds 120 of principal and 68.70 of interest.
-    expect(scenario!.cells.DEBT_SERVICE!.map((c) => c.value)).toEqual([
-      "200",
+    // Post-project: a year of the new loan's payments, 120 of principal and
+    // 68.70 of interest, at closing in 2024 and in 2025. 2023 stays history.
+    expect(results.project!.cells.DEBT_SERVICE!.map((c) => c.value)).toEqual([
       "200",
       "388.7",
+      "388.7",
     ]);
-    const interest = scenario!.cells.DEBT_SERVICE![2]!.refs.find(
-      (r) => r.code === "PROFORMA_INTEREST" && r.period === 2,
-    );
-    expect(interest).toMatchObject({
-      label: "Post-project interest",
+    // The loan is on the balance sheet, split short and long term.
+    expect(results.project!.cells.FUNDED![1]).toMatchObject({ value: "1330" });
+    expect(results.project!.cells.FUNDED![1]!.refs[0]).toMatchObject({
+      code: "LONG_TERM_DEBT",
       source: "adjustment",
-      value: "68.7",
-      parts: [{ name: "Equipment loan", value: "68.7" }],
+      parts: [
+        { name: "As entered", value: "0" },
+        { name: "Equipment loan", value: "1080" },
+      ],
     });
+    // By default, only the last fiscal year has a post-project column.
+    expect(results.postProject).toEqual([periods[1]!.id]);
+    await updateAnalysis(db, ctx, analysis.id, {
+      postProjectKeys: [periods[1]!.id, "projected-1"],
+    });
+    results = await runAnalysis(db, ctx, analysis.id, expansion.id);
+    expect(results.postProject).toEqual([periods[1]!.id, "projected-1"]);
+    await rejects(
+      updateAnalysis(db, ctx, analysis.id, { postProjectKeys: ["nope"] }),
+      "invalid",
+    );
+    // The base case has no project.
+    expect((await runAnalysis(db, ctx, analysis.id)).project).toBeNull();
 
-    const copy = await duplicateScenario(db, ctx, project.id);
+    const copy = await duplicateScenario(db, ctx, expansion.id);
     expect(copy).toMatchObject({
       name: "Expansion (copy)",
       position: 1,
-      adjustments: project.adjustments,
+      project: expansion.project,
     });
-    // Re-running on a later version keeps the financing.
+    // Re-running on a later version keeps the project.
     const v3 = await createFinancialModelDraft(db, context, model.id);
     await publishFinancialModelVersion(db, context, v3.id);
     const repinned = await repinAnalysis(db, ctx, analysis.id);
-    const { scenarios } = await getAnalysis(db, ctx, repinned.id);
-    expect(scenarios.map((s) => s.adjustments)).toEqual([
-      project.adjustments,
-      project.adjustments,
+    const detail = await getAnalysis(db, ctx, repinned.id);
+    expect(detail.scenarios.map((s) => s.project)).toEqual([
+      expansion.project,
+      expansion.project,
+    ]);
+    expect(detail.analysis.postProjectKeys).toEqual([
+      periods[1]!.id,
+      "projected-1",
     ]);
   });
 

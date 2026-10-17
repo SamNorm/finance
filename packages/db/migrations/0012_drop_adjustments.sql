@@ -1,0 +1,1 @@
+ALTER TABLE "analysis_scenarios" DROP COLUMN "adjustments";

@@ -21,8 +21,9 @@ import { QUALITY_SHORT } from "@/lib/labels";
 import { saveAnalysisChartsAction } from "../actions";
 
 // The model's charts and the analysis's own, over the periods shown. Under a
-// scenario, a one-line chart also draws the base case, so the project's
-// effect shows at a glance.
+// scenario, a one-line chart also draws the scenario post-project from the
+// last fiscal year on, or else the base case, so the effect shows at a
+// glance.
 export function AnalysisCharts({
   analysisId,
   lines,
@@ -31,11 +32,14 @@ export function AnalysisCharts({
   scenarioName,
   modelCharts,
   charts,
+  project,
 }: {
   analysisId: string;
   lines: ModelLine[];
   run: AnalysisRun;
   base: AnalysisRun | null;
+  // The scenario with its project.
+  project: AnalysisRun | null;
   scenarioName: string | null;
   modelCharts: ChartDefinition[];
   charts: ChartDefinition[];
@@ -49,14 +53,28 @@ export function AnalysisCharts({
   function chartProps(chart: ChartDraft) {
     const format = (byCode.get(chart.series[0]?.code ?? "")?.format ??
       "amount") as ChartFormat;
+    const single = chart.series.length === 1;
     const series: ChartSeries[] = chart.series.map((s) => ({
       label:
         (byCode.get(s.code)?.label ?? s.code) +
-        (base && chart.series.length === 1 ? ` · ${scenarioName}` : ""),
+        (single && project ? " · as is" : "") +
+        (single && base && !project ? ` · ${scenarioName}` : ""),
       mark: s.mark,
       values: valuesOf(run, s.code),
     }));
-    if (base && chart.series.length === 1) {
+    if (single && project) {
+      // Post-project from the last fiscal year on, whatever the table shows.
+      const lastYear = project.periods.findLastIndex(
+        (p) => !p.projection && p.months === 12,
+      );
+      series.push({
+        label: `${byCode.get(chart.series[0]!.code)?.label ?? chart.series[0]!.code} · post-project`,
+        mark: "line",
+        values: valuesOf(project, chart.series[0]!.code).map((v, i) =>
+          i >= lastYear || project.periods[i]!.projection ? v : null,
+        ),
+      });
+    } else if (single && base) {
       series.push({
         label: "Base case",
         mark: "line",
@@ -109,7 +127,10 @@ export function AnalysisCharts({
           Charts{" "}
           {base && (
             <span className="font-normal text-muted">
-              · {scenarioName} against the base case
+              ·{" "}
+              {project
+                ? `${scenarioName}, as is and post-project`
+                : `${scenarioName} against the base case`}
             </span>
           )}
         </h2>

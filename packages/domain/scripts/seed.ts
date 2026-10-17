@@ -28,9 +28,13 @@ import {
   publishVersion,
   replaceItems,
   replaceLines,
+  setDebtSchedule,
   setFinancialModelCharts,
+  setFinancingItems,
   setModelInput,
   type ChartDefinition,
+  type DebtSchedule,
+  type FinancingItems,
   type ModelLine,
   type ScenarioInput,
   type StatementQuality,
@@ -57,6 +61,7 @@ const ctx = devContext;
 async function scoringModel(
   file: string,
   input: Parameters<typeof createScoringModel>[2],
+  financingItems: FinancingItems,
 ) {
   const csv = readFileSync(
     new URL(`../fixtures/${file}`, import.meta.url),
@@ -70,6 +75,7 @@ async function scoringModel(
   const { model, draft } = await createScoringModel(db, ctx, input);
   await replaceItems(db, ctx, draft.id, items);
   await publishVersion(db, ctx, draft.id, "Initial import");
+  await setFinancingItems(db, ctx, model.id, financingItems);
   console.log(`Scoring model ${input.name}: ${items.length} items.`);
   return model;
 }
@@ -84,10 +90,12 @@ async function borrower(
     riskRating: string;
     notes: string;
     periods: {
-      year: number;
+      end: string;
+      months: number;
       quality: StatementQuality;
       values: Record<string, string>;
     }[];
+    debtSchedule: DebtSchedule;
   },
 ) {
   const entity = await createEntity(db, ctx, {
@@ -102,7 +110,7 @@ async function borrower(
     ...new Set(data.periods.flatMap((p) => Object.keys(p.values))),
   ];
   const text = [
-    ["code", ...data.periods.map((p) => `${p.year}-12-31`)],
+    ["code", ...data.periods.map((p) => p.end)],
     ...codes.map((code) => [
       code,
       ...data.periods.map((p) => p.values[code] ?? ""),
@@ -117,11 +125,18 @@ async function borrower(
     text,
     data.periods.map((p, i) => ({
       index: i + 1,
-      periodEnd: `${p.year}-12-31`,
-      months: 12,
+      periodEnd: p.end,
+      months: p.months,
       quality: p.quality,
     })),
   );
+  await setDebtSchedule(db, ctx, entity.id, {
+    asOf: data.debtSchedule.asOf,
+    loans: data.debtSchedule.loans.map((loan) => ({
+      ...loan,
+      years: loan.months / 12,
+    })),
+  });
   console.log(
     `Borrower ${data.name}: ${data.periods.length} periods, ${figures} figures.`,
   );
@@ -169,13 +184,17 @@ async function analysis(
 }
 
 async function seed() {
-  const commercial = await scoringModel("commercial-banking.csv", {
-    name: "Commercial banking spread (fictional)",
-    source: "mirrored",
-    sourceSystem: "Fictional spreading system",
-    description:
-      "A generic commercial banking template for demos and tests. Not any real institution's model.",
-  });
+  const commercial = await scoringModel(
+    "commercial-banking.csv",
+    {
+      name: "Commercial banking spread (fictional)",
+      source: "mirrored",
+      sourceSystem: "Fictional spreading system",
+      description:
+        "A generic commercial banking template for demos and tests. Not any real institution's model.",
+    },
+    { longTermDebt: "LONG_TERM_DEBT", currentDebt: "CPLTD", cash: "CASH" },
+  );
   const companies = demoCompanies();
   const borrowers = [];
   for (const company of companies)
@@ -211,7 +230,7 @@ async function seed() {
           name: "Annual review 2024: management case",
           projectionMode: "client",
         },
-        scenarios.filter((s) => s.adjustments?.length),
+        scenarios.filter((s) => s.project),
       );
     }
   }
@@ -243,12 +262,20 @@ async function seed() {
   }
   console.log("Borrowing base: inventory by type for Northwind.");
 
-  const realEstate = await scoringModel("real-estate.csv", {
-    name: "Income property spread (fictional)",
-    source: "native",
-    description:
-      "The organization's own input sheet for income properties: rent down to net operating income, the property's balance sheet and property data.",
-  });
+  const realEstate = await scoringModel(
+    "real-estate.csv",
+    {
+      name: "Income property spread (fictional)",
+      source: "native",
+      description:
+        "The organization's own input sheet for income properties: rent down to net operating income, the property's balance sheet and property data.",
+    },
+    {
+      longTermDebt: "RE_MORTGAGE",
+      currentDebt: "RE_MORTGAGE_CURRENT",
+      cash: "RE_CASH",
+    },
+  );
   const property = await borrower(realEstate.id, demoProperty());
   const propertyModel = await financialModel(realEstate.id, REAL_ESTATE_MODEL);
   await analysis(

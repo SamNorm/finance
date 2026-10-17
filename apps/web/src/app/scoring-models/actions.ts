@@ -18,6 +18,7 @@ import {
   publishVersion,
   removeItem,
   replaceItems,
+  setFinancingItems,
   updateItem,
   updateScoringModel,
   validateItems,
@@ -121,6 +122,20 @@ export async function deleteModelAction(
   );
   if (!result.ok) return result;
   redirect("/scoring-models");
+}
+
+// Where a project's new loans post on the balance sheet.
+export async function setFinancingItemsAction(
+  modelId: string,
+  items: { longTermDebt: string; currentDebt: string; cash: string },
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    setFinancingItems(db, ctx, modelId, {
+      longTermDebt: String(items.longTermDebt ?? ""),
+      currentDebt: String(items.currentDebt ?? ""),
+      cash: String(items.cash ?? ""),
+    }),
+  );
 }
 
 // Turns a model between mirroring a scoring system and being the

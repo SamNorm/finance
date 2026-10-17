@@ -13,8 +13,8 @@ import {
   setModelInput,
   updateAnalysis,
   updateScenario,
-  type AdjustmentInput,
   type ChartInput,
+  type ProjectInput,
 } from "@finance/domain";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
@@ -61,10 +61,16 @@ export async function updateAnalysisAction(
     periodIds?: string[];
     projectionMode?: string;
     projectionYears?: number;
+    postProjectKeys?: string[];
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
     if (patch.periodIds !== undefined && !Array.isArray(patch.periodIds))
+      throw invalid("Choose periods.");
+    if (
+      patch.postProjectKeys !== undefined &&
+      !Array.isArray(patch.postProjectKeys)
+    )
       throw invalid("Choose periods.");
     return updateAnalysis(db, ctx, analysisId, {
       name: patch.name === undefined ? undefined : String(patch.name),
@@ -77,6 +83,7 @@ export async function updateAnalysisAction(
         patch.projectionYears === undefined
           ? undefined
           : Number(patch.projectionYears),
+      postProjectKeys: patch.postProjectKeys?.map(String),
     });
   });
 }
@@ -141,11 +148,11 @@ export async function updateScenarioAction(
   patch: {
     name?: string;
     overrides?: Record<string, string>;
-    adjustments?: AdjustmentInput[];
+    project?: ProjectInput | null;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
-    const { overrides, adjustments } = patch;
+    const { overrides, project } = patch;
     if (
       overrides !== undefined &&
       (typeof overrides !== "object" || overrides === null)
@@ -153,18 +160,15 @@ export async function updateScenarioAction(
       throw invalid("Overrides must be assumption values.");
     }
     if (
-      adjustments !== undefined &&
-      (!Array.isArray(adjustments) ||
-        adjustments.some((a) => typeof a !== "object" || a === null))
-    ) {
-      throw invalid("Financing must be a list of loans and subordinations.");
-    }
+      project !== undefined &&
+      project !== null &&
+      typeof project !== "object"
+    )
+      throw invalid("The project must be sources, uses and facilities.");
     return updateScenario(db, ctx, scenarioId, {
       name: patch.name === undefined ? undefined : String(patch.name),
       overrides: overrides && textFields(overrides),
-      adjustments: adjustments?.map(
-        (a) => textFields(a) as unknown as AdjustmentInput,
-      ),
+      project,
     });
   });
 }

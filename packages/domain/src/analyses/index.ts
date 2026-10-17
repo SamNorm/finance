@@ -1,6 +1,7 @@
 export {
   runModel,
   serialize,
+  withProject,
   type AnalysisRun,
   type AssumptionValue,
   type Breakdown,

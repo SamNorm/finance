@@ -9,7 +9,12 @@ import {
 } from "@finance/engine";
 import { assumptionValue } from "../financial-models/validate";
 import type { ModelLine } from "../financial-models/types";
-import type { FinancingPart } from "../financing/common";
+import { monthIndex } from "../financing/amortization";
+import {
+  periodModes,
+  type FinancingPart,
+  type FinancingValue,
+} from "../financing/common";
 import {
   debtScheduleValues,
   EMPTY_SCHEDULE,
@@ -18,11 +23,16 @@ import {
 import {
   FINANCING_CODES,
   FINANCING_INPUTS,
-  financingValues,
-  type FinancingAdjustment,
+  PROJECT_CODES,
+  projectItemAdjustments,
+  projectValues,
   type FinancingCode,
+  type FinancingItems,
+  type Project,
+  type Side,
 } from "../financing/financing";
-import { TOLERANCE } from "../spreads/checks";
+import type { ScoringItem } from "../scoring-models/types";
+import { effectiveAmounts, TOLERANCE } from "../spreads/checks";
 import type { StatementQuality } from "../spreads/service";
 
 // Runs a financial model version over a borrower's periods, plus projected
@@ -59,7 +69,7 @@ export interface LineageRef extends ResultValue {
     | "adjustment"
     | "schedule"
     | "blank";
-  // For financing: each loan's or subordination's share.
+  // For financing and items the project adjusted: each entry's share.
   parts?: FinancingPart[];
 }
 
@@ -89,6 +99,8 @@ export interface Breakdown {
 }
 
 export interface AnalysisRun {
+  // With the scenario's project: the post-project columns.
+  postProject: boolean;
   periods: RunPeriod[];
   cells: Record<string, ResultCell[]>;
   assumptions: Record<string, AssumptionValue>;
@@ -107,13 +119,16 @@ export interface RunInput {
     summed: Record<string, string>;
     // Figures for the model's input lines, by line code.
     modelInputs: Record<string, string>;
+    // Items the project changed, with what they're made of.
+    adjusted?: Record<string, FinancingPart[]>;
   }[];
   // Years computed from assumptions after the last period.
   projectionYears: number;
   lines: readonly ModelLine[];
   overrides: Record<string, string>;
-  // The scenario's post-project financing.
-  adjustments: readonly FinancingAdjustment[];
+  // The scenario's project: given, the run is post-project. Its effect on
+  // balance sheet items comes in the periods' figures.
+  project?: Project | null;
   // The borrower's existing loans.
   debtSchedule?: DebtSchedule;
   // Items of the scoring model version the model is bound to.
@@ -155,14 +170,33 @@ export function runModel(input: RunInput): AnalysisRun {
   const items = new Map(input.items.map((item) => [item.code, item]));
   const lineByCode = new Map(input.lines.map((line) => [line.code, line]));
   const inputLines = input.lines.filter((line) => line.kind === "input");
-  const financing = financingValues(input.adjustments, periods);
-  const schedule = debtScheduleValues(
-    input.debtSchedule ?? EMPTY_SCHEDULE,
+  const project = input.project ?? null;
+  const modes = periodModes(
     periods.map((p) => ({
-      end: p.end,
       months: p.months,
       projected: p.projection !== null,
     })),
+    project !== null,
+  );
+  const info = periods.map((p, i) => ({
+    end: p.end,
+    months: p.months,
+    mode: modes[i]!,
+  }));
+  const financing = (
+    project
+      ? projectValues(project, info)
+      : Object.fromEntries(
+          PROJECT_CODES.map((code) => [
+            code,
+            periods.map(() => ({ value: new Dec(0), parts: [] })),
+          ]),
+        )
+  ) as Record<FinancingCode, FinancingValue[]>;
+  const schedule = debtScheduleValues(
+    input.debtSchedule ?? EMPTY_SCHEDULE,
+    info,
+    project ? monthIndex(project.closing) : null,
   );
   const blank = { value: null, parts: [] };
   financing.DEBT_SCHEDULE_INTEREST = schedule.interest.map((v) => v ?? blank);
@@ -237,10 +271,15 @@ export function runModel(input: RunInput): AnalysisRun {
     }
     if (line) return line.kind === "assumption" ? "assumption" : "calculation";
     const period = input.periods[p];
+    if (period?.adjusted?.[code]) return "adjustment";
     if (period?.entered[code] !== undefined) return "entered";
     if (period?.summed[code] !== undefined) return "summed";
     return "blank";
   };
+  const partsOf = (code: string, p: number) =>
+    isFinancing(code)
+      ? financing[code][p]!.parts
+      : input.periods[p]?.adjusted?.[code];
 
   const cells: Record<string, ResultCell[]> = {};
   for (const line of input.lines) {
@@ -260,19 +299,73 @@ export function runModel(input: RunInput): AnalysisRun {
             ref.code,
           period: ref.period,
           source: sourceOf(ref.code, ref.period),
-          ...(isFinancing(ref.code)
-            ? { parts: financing[ref.code][ref.period]!.parts }
+          ...(partsOf(ref.code, ref.period)
+            ? { parts: partsOf(ref.code, ref.period) }
             : {}),
         })),
       };
     });
   }
   return {
+    postProject: project !== null,
     periods,
     cells,
     assumptions,
     breakdowns: reconcile(input, inputLines),
   };
+}
+
+// The spread's periods with the project posted to their balance sheet
+// items, subtotals summed again, and what each adjusted item is made of.
+export function withProject(
+  periods: RunInput["periods"],
+  project: Project,
+  items: readonly ScoringItem[],
+  sides: ReadonlyMap<string, Side>,
+  mapping: FinancingItems,
+): RunInput["periods"] {
+  const modes = periodModes(
+    periods.map((p) => ({
+      months: p.months,
+      projected: p.quality === "projected",
+    })),
+    true,
+  );
+  const adjustments = projectItemAdjustments(
+    project,
+    periods.map((p, i) => ({ end: p.end, months: p.months, mode: modes[i]! })),
+    sides,
+    mapping,
+  );
+  return periods.map((period, i) => {
+    const changes = adjustments[i]!;
+    if (!changes.size) return period;
+    const entered = { ...period.entered };
+    const adjusted: Record<
+      string,
+      NonNullable<RunInput["periods"][number]["adjusted"]>[string]
+    > = {};
+    for (const [code, change] of changes) {
+      const original = entered[code] ?? "0";
+      entered[code] = change.delta.plus(original).toFixed();
+      adjusted[code] = [
+        { id: "entered", name: "As entered", value: original },
+        ...change.parts,
+      ];
+    }
+    const { computed } = effectiveAmounts(
+      items,
+      new Map(Object.entries(entered)),
+    );
+    return {
+      ...period,
+      entered,
+      summed: Object.fromEntries(
+        [...computed].map(([code, value]) => [code, value.toFixed()]),
+      ),
+      adjusted,
+    };
+  });
 }
 
 // Each item broken down by input lines, in every spread period where at least

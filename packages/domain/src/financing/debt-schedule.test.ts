@@ -130,9 +130,9 @@ describe("debt schedule", () => {
 
   it("fills projected years, leaves actual ones blank, and shows a year ahead post-project", () => {
     const periods = [
-      { end: "2024-12-31", months: 12, projected: false },
-      { end: "2025-09-30", months: 9, projected: false },
-      { end: "2025-12-31", months: 12, projected: true },
+      { end: "2024-12-31", months: 12, mode: "actual" as const },
+      { end: "2025-09-30", months: 9, mode: "actual" as const },
+      { end: "2025-12-31", months: 12, mode: "projected" as const },
     ];
     const asIs = debtScheduleValues(schedule, periods);
     expect(asIs.principal.slice(0, 2)).toEqual([null, null]);
@@ -146,7 +146,10 @@ describe("debt schedule", () => {
 
     const post = debtScheduleValues(
       schedule,
-      periods,
+      periods.map((p) => ({
+        ...p,
+        mode: p.mode === "actual" ? ("proForma" as const) : p.mode,
+      })),
       monthIndex("2025-10-31"),
     );
     // Twelve months after closing, scaled to nine months for the YTD.

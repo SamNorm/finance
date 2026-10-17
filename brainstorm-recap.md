@@ -122,10 +122,24 @@ Each financial model version contains:
 - **Analysis:** an entity, a financial model version, a set of periods and a set of scenarios. It is pinned and reproducible; this is what goes into a credit file.
 - **Scenario:** overrides of model assumptions within an analysis, e.g. revenue −15%.
 - **Existing debt:** each borrower has a schedule of its existing loans as of a date: balance, rate, repayment and amortization left. Projected years and post-project columns use their actual scheduled payments (`DEBT_SCHEDULE_INTEREST`, `_PRINCIPAL`, `_BALANCE`), running back before the schedule's date for a year that began earlier. Actual periods leave them blank, so a model falls back on the statements.
-- **Post-project financing:** a scenario can add new loans and subordinate existing debt to equity, each from a fiscal year on. The base case is the borrower as is, so comparing a scenario with it shows the project's effect on debt service and leverage.
-  - **New loan:** amount, rate, amortization and repayment (blended, equal principal or interest only). It is drawn at the start of its first year and paid monthly.
-  - **Subordination:** debt postponed in favour of the lender and treated as equity, with the annual interest and principal it no longer costs.
-  - **How formulas see it:** through built-in inputs, all zero without financing: `PROFORMA_DEBT`, `PROFORMA_DEBT_CURRENT`, `PROFORMA_PROCEEDS`, `PROFORMA_INTEREST`, `PROFORMA_PRINCIPAL` and `PROFORMA_TO_EQUITY`. Each model decides where they go, and lineage shows each loan's share.
+- **The project:** a scenario can finance a project, presented as a sources and uses table at a closing date. The base case stays the borrower as is.
+  - **Sources:** new loans (amount, rate, amortization, blended, equal principal or interest only, paid monthly), and other funds such as equity injected or cash on hand.
+  - **Uses:** what the money buys or repays: equipment, a building, debt refinanced, costs.
+  - **Balance sheet postings:** each source and use posts to a balance sheet item. New loans go to the long-term debt and current portion items, set once per scoring model, so the post-project balance sheet balances when the table does.
+  - **Outside the table**, because they move no funds at closing:
+    - Line of credit increases, whose interest on the expected average use adds to debt service.
+    - Subordinations: debt postponed and treated as equity.
+- **Post-project columns** sit next to the last fiscal year automatically, and next to the year to date or any projected year on a click. Columns group into historical years, year to date and projections, and each group folds away.
+  - **Actual periods:** pro forma at closing. The full amounts, and the first twelve months of payments on new and existing loans.
+  - **Projected years:** read the loans' schedules, with repayments out of cash.
+  - **Earlier years** stay as they were, so comparisons with them read history.
+- **How formulas see the project:** balance sheet items carry it; the P&L doesn't change. Built-in inputs give the rest, and are zero outside post-project columns:
+  - `PROFORMA_INTEREST`, `PROFORMA_PRINCIPAL` and `PROFORMA_LINE_INTEREST` for debt service.
+  - `PROFORMA_DEBT` and `PROFORMA_DEBT_CURRENT` for projections computed from assumptions.
+  - `PROFORMA_TO_EQUITY` for subordinations.
+
+  A model takes new principal either from the current portion or from `PROFORMA_PRINCIPAL`, never both. Lineage shows each source's share.
+
 - **Projections** come from one of two places, chosen per analysis:
   - **From assumptions:** the model's projection formulas compute a number of years after the last actual period.
   - **The client's projections:** spread like any statement, as periods of quality "projected", and read with the model's regular formulas. `PROJECTED()` is true in both.

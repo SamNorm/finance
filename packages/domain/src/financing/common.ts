@@ -81,3 +81,33 @@ export function parseDate(raw: unknown, what: string, field: string): string {
     throw invalid(`${what}: enter the ${field} as a date.`);
   return text;
 }
+
+// How a period reads financing. "actual": the statements alone. "proForma":
+// an actual period with the project as if closed then. "projected": a
+// projected year, on the loans' schedules.
+export type PeriodMode = "actual" | "proForma" | "projected";
+
+export interface FinancingPeriod {
+  end: string;
+  months: number;
+  mode: PeriodMode;
+}
+
+// The modes of a run's periods. Post-project, the last actual fiscal year and
+// any actual period after it (a year-to-date) are pro forma; earlier years
+// stay as they were, so comparisons with them read history.
+export function periodModes(
+  periods: readonly { months: number; projected: boolean }[],
+  postProject: boolean,
+): PeriodMode[] {
+  const actual = periods.flatMap((p, i) => (p.projected ? [] : [i]));
+  const lastYear =
+    actual.findLast((i) => periods[i]!.months === 12) ?? actual.at(-1) ?? 0;
+  return periods.map((p, i) =>
+    p.projected
+      ? "projected"
+      : postProject && i >= lastYear
+        ? "proForma"
+        : "actual",
+  );
+}

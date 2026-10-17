@@ -13,6 +13,7 @@ import {
   parseDate,
   parseMonths,
   parseRate,
+  type FinancingPeriod,
   type FinancingValue,
 } from "./common";
 
@@ -67,13 +68,6 @@ export function normalizeDebtSchedule(input: {
   };
 }
 
-export interface SchedulePeriod {
-  end: string;
-  months: number;
-  // Projected, by the client or from assumptions.
-  projected: boolean;
-}
-
 export interface ScheduleValues {
   interest: (FinancingValue | null)[];
   principal: (FinancingValue | null)[];
@@ -83,13 +77,13 @@ export interface ScheduleValues {
 // The existing loans' interest, principal and balance in each period. In a
 // projected period, what falls in it; the schedule runs back before its date
 // on the same payments, for a year that began earlier. Actual periods are
-// left blank, unless `proForma` gives the month a project closes: then they
-// show the twelve months after it (scaled to the period's length) and the
-// balance then, the debt service the borrower faces post-project.
+// left blank. Pro forma periods show the twelve months after the project
+// closes (scaled to the period's length) and the balance then: the debt
+// service the borrower faces post-project.
 export function debtScheduleValues(
   schedule: DebtSchedule,
-  periods: readonly SchedulePeriod[],
-  proForma: number | null = null,
+  periods: readonly FinancingPeriod[],
+  closing: number | null = null,
 ): ScheduleValues {
   const blank = periods.map(() => null);
   if (!schedule.asOf || !schedule.loans.length)
@@ -109,12 +103,12 @@ export function debtScheduleValues(
     let to: number;
     let share = new Dec(1);
     let at: number;
-    if (period.projected) {
+    if (period.mode === "projected") {
       to = monthIndex(period.end);
       from = to - period.months;
       at = to;
-    } else if (proForma !== null) {
-      from = Math.max(proForma, start);
+    } else if (period.mode === "proForma") {
+      from = Math.max(closing ?? start, start);
       to = from + 12;
       share = new Dec(period.months).div(12);
       at = from;

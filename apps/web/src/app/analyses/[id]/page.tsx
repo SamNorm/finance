@@ -1,7 +1,10 @@
 import {
+  balanceSheetSides,
   DomainError,
   getAnalysis,
+  getScoringModel,
   getSpread,
+  listItems,
   runAnalysis,
   type AnalysisRun,
 } from "@finance/domain";
@@ -46,13 +49,21 @@ async function AnalysisView({ params, searchParams }: Props) {
   });
   const scenario =
     detail.scenarios.find((s) => s.id === query.scenario) ?? null;
-  const [results, spread] = await Promise.all([
+  const [results, spread, scoringItems] = await Promise.all([
     runAnalysis(db, ctx, id, scenario?.id ?? null),
     getSpread(db, ctx, detail.entity.id),
+    listItems(db, ctx, detail.version.scoringModelVersionId),
   ]);
+  const scoringModel = await getScoringModel(
+    db,
+    ctx,
+    spread.entity.scoringModelId,
+  );
   const run = results.scenario ?? results.base;
   const { analysis, entity, model, version } = detail;
-  const years = results.base.periods.map((p) => Number(p.end.slice(0, 4)));
+  const sides = balanceSheetSides(scoringItems);
+  const lastActual = results.base.periods.findLast((p) => !p.projection);
+  const { longTermDebt, currentDebt, cash } = scoringModel.financingItems;
 
   return (
     <div className="flex flex-col gap-5">
@@ -115,15 +126,22 @@ async function AnalysisView({ params, searchParams }: Props) {
           id: s.id,
           name: s.name,
           overrides: s.overrides,
-          adjustments: s.adjustments,
+          project: s.project,
         }))}
         current={scenario?.id ?? null}
         assumptions={detail.lines.filter((l) => l.kind === "assumption")}
-        years={years}
-        defaultYear={
-          years[results.base.periods.findIndex((p) => p.projection)] ??
-          (years.at(-1) ?? new Date().getFullYear()) + 1
-        }
+        setup={{
+          items: scoringItems
+            .filter((item) => sides.has(item.code))
+            .map((item) => ({
+              code: item.code,
+              label: item.label,
+              side: sides.get(item.code)!,
+            })),
+          canAddLoans: Boolean(longTermDebt && currentDebt && cash),
+          scoringModelId: scoringModel.id,
+          defaultClosing: lastActual ? nextMonthEnd(lastActual.end) : "",
+        }}
       />
 
       <Breakdowns run={run} />
@@ -138,6 +156,7 @@ async function AnalysisView({ params, searchParams }: Props) {
           scenarioName={scenario?.name ?? null}
           modelCharts={detail.modelCharts}
           charts={analysis.charts}
+          project={results.project}
         />
       )}
 
@@ -159,6 +178,8 @@ async function AnalysisView({ params, searchParams }: Props) {
           lines={detail.lines}
           run={run}
           base={results.scenario ? results.base : null}
+          project={results.project}
+          postProject={results.postProject}
           scenarioName={scenario?.name ?? null}
         />
       )}
@@ -191,6 +212,12 @@ function Breakdowns({ run }: { run: AnalysisRun }) {
       </ul>
     </div>
   );
+}
+
+// "2024-12-31" → "2025-01-31": a closing just after the latest statements.
+function nextMonthEnd(date: string) {
+  const [year, month] = date.split("-").map(Number) as [number, number];
+  return new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
 }
 
 function Loading() {

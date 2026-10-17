@@ -1,6 +1,6 @@
 "use client";
 
-import type { FinancingAdjustment, ModelLine } from "@finance/domain";
+import type { ModelLine, Project } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
@@ -15,36 +15,44 @@ import {
   updateScenarioAction,
 } from "../actions";
 import {
-  FinancingEditor,
+  ProjectEditor,
+  SourcesUses,
   toDraft,
   toInput,
-  type AdjustmentDraft,
-} from "./financing-editor";
+  type BalanceSheetItem,
+  type ProjectDraft,
+} from "./project-editor";
 
 interface ScenarioOption {
   id: string;
   name: string;
   overrides: Record<string, string>;
-  adjustments: FinancingAdjustment[];
+  project: Project | null;
+}
+
+// What the project editor needs from the analysis.
+export interface ProjectSetup {
+  items: BalanceSheetItem[];
+  canAddLoans: boolean;
+  scoringModelId: string;
+  defaultClosing: string;
 }
 
 // The base case, the borrower as is, and the analysis's scenarios: each
-// overrides assumptions, such as revenue growth of -15%, and can add
-// post-project financing.
+// overrides assumptions, such as revenue growth of -15%, and can finance a
+// project, shown in post-project columns.
 export function ScenarioBar({
   analysisId,
   scenarios,
   current,
   assumptions,
-  years,
-  defaultYear,
+  setup,
 }: {
   analysisId: string;
   scenarios: ScenarioOption[];
   current: string | null;
   assumptions: ModelLine[];
-  years: number[];
-  defaultYear: number;
+  setup: ProjectSetup;
 }) {
   const [adding, setAdding] = useState(false);
   const [state, formAction, pending] = useActionState(
@@ -92,8 +100,7 @@ export function ScenarioBar({
           analysisId={analysisId}
           scenario={scenario}
           assumptions={assumptions}
-          years={years}
-          defaultYear={defaultYear}
+          setup={setup}
         />
       )}
       <Modal
@@ -105,7 +112,7 @@ export function ScenarioBar({
           <div className="flex flex-col gap-4 px-5 py-4">
             <Field
               label="Name"
-              hint="Then override the assumptions that change and add the project's financing."
+              hint="Then override the assumptions that change, or set up the project it finances."
             >
               <input
                 name="name"
@@ -147,14 +154,12 @@ function ScenarioEditor({
   analysisId,
   scenario,
   assumptions,
-  years,
-  defaultYear,
+  setup,
 }: {
   analysisId: string;
   scenario: ScenarioOption;
   assumptions: ModelLine[];
-  years: number[];
-  defaultYear: number;
+  setup: ProjectSetup;
 }) {
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(
@@ -164,9 +169,11 @@ function ScenarioEditor({
       ]),
     ),
   );
-  const [financing, setFinancing] = useState<AdjustmentDraft[]>(() =>
-    scenario.adjustments.map(toDraft),
+  const [project, setProject] = useState<ProjectDraft>(() =>
+    toDraft(scenario.project),
   );
+  // The saved project shows as a sources and uses table until edited.
+  const [editing, setEditing] = useState(!scenario.project);
   const [pending, startTransition] = useTransition();
   const [deleting, startDelete] = useTransition();
   const [copying, startCopy] = useTransition();
@@ -183,16 +190,17 @@ function ScenarioEditor({
     startTransition(async () => {
       const result = await updateScenarioAction(scenario.id, {
         overrides,
-        adjustments: financing.map(toInput),
+        project: toInput(project),
       });
       // Inside the transition, so the message lands with the refreshed results.
-      startTransition(() =>
+      startTransition(() => {
         setFeedback(
           result.ok
             ? { ok: true, message: "Saved." }
             : { ok: false, message: result.message },
-        ),
-      );
+        );
+        if (result.ok && toInput(project)) setEditing(false);
+      });
     });
   }
 
@@ -201,9 +209,9 @@ function ScenarioEditor({
       <p className="text-sm text-muted">
         Override the assumptions that change in{" "}
         <span className="font-medium text-foreground">{scenario.name}</span> and
-        add the project&apos;s financing. Blank keeps the base case, the
-        borrower as is. Results below show the base case next to each changed
-        value.
+        set up the project it finances. Blank keeps the base case, the borrower
+        as is. With a project, post-project columns sit next to the last fiscal
+        year, and next to any other period you add them to.
       </p>
       <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
         {assumptions.map((a) => (
@@ -233,13 +241,33 @@ function ScenarioEditor({
           </label>
         ))}
       </div>
-      <div className="border-t border-line pt-3">
-        <FinancingEditor
-          drafts={financing}
-          years={years}
-          defaultYear={defaultYear}
-          onChange={setFinancing}
-        />
+      <div className="flex flex-col gap-3 border-t border-line pt-3">
+        {scenario.project && !editing ? (
+          <>
+            <SourcesUses project={scenario.project} items={setup.items} />
+            <div>
+              <button
+                type="button"
+                className={button.secondary}
+                onClick={() => setEditing(true)}
+              >
+                Edit project
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-medium">Project</p>
+            <ProjectEditor
+              draft={project}
+              items={setup.items}
+              canAddLoans={setup.canAddLoans}
+              scoringModelId={setup.scoringModelId}
+              defaultClosing={setup.defaultClosing}
+              onChange={setProject}
+            />
+          </>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button

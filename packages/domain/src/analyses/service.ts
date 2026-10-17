@@ -9,19 +9,22 @@ import {
   type ChartInput,
 } from "../financial-models/charts";
 import { listLines } from "../financial-models/service";
-import {
-  normalizeAdjustments,
-  type AdjustmentInput,
-} from "../financing/financing";
 import type { ModelLine } from "../financial-models/types";
 import { normalizeAssumption } from "../financial-models/validate";
 import {
+  balanceSheetSides,
+  normalizeProject,
+  type Project,
+  type ProjectInput,
+} from "../financing/financing";
+import {
+  getScoringModel,
   getVersion as getScoringVersion,
   listItems,
 } from "../scoring-models/service";
 import { isNumeric } from "../spreads/checks";
 import { getEntity, getSpread } from "../spreads/service";
-import { runModel, type AnalysisRun } from "./run";
+import { runModel, withProject, type AnalysisRun } from "./run";
 
 // Analyses (§5.5): a borrower × a pinned financial model version × periods ×
 // scenarios. Results are computed on demand from the pinned version, so an
@@ -238,10 +241,21 @@ export async function updateAnalysis(
     periodIds?: string[];
     projectionMode?: ProjectionMode;
     projectionYears?: number;
+    // Periods shown with a post-project column, by run period key.
+    postProjectKeys?: string[];
   },
 ): Promise<Analysis> {
   const analysis = await findAnalysis(db, ctx, analysisId);
   checkSettings(patch);
+  const postProjectKeys = patch.postProjectKeys && [
+    ...new Set(patch.postProjectKeys),
+  ];
+  if (
+    postProjectKeys?.some(
+      (key) => !UUID.test(key) && !/^projected-\d{1,2}$/.test(key),
+    )
+  )
+    throw new DomainError("invalid", "Unknown period.");
   const periodIds = patch.periodIds && [...new Set(patch.periodIds)];
   if (periodIds) await checkPeriods(db, analysis.entityId, periodIds);
   const [updated] = await db
@@ -251,6 +265,7 @@ export async function updateAnalysis(
       periodIds,
       projectionMode: patch.projectionMode,
       projectionYears: patch.projectionYears,
+      postProjectKeys,
     })
     .where(eq(analyses.id, analysisId))
     .returning();
@@ -346,7 +361,38 @@ function normalizeOverrides(
 export interface ScenarioInput {
   name: string;
   overrides?: Record<string, string>;
-  adjustments?: readonly AdjustmentInput[];
+  // The project it finances; null or empty for a stress alone.
+  project?: ProjectInput | null;
+}
+
+// What a project's items are checked against: the balance sheet of the
+// pinned version's scoring model, and where it posts new loans.
+async function projectContext(db: Db, ctx: Context, detail: AnalysisDetail) {
+  const scoring = await getScoringVersion(
+    db,
+    ctx,
+    detail.version.scoringModelVersionId,
+  );
+  const [items, model] = await Promise.all([
+    listItems(db, ctx, scoring.id),
+    getScoringModel(db, ctx, scoring.scoringModelId),
+  ]);
+  return {
+    items,
+    sides: balanceSheetSides(items),
+    mapping: model.financingItems,
+  };
+}
+
+async function checkProject(
+  db: Db,
+  ctx: Context,
+  detail: AnalysisDetail,
+  input: ProjectInput | null | undefined,
+) {
+  if (!input) return null;
+  const { sides, mapping } = await projectContext(db, ctx, detail);
+  return normalizeProject(input, { sides, items: mapping });
 }
 
 export async function addScenario(
@@ -365,7 +411,7 @@ export async function addScenario(
       name: input.name.trim(),
       position: detail.scenarios.length,
       overrides: normalizeOverrides(detail.lines, input.overrides ?? {}),
-      adjustments: normalizeAdjustments(input.adjustments ?? []),
+      project: await checkProject(db, ctx, detail, input.project),
     })
     .returning();
   await touch(db, analysisId);
@@ -406,7 +452,10 @@ export async function updateScenario(
       name: patch.name?.trim(),
       overrides:
         patch.overrides && normalizeOverrides(detail.lines, patch.overrides),
-      adjustments: patch.adjustments && normalizeAdjustments(patch.adjustments),
+      project:
+        patch.project === undefined
+          ? undefined
+          : await checkProject(db, ctx, detail, patch.project),
     })
     .where(eq(scenarios.id, scenarioId))
     .returning();
@@ -425,7 +474,7 @@ export async function duplicateScenario(
   return addScenario(db, ctx, source.analysisId, {
     name: name?.trim() || `${source.name} (copy)`,
     overrides: source.overrides,
-    adjustments: source.adjustments,
+    project: source.project,
   });
 }
 
@@ -449,6 +498,10 @@ export interface AnalysisResults {
   base: AnalysisRun;
   // The chosen scenario, when one is.
   scenario: AnalysisRun | null;
+  // The scenario with its project, when it has one: the post-project columns.
+  project: AnalysisRun | null;
+  // The periods shown with a post-project column, by key.
+  postProject: string[];
 }
 
 export async function runAnalysis(
@@ -463,9 +516,9 @@ export async function runAnalysis(
     : undefined;
   if (scenarioId && !scenario)
     throw new DomainError("not_found", "No such scenario.");
-  const [spread, items] = await Promise.all([
+  const [spread, { items, sides, mapping }] = await Promise.all([
     getSpread(db, ctx, detail.entity.id),
-    listItems(db, ctx, detail.version.scoringModelVersionId),
+    projectContext(db, ctx, detail),
   ]);
   const { periodIds, projectionMode, projectionYears } = detail.analysis;
   const chosen = new Set(periodIds);
@@ -489,16 +542,15 @@ export async function runAnalysis(
     periods.map((p) => p.key),
   );
   for (const period of periods) period.modelInputs = inputs[period.key] ?? {};
-  const run = (
-    overrides: Record<string, string>,
-    adjustments: Scenario["adjustments"],
-  ) =>
+  const run = (overrides: Record<string, string>, project: Project | null) =>
     runModel({
-      periods,
+      periods: project
+        ? withProject(periods, project, items, sides, mapping)
+        : periods,
       projectionYears: client ? 0 : projectionYears,
       lines: detail.lines,
       overrides,
-      adjustments,
+      project,
       debtSchedule: spread.entity.debtSchedule,
       items: items
         .filter((item) => item.kind !== "header")
@@ -508,10 +560,22 @@ export async function runAnalysis(
           numeric: isNumeric(item),
         })),
     });
-  // The base case is the borrower as is; scenarios add the project.
+  // The base case is the borrower as is; a scenario's project shows in
+  // post-project columns next to the scenario as is.
+  const base = run({}, null);
+  const keys = new Set(base.periods.map((p) => p.key));
+  const lastYear = base.periods.findLast(
+    (p) => p.projection === null && p.months === 12,
+  );
   return {
-    base: run({}, []),
-    scenario: scenario ? run(scenario.overrides, scenario.adjustments) : null,
+    base,
+    scenario: scenario ? run(scenario.overrides, null) : null,
+    project: scenario?.project
+      ? run(scenario.overrides, scenario.project)
+      : null,
+    postProject: (
+      detail.analysis.postProjectKeys ?? (lastYear ? [lastYear.key] : [])
+    ).filter((key) => keys.has(key)),
   };
 }
 
@@ -645,6 +709,7 @@ export async function repinAnalysis(
         charts: detail.analysis.charts.filter(
           (chart) => !checkCharts([chart], lines).length,
         ),
+        postProjectKeys: detail.analysis.postProjectKeys,
       })
       .where(eq(analyses.id, copy.id));
     for (const scenario of detail.scenarios) {
@@ -657,7 +722,7 @@ export async function repinAnalysis(
             assumptions.has(code),
           ),
         ),
-        adjustments: scenario.adjustments,
+        project: scenario.project,
       });
     }
     return copy;

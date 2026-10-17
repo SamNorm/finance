@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { runModel, type AnalysisRun } from "../analyses/run";
+import { runModel, withProject, type AnalysisRun } from "../analyses/run";
 import { checkCharts } from "../financial-models/charts";
 import type { ModelLine } from "../financial-models/types";
 import { validateLines } from "../financial-models/validate";
+import type { DebtSchedule } from "../financing/debt-schedule";
 import {
+  balanceSheetSides,
   FINANCING_CODES,
-  normalizeAdjustments,
-  type AdjustmentInput,
+  normalizeProject,
+  type FinancingItems,
+  type ProjectInput,
 } from "../financing/financing";
 import { parseItemTable } from "../scoring-models/parse";
 import { fixture } from "../scoring-models/test-helpers";
@@ -26,12 +29,29 @@ const realEstate = parseItemTable(fixture("real-estate.csv")).items;
 const companies = demoCompanies();
 const property = demoProperty();
 
+// Where each template's new loans post, as the seed sets them.
+const POSTING = new Map<ScoringItem[], FinancingItems>([
+  [
+    commercial,
+    { longTermDebt: "LONG_TERM_DEBT", currentDebt: "CPLTD", cash: "CASH" },
+  ],
+  [
+    realEstate,
+    {
+      longTermDebt: "RE_MORTGAGE",
+      currentDebt: "RE_MORTGAGE_CURRENT",
+      cash: "RE_CASH",
+    },
+  ],
+]);
+
 const codesOf = (items: ScoringItem[]) => [
   ...items.filter((i) => i.kind !== "header").map((i) => i.code),
   ...FINANCING_CODES,
 ];
 
-// Runs a demo model over demo periods, as an analysis would.
+// Runs a demo model over demo periods, as an analysis would; with a project,
+// the post-project run.
 function run(
   items: ScoringItem[],
   periods: DemoPeriod[],
@@ -39,29 +59,36 @@ function run(
   options: {
     projectionYears?: number;
     overrides?: Record<string, string>;
-    adjustments?: readonly AdjustmentInput[];
+    project?: ProjectInput | null;
+    debtSchedule?: DebtSchedule;
     modelInputs?: Record<string, string>[];
   } = {},
 ): AnalysisRun {
+  const sides = balanceSheetSides(items);
+  const mapping = POSTING.get(items)!;
+  const project = normalizeProject(options.project, { sides, items: mapping });
+  const spread = periods.map((p, i) => ({
+    key: p.end,
+    end: p.end,
+    months: p.months,
+    quality: p.quality,
+    entered: p.values,
+    summed: Object.fromEntries(
+      [
+        ...effectiveAmounts(items, new Map(Object.entries(p.values))).computed,
+      ].map(([code, v]) => [code, v.toFixed()]),
+    ),
+    modelInputs: options.modelInputs?.[i] ?? {},
+  }));
   return runModel({
-    periods: periods.map((p, i) => ({
-      key: String(p.year),
-      end: `${p.year}-12-31`,
-      months: 12,
-      quality: p.quality,
-      entered: p.values,
-      summed: Object.fromEntries(
-        [
-          ...effectiveAmounts(items, new Map(Object.entries(p.values)))
-            .computed,
-        ].map(([code, v]) => [code, v.toFixed()]),
-      ),
-      modelInputs: options.modelInputs?.[i] ?? {},
-    })),
+    periods: project
+      ? withProject(spread, project, items, sides, mapping)
+      : spread,
     projectionYears: options.projectionYears ?? 0,
     lines,
     overrides: options.overrides ?? {},
-    adjustments: normalizeAdjustments(options.adjustments ?? []),
+    project,
+    debtSchedule: options.debtSchedule,
     items: items
       .filter((i) => i.kind !== "header")
       .map((i) => ({ code: i.code, label: i.label, numeric: isNumeric(i) })),
@@ -71,11 +98,14 @@ function run(
 const values = (run: AnalysisRun, code: string) =>
   run.cells[code]!.map((c) => Number(Number(c.value).toFixed(2)));
 
-// No errors anywhere, except growth in the first period.
+// No errors anywhere, except growth with no earlier period of the same
+// length: the first year, or a first year to date.
 function expectNoErrors(run: AnalysisRun, what: string) {
   for (const [code, cells] of Object.entries(run.cells)) {
     cells.forEach((cell, i) => {
-      const expected = code === "SALES_GROWTH" && i === 0 ? "#N/A" : undefined;
+      const months = run.periods[i]!.months;
+      const first = !run.periods.slice(0, i).some((p) => p.months === months);
+      const expected = code === "SALES_GROWTH" && first ? "#N/A" : undefined;
       expect(cell.error?.code, `${what} ${code} ${i}`).toBe(expected);
     });
   }
@@ -104,17 +134,20 @@ describe("demo data", () => {
   it("cash flow statements explain the change in cash", () => {
     for (const company of companies) {
       company.periods.forEach((period, i) => {
-        if (i === 0) return;
+        // Years only: a year to date's flows are prorated.
+        if (i === 0 || period.months !== 12) return;
+        const before = company.periods
+          .slice(0, i)
+          .findLast((p) => p.months === 12)!;
         const { amounts } = effectiveAmounts(
           commercial,
           new Map(Object.entries(period.values)),
         );
         const cash = Number(period.values.CASH);
-        const before = Number(company.periods[i - 1]!.values.CASH);
         expect(
           amounts.get("NET_CHANGE_IN_CASH")?.toNumber(),
           `${company.name} ${period.year}`,
-        ).toBe(cash - before);
+        ).toBe(cash - Number(before.values.CASH));
       });
     }
   });
@@ -155,50 +188,86 @@ describe("demo data", () => {
 
   it("the management case projects a recovery the bank's case doesn't", () => {
     const saintLaurent = companies[2]!;
-    const client = run(commercial, saintLaurent.periods, DEMO_MODEL.lines);
+    const client = run(commercial, saintLaurent.periods, DEMO_MODEL.lines, {
+      debtSchedule: saintLaurent.debtSchedule,
+    });
     expectNoErrors(client, "management case");
-    expect(client.periods.map((p) => p.projection)).toEqual([
-      null,
-      null,
-      null,
-      "client",
-      "client",
+    expect(client.periods.map((p) => [p.end, p.months, p.projection])).toEqual([
+      ["2022-12-31", 12, null],
+      ["2023-12-31", 12, null],
+      ["2024-12-31", 12, null],
+      ["2025-09-30", 9, null],
+      ["2025-12-31", 12, "client"],
+      ["2026-12-31", 12, "client"],
     ]);
     const bank = run(
       commercial,
-      saintLaurent.periods.slice(0, 3),
+      saintLaurent.periods.filter((p) => p.quality !== "projected"),
       DEMO_MODEL.lines,
-      { projectionYears: 2 },
+      { projectionYears: 2, debtSchedule: saintLaurent.debtSchedule },
     );
-    const [, , , managed2025, managed2026] = values(client, "DSCR");
-    expect(managed2026).toBeGreaterThan(1.25);
-    expect(managed2025).toBeGreaterThan(values(bank, "DSCR")[3]!);
+    const managed = values(client, "DSCR");
+    // 2025 grows from 2024, not from the nine months.
+    expect(values(client, "SALES_GROWTH")[4]).toBeCloseTo(0.08, 2);
+    expect(managed[5]).toBeGreaterThan(1.25);
+    expect(managed[4]).toBeGreaterThan(values(bank, "DSCR")[4]!);
   });
 
-  it("post-project financing weighs on coverage and builds net worth", () => {
+  it("the project weighs on coverage and builds net worth, post-project", () => {
     const northwind = companies[0]!;
     const shareholderLoans = northwind.periods[2]!.values.SHAREHOLDER_LOANS!;
-    const project = demoScenarios(shareholderLoans).find((s) => s.adjustments)!;
-    const base = run(commercial, northwind.periods, DEMO_MODEL.lines, {
+    const scenario = demoScenarios(shareholderLoans).find((s) => s.project)!;
+    const options = {
       projectionYears: 2,
-    });
+      debtSchedule: northwind.debtSchedule,
+    };
+    const base = run(commercial, northwind.periods, DEMO_MODEL.lines, options);
     const after = run(commercial, northwind.periods, DEMO_MODEL.lines, {
-      projectionYears: 2,
-      adjustments: project.adjustments,
+      ...options,
+      project: scenario.project,
     });
     expectNoErrors(after, "post-project");
-    // Unchanged through 2024; a new loan from 2025.
-    expect(values(after, "DSCR").slice(0, 3)).toEqual(
-      values(base, "DSCR").slice(0, 3),
+    // History stays; 2024 post-project and the projected years carry the
+    // new loan's and the line's debt service.
+    expect(values(after, "DSCR").slice(0, 2)).toEqual(
+      values(base, "DSCR").slice(0, 2),
     );
+    expect(values(after, "DSCR")[2]).toBeLessThan(values(base, "DSCR")[2]!);
     expect(values(after, "DSCR")[3]).toBeLessThan(values(base, "DSCR")[3]!);
+    expect(values(after, "DSCR")[2]).toBeGreaterThan(1.25);
+    // The loan and equity are on the balance sheet at closing.
     expect(
-      values(after, "FUNDED_DEBT")[3]! - values(base, "FUNDED_DEBT")[3]!,
-    ).toBeGreaterThan(1_700_000);
-    // The postponed shareholder loans count as equity, less the new interest.
-    const tnw = values(after, "TNW")[3]! - values(base, "TNW")[3]!;
-    expect(tnw).toBeGreaterThan(Number(shareholderLoans) - 150_000);
-    expect(tnw).toBeLessThan(Number(shareholderLoans));
+      values(after, "FUNDED_DEBT")[2]! - values(base, "FUNDED_DEBT")[2]!,
+    ).toBe(1_600_000);
+    const tnw = values(after, "TNW")[2]! - values(base, "TNW")[2]!;
+    // Equity injected, less costs expensed, plus postponed loans.
+    expect(tnw).toBe(400_000 - 50_000 + Number(shareholderLoans));
+    // The balance sheet balances post-project.
+    const sides = balanceSheetSides(commercial);
+    const project = normalizeProject(scenario.project, {
+      sides,
+      items: POSTING.get(commercial)!,
+    })!;
+    const spread = northwind.periods.map((p) => ({
+      key: p.end,
+      end: p.end,
+      months: p.months,
+      quality: p.quality,
+      entered: p.values,
+      summed: {},
+      modelInputs: {},
+    }));
+    for (const period of withProject(
+      spread,
+      project,
+      commercial,
+      sides,
+      POSTING.get(commercial)!,
+    ))
+      expect(
+        checkPeriod(commercial, new Map(Object.entries(period.entered))),
+        period.end,
+      ).toEqual([]);
   });
 
   it("the borrowing base margins inventory by type", () => {
@@ -225,9 +294,16 @@ describe("demo data", () => {
   });
 
   it("the income property model values the building and covers its mortgage", () => {
-    const base = run(realEstate, property.periods, REAL_ESTATE_MODEL.lines, {
+    const options = {
       projectionYears: 3,
-    });
+      debtSchedule: property.debtSchedule,
+    };
+    const base = run(
+      realEstate,
+      property.periods,
+      REAL_ESTATE_MODEL.lines,
+      options,
+    );
     expectNoErrors(base, "property");
     const dscr = values(base, "DSCR");
     expect(Math.min(...dscr)).toBeGreaterThan(1.3);
@@ -240,10 +316,7 @@ describe("demo data", () => {
       realEstate,
       property.periods,
       REAL_ESTATE_MODEL.lines,
-      {
-        projectionYears: 3,
-        overrides: capRate!.overrides,
-      },
+      { ...options, overrides: capRate!.overrides },
     );
     expect(values(stressed, "LTV")[2]).toBeGreaterThan(ltv[2]!);
     const renovated = run(
@@ -251,14 +324,19 @@ describe("demo data", () => {
       property.periods,
       REAL_ESTATE_MODEL.lines,
       {
-        projectionYears: 3,
+        ...options,
         overrides: renovation!.overrides,
-        adjustments: renovation!.adjustments,
+        project: renovation!.project,
       },
     );
-    // Tighter in the first year of the loan, recovering as rents rise.
+    // Tighter with the loan, recovering as rents rise; the renovation adds
+    // to the building's cost.
     const after = values(renovated, "DSCR");
+    expect(after[2]).toBeLessThan(dscr[2]!);
     expect(after[3]).toBeLessThan(dscr[3]!);
     expect(after[5]).toBeGreaterThan(after[3]!);
+    expect(
+      values(renovated, "MORTGAGES")[2]! - values(base, "MORTGAGES")[2]!,
+    ).toBe(1_500_000);
   });
 });

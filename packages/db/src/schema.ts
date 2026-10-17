@@ -87,6 +87,14 @@ export const itemAggregation = pgEnum("item_aggregation", [
 // The sign an entered value must have, checked when statements are validated.
 export const itemSign = pgEnum("item_sign", ["any", "positive", "negative"]);
 
+// Where a project's new loans post on the balance sheet, and where their
+// repayments come out of, as item codes of the model.
+export interface FinancingItems {
+  longTermDebt: string | null;
+  currentDebt: string | null;
+  cash: string | null;
+}
+
 export const scoringModels = pgTable(
   "scoring_models",
   {
@@ -99,6 +107,10 @@ export const scoringModels = pgTable(
     // Free text naming the mirrored system, e.g. "CreditLens" or "In-house".
     sourceSystem: text(),
     description: text(),
+    financingItems: jsonb()
+      .$type<FinancingItems>()
+      .notNull()
+      .default({ longTermDebt: null, currentDebt: null, cash: null }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -461,6 +473,9 @@ export const analyses = pgTable(
     projectionYears: integer().notNull().default(0),
     // Charts added in the analysis, on top of the model's.
     charts: jsonb().$type<ChartDefinition[]>().notNull().default([]),
+    // Periods shown with a post-project column next to them, by run period
+    // key; null means the default, the last fiscal year.
+    postProjectKeys: text().array(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -475,32 +490,47 @@ export const analyses = pgTable(
   ],
 ).enableRLS();
 
-// Post-project financing in a scenario, applied from a fiscal year on (by the
-// year periods end in). Amounts and rates are canonical decimal strings.
-export type FinancingAdjustment =
-  | {
-      kind: "loan";
-      id: string;
-      name: string;
-      amount: string;
-      // Annual rate, e.g. "0.065".
-      rate: string;
-      // Amortization period; unused for interest-only loans.
-      years: number;
-      repayment: "blended" | "equal_principal" | "interest_only";
-      fromYear: number;
-    }
-  | {
-      // Debt postponed in favour of the lender and treated as equity, with
-      // the annual interest and principal it no longer costs.
-      kind: "subordination";
-      id: string;
-      name: string;
-      amount: string;
-      interestSaved: string;
-      principalSaved: string;
-      fromYear: number;
-    };
+// The project a scenario finances, as a sources and uses table at closing:
+// sources (new loans, equity, cash on hand) equal uses (assets bought, debt
+// refinanced, costs). Each posts to a balance sheet item, so the post-project
+// balance sheet balances. Line of credit increases and subordinations sit
+// outside the table: they move no funds at closing. Amounts and rates are
+// canonical decimal strings.
+export interface Project {
+  closing: string;
+  sources: (
+    | {
+        kind: "loan";
+        id: string;
+        name: string;
+        amount: string;
+        // Annual rate, e.g. "0.065".
+        rate: string;
+        repayment: "blended" | "equal_principal" | "interest_only";
+        // Months of amortization; 0 for interest only.
+        months: number;
+      }
+    | { kind: "funds"; id: string; name: string; amount: string; item: string }
+  )[];
+  uses: { id: string; name: string; amount: string; item: string }[];
+  // An increase of the authorized line, and its expected average use.
+  lines: {
+    id: string;
+    name: string;
+    increase: string;
+    usage: string;
+    rate: string;
+  }[];
+  // Debt postponed in favour of the lender and treated as equity, with the
+  // annual interest and principal it no longer costs.
+  subordinations: {
+    id: string;
+    name: string;
+    amount: string;
+    interestSaved: string;
+    principalSaved: string;
+  }[];
+}
 
 export const analysisScenarios = pgTable(
   "analysis_scenarios",
@@ -513,8 +543,8 @@ export const analysisScenarios = pgTable(
     position: integer().notNull().default(0),
     // Assumption code → value, canonical as in financial model lines.
     overrides: jsonb().$type<Record<string, string>>().notNull().default({}),
-    // New loans and subordinations: the project the scenario adds.
-    adjustments: jsonb().$type<FinancingAdjustment[]>().notNull().default([]),
+    // The project the scenario finances; none for a stress alone.
+    project: jsonb().$type<Project>(),
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],

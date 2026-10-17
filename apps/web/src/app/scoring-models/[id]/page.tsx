@@ -1,4 +1,5 @@
 import {
+  balanceSheetSides,
   DomainError,
   getScoringModel,
   listItems,
@@ -17,6 +18,7 @@ import { VersionActions } from "@/components/version-actions";
 import { inputsLabel, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { ModelActions } from "../_components/create-model";
+import { FinancingItems } from "../_components/financing-items";
 import { ItemsWorkspace } from "../_components/items-workspace";
 import {
   createDraftAction,
@@ -56,6 +58,13 @@ async function ScoringModelView({ params: routeParams, searchParams }: Props) {
     draft ??
     model.versions.at(-1);
   const items = version ? await listItems(db, ctx, version.id) : [];
+  const published = model.versions.findLast((v) => v.status === "published");
+  const publishedItems = published
+    ? published.id === version?.id
+      ? items
+      : await listItems(db, ctx, published.id)
+    : [];
+  const sides = balanceSheetSides(publishedItems);
   const issues = version?.status === "draft" ? validateItems(items) : [];
   const statement =
     STATEMENTS.find((s) => s.value === params.statement)?.value ??
@@ -111,6 +120,20 @@ async function ScoringModelView({ params: routeParams, searchParams }: Props) {
           </p>
         </div>
       </div>
+
+      {published && sides.size > 0 && (
+        <FinancingItems
+          modelId={model.id}
+          values={model.financingItems}
+          items={publishedItems
+            .filter((item) => sides.has(item.code))
+            .map((item) => ({
+              code: item.code,
+              label: item.label,
+              side: sides.get(item.code)!,
+            }))}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-3 border-b border-line pb-3">
         <nav className="flex flex-wrap gap-1" aria-label="Versions">
