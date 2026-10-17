@@ -54,7 +54,7 @@ const color = (series: ChartSeries, index: number) =>
 
 const compact = new Intl.NumberFormat("en-CA", {
   notation: "compact",
-  maximumFractionDigits: 1,
+  maximumFractionDigits: 2,
 });
 
 function tick(value: number, format: ChartFormat) {
@@ -204,7 +204,7 @@ export function MetricChart({
           responsive
           style={{ width: "100%", height }}
           data={data}
-          margin={{ top: 16, right: labelEnd ? 48 : 8, bottom: 0, left: 0 }}
+          margin={{ top: 20, right: labelEnd ? 48 : 8, bottom: 0, left: 0 }}
           barGap={2}
           barCategoryGap="30%"
         >
@@ -216,9 +216,10 @@ export function MetricChart({
               fill="var(--surface-2)"
               fillOpacity={1}
               ifOverflow="extendDomain"
+              // Above the plot, clear of lines and thresholds.
               label={{
                 value: "Projected",
-                position: "insideTop",
+                position: "top",
                 fill: "var(--muted)",
                 fontSize: 11,
               }}

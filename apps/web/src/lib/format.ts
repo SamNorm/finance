@@ -7,10 +7,11 @@ type DataType =
 // Amounts show whole units; the exact figure is kept and shown while editing.
 const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
 const whole = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 0 });
+// One decimal, or two when they matter, as for a 6.25% cap rate.
 const percent = new Intl.NumberFormat("en-CA", {
   style: "percent",
   minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
+  maximumFractionDigits: 2,
 });
 const ratio = new Intl.NumberFormat("en-CA", {
   minimumFractionDigits: 2,
