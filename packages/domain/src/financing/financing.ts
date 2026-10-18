@@ -285,6 +285,22 @@ export function projectTotals(project: Project) {
   return { sources, uses, difference: sources.minus(uses) };
 }
 
+// Sources and uses balance to the dollar; less is rounding.
+export const BALANCE_TOLERANCE = 1;
+
+// Whether the post-project balance sheet balances: sources equal uses.
+export const isBalanced = (project: Project) =>
+  projectTotals(project).difference.abs().lt(BALANCE_TOLERANCE);
+
+const dollars = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
+
+// "Sources exceed uses by 500,000", or null when they balance.
+export function imbalance(project: Project): string | null {
+  if (isBalanced(project)) return null;
+  const { difference } = projectTotals(project);
+  return `Sources ${difference.isPositive() ? "exceed" : "fall short of"} uses by ${dollars.format(Number(difference.abs().toFixed(2)))}`;
+}
+
 interface Window {
   // Payments counted: months after `from`, up to and including `to`.
   from: number;

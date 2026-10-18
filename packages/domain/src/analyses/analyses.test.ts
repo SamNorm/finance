@@ -1050,6 +1050,50 @@ describe("analysis service", () => {
     );
   });
 
+  it("is completed only once its projects' sources and uses balance", async () => {
+    const { entity, v1 } = setup;
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "Review",
+    });
+    const project = (equity: string) => ({
+      closing: "2024-12-31",
+      sources: [
+        {
+          kind: "funds",
+          name: "Equity",
+          amount: equity,
+          item: "SHARE_CAPITAL",
+        },
+      ],
+      uses: [{ name: "Machinery", amount: "800", item: "MACHINERY" }],
+    });
+    await addScenario(db, ctx, analysis.id, { name: "Stress" });
+    const expansion = await addScenario(db, ctx, analysis.id, {
+      name: "Expansion",
+      project: project("500"),
+    });
+    // Projects are built a piece at a time, so saving one doesn't balance it.
+    await expect(
+      updateAnalysis(db, ctx, analysis.id, { status: "completed" }),
+    ).rejects.toMatchObject({
+      kind: "conflict",
+      issues: [
+        {
+          code: "project_unbalanced",
+          message: "Expansion: sources fall short of uses by 300.",
+        },
+      ],
+    });
+    // Within a dollar is rounding.
+    await updateScenario(db, ctx, expansion.id, { project: project("799.5") });
+    const completed = await updateAnalysis(db, ctx, analysis.id, {
+      status: "completed",
+    });
+    expect(completed.status).toBe("completed");
+  });
+
   it("protects models in use and each organization's analyses", async () => {
     const { entity, model, v1 } = setup;
     const analysis = await createAnalysis(db, ctx, {

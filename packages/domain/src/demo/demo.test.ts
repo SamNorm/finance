@@ -7,6 +7,7 @@ import type { DebtSchedule } from "../financing/debt-schedule";
 import {
   balanceSheetSides,
   FINANCING_CODES,
+  imbalance,
   normalizeProject,
   type FinancingItems,
   type ProjectInput,
@@ -211,6 +212,22 @@ describe("demo data", () => {
     expect(values(client, "SALES_GROWTH")[4]).toBeCloseTo(0.08, 2);
     expect(managed[5]).toBeGreaterThan(1.25);
     expect(managed[4]).toBeGreaterThan(values(bank, "DSCR")[4]!);
+  });
+
+  it("every project's sources and uses balance", () => {
+    const shareholderLoans =
+      companies[0]!.periods[2]!.values.SHAREHOLDER_LOANS!;
+    const scenarios = [
+      ...demoScenarios(shareholderLoans).map((s) => [commercial, s] as const),
+      ...REAL_ESTATE_SCENARIOS.map((s) => [realEstate, s] as const),
+    ];
+    for (const [items, scenario] of scenarios) {
+      const project = normalizeProject(scenario.project, {
+        sides: balanceSheetSides(items),
+        items: POSTING.get(items)!,
+      });
+      if (project) expect(imbalance(project), scenario.name).toBeNull();
+    }
   });
 
   it("the project weighs on coverage and builds net worth, post-project", () => {

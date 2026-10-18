@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
-import { DomainError } from "../errors";
+import { DomainError, type Issue } from "../errors";
 import {
   checkCharts,
   normalizeCharts,
@@ -15,6 +15,7 @@ import { normalizeAssumption } from "../financial-models/validate";
 import type { LoanTermsInput } from "../financing/common";
 import {
   balanceSheetSides,
+  imbalance,
   normalizeProject,
   type Project,
   type ProjectInput,
@@ -256,6 +257,7 @@ export async function updateAnalysis(
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) {
     throw new DomainError("invalid", `"${patch.status}" isn't a status.`);
   }
+  if (patch.status === "completed") await checkBalanced(db, analysisId);
   const postProjectKeys = patch.postProjectKeys && [
     ...new Set(patch.postProjectKeys),
   ];
@@ -287,6 +289,35 @@ export async function updateAnalysis(
     .where(eq(analyses.id, analysisId))
     .returning();
   return updated!;
+}
+
+// An analysis is completed with its projects settled: in each scenario's,
+// sources equal uses, or its post-project balance sheet doesn't balance.
+// Projects are built a piece at a time, so they can differ until then.
+async function checkBalanced(db: Db, analysisId: string) {
+  const list = await db
+    .select({ name: scenarios.name, project: scenarios.project })
+    .from(scenarios)
+    .where(eq(scenarios.analysisId, analysisId))
+    .orderBy(asc(scenarios.position), asc(scenarios.createdAt));
+  const issues = list.flatMap(({ name, project }): Issue[] => {
+    const off = project && imbalance(project);
+    return off
+      ? [
+          {
+            severity: "error",
+            code: "project_unbalanced",
+            message: `${name}: ${off.charAt(0).toLowerCase()}${off.slice(1)}.`,
+          },
+        ]
+      : [];
+  });
+  if (issues.length)
+    throw new DomainError(
+      "conflict",
+      `Balance each project's sources and uses before completing the analysis. ${issues.map((i) => i.message).join(" ")}`,
+      issues,
+    );
 }
 
 export async function deleteAnalysis(
