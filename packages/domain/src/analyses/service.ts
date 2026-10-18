@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
@@ -12,14 +11,14 @@ import {
 import { listLines } from "../financial-models/service";
 import type { ModelLine } from "../financial-models/types";
 import { normalizeAssumption } from "../financial-models/validate";
-import type { LoanTermsInput } from "../financing/common";
 import {
   balanceSheetSides,
   imbalance,
   normalizeProject,
   type Project,
+  type FinancingItems,
   type ProjectInput,
-  type ProjectLoan,
+  type Side,
 } from "../financing/financing";
 import {
   getScoringModel,
@@ -432,6 +431,28 @@ async function projectContext(db: Db, ctx: Context, detail: AnalysisDetail) {
   };
 }
 
+// What a project in the analysis can post to: the balance sheet items of
+// its pinned version's scoring model, each on its side, and the items new
+// loans post to, when the scoring model says.
+export async function getProjectSetup(
+  db: Db,
+  ctx: Context,
+  analysisId: string,
+): Promise<{
+  items: { code: string; label: string; side: Side }[];
+  loansPostTo: FinancingItems;
+}> {
+  const detail = await getAnalysis(db, ctx, analysisId);
+  const { items, sides, mapping } = await projectContext(db, ctx, detail);
+  return {
+    items: items.flatMap((item) => {
+      const side = sides.get(item.code);
+      return side ? [{ code: item.code, label: item.label, side }] : [];
+    }),
+    loansPostTo: mapping,
+  };
+}
+
 async function checkProject(
   db: Db,
   ctx: Context,
@@ -534,44 +555,6 @@ export async function setProjectLoanAdjustments(
       ),
     } as ProjectInput,
   });
-}
-
-// A new loan as typed, on its own rather than within its whole project.
-export interface ProjectLoanInput extends LoanTermsInput {
-  name?: unknown;
-  amount?: unknown;
-  rate?: unknown;
-  // The project's closing date, for a scenario that has no project yet.
-  closing?: unknown;
-}
-
-// Adds a new loan to a scenario's project, drawn at its closing. A scenario
-// without a project starts one, closing on the date given; one with a project
-// keeps its closing date.
-export async function addProjectLoan(
-  db: Db,
-  ctx: Context,
-  scenarioId: string,
-  input: ProjectLoanInput,
-): Promise<{ scenario: Scenario; loan: ProjectLoan }> {
-  const { project } = await getScenario(db, ctx, scenarioId);
-  const { closing: rawClosing, ...loan } = input;
-  const closing = String(rawClosing ?? "").trim();
-  if (project && closing && closing !== project.closing)
-    throw new DomainError(
-      "invalid",
-      `The project closes on ${project.closing}; its new loans are drawn then.`,
-    );
-  const id = randomUUID();
-  const scenario = await updateScenario(db, ctx, scenarioId, {
-    project: {
-      ...project,
-      closing: project?.closing ?? closing,
-      sources: [...(project?.sources ?? []), { ...loan, kind: "loan", id }],
-    } as ProjectInput,
-  });
-  const added = scenario.project!.sources.find((s) => s.id === id);
-  return { scenario, loan: added as ProjectLoan };
 }
 
 // A copy of a scenario, placed last, to vary from it.

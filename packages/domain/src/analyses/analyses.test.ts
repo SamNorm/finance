@@ -30,12 +30,19 @@ import {
 } from "../spreads/service";
 import { runModel, type RunInput } from "./run";
 import {
+  addProjectEntry,
   addProjectLoan,
+  removeProjectEntry,
+  setProjectClosing,
+  updateProjectEntry,
+} from "./projects";
+import {
   addScenario,
   createAnalysis,
   deleteAnalysis,
   duplicateScenario,
   getAnalysis,
+  getProjectSetup,
   listAnalyses,
   repinAnalysis,
   runAnalysis,
@@ -714,6 +721,96 @@ describe("analysis service", () => {
       addProjectLoan(db, { organizationId: randomUUID() }, scenario.id, loan),
       "not_found",
     );
+  });
+
+  it("edits a project an entry at a time", async () => {
+    const { context, entity, scoringModel, v1 } = setup;
+    await setFinancingItems(db, context, scoringModel.id, {
+      longTermDebt: "LONG_TERM_DEBT",
+      currentDebt: "CPLTD",
+      cash: "CASH",
+    });
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "A",
+    });
+    const { id } = await addScenario(db, ctx, analysis.id, {
+      name: "Expansion",
+    });
+    // What entries can post to, and where new loans post.
+    const projectSetup = await getProjectSetup(db, ctx, analysis.id);
+    expect(projectSetup.items).toContainEqual({
+      code: "MACHINERY",
+      label: expect.any(String),
+      side: "assets",
+    });
+    expect(projectSetup.items).toContainEqual({
+      code: "SHARE_CAPITAL",
+      label: expect.any(String),
+      side: "claims",
+    });
+    expect(projectSetup.loansPostTo.cash).toBe("CASH");
+
+    const { entry: use } = await addProjectEntry(db, ctx, id, "uses", {
+      name: "Machinery",
+      amount: "1,000",
+      item: "MACHINERY",
+      closing: "2024-12-31",
+    });
+    expect(use).toMatchObject({ amount: "1000", item: "MACHINERY" });
+    const { loan } = await addProjectLoan(db, ctx, id, {
+      name: "Term loan",
+      amount: "800",
+      rate: "5%",
+      repayment: "blended",
+      years: 10,
+    });
+    const { entry: equity } = await addProjectEntry(db, ctx, id, "sources", {
+      kind: "funds",
+      name: "Equity",
+      amount: "200",
+      item: "SHARE_CAPITAL",
+    });
+
+    // Fields not given stay; years replace the amortization.
+    const { entry: longer } = await updateProjectEntry(db, ctx, id, loan.id, {
+      years: 15,
+      moratorium: { kind: "principal", payments: 6, included: false },
+    });
+    expect(longer).toMatchObject({
+      id: loan.id,
+      name: "Term loan",
+      amount: "800",
+      months: 180,
+      moratorium: { kind: "principal", payments: 6, included: false },
+    });
+    // A null moratorium removes it, and a loan stays a loan.
+    const { entry: plain } = await updateProjectEntry(db, ctx, id, loan.id, {
+      moratorium: null,
+      kind: "funds",
+    });
+    expect(plain).toMatchObject({ kind: "loan", months: 180 });
+    expect(plain).not.toHaveProperty("moratorium");
+    // Checked as in the editor.
+    await rejects(
+      updateProjectEntry(db, ctx, id, use.id, { item: "REVENUE" }),
+      "invalid",
+    );
+    await rejects(
+      updateProjectEntry(db, ctx, id, randomUUID(), { amount: "1" }),
+      "not_found",
+    );
+
+    const moved = await setProjectClosing(db, ctx, id, "2025-03-31");
+    expect(moved.project!.closing).toBe("2025-03-31");
+    let scenario = await removeProjectEntry(db, ctx, id, equity.id);
+    expect(scenario.project!.sources.map((s) => s.name)).toEqual(["Term loan"]);
+    await removeProjectEntry(db, ctx, id, loan.id);
+    scenario = await removeProjectEntry(db, ctx, id, use.id);
+    // Nothing left is no project, which has no closing date to move.
+    expect(scenario.project).toBeNull();
+    await rejects(setProjectClosing(db, ctx, id, "2025-03-31"), "invalid");
   });
 
   it("keeps charts added in the analysis, checked against its version", async () => {
