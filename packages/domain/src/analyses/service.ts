@@ -130,6 +130,8 @@ async function publishedVersion(db: Db, ctx: Context, versionId: string) {
 
 export type ProjectionMode = Analysis["projectionMode"];
 const PROJECTION_MODES: ProjectionMode[] = ["assumptions", "client"];
+export type AnalysisStatus = Analysis["status"];
+const STATUSES: AnalysisStatus[] = ["in_progress", "completed"];
 
 function checkSettings(input: {
   name?: string;
@@ -243,10 +245,14 @@ export async function updateAnalysis(
     projectionYears?: number;
     // Periods shown with a post-project column, by run period key.
     postProjectKeys?: string[];
+    status?: AnalysisStatus;
   },
 ): Promise<Analysis> {
   const analysis = await findAnalysis(db, ctx, analysisId);
   checkSettings(patch);
+  if (patch.status !== undefined && !STATUSES.includes(patch.status)) {
+    throw new DomainError("invalid", `"${patch.status}" isn't a status.`);
+  }
   const postProjectKeys = patch.postProjectKeys && [
     ...new Set(patch.postProjectKeys),
   ];
@@ -266,6 +272,14 @@ export async function updateAnalysis(
       projectionMode: patch.projectionMode,
       projectionYears: patch.projectionYears,
       postProjectKeys,
+      status: patch.status,
+      // Completing again keeps the first date.
+      completedAt:
+        patch.status === undefined || patch.status === analysis.status
+          ? undefined
+          : patch.status === "completed"
+            ? new Date()
+            : null,
     })
     .where(eq(analyses.id, analysisId))
     .returning();

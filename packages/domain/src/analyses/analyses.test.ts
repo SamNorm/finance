@@ -948,6 +948,42 @@ describe("analysis service", () => {
     ]);
   });
 
+  it("is in progress until completed, and can be reopened", async () => {
+    const { entity, v1 } = setup;
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "Review",
+    });
+    expect([analysis.status, analysis.completedAt]).toEqual([
+      "in_progress",
+      null,
+    ]);
+    const completed = await updateAnalysis(db, ctx, analysis.id, {
+      status: "completed",
+    });
+    expect(completed.status).toBe("completed");
+    expect(completed.completedAt).toBeInstanceOf(Date);
+    // Completing again keeps the first date.
+    const again = await updateAnalysis(db, ctx, analysis.id, {
+      status: "completed",
+    });
+    expect(again.completedAt).toEqual(completed.completedAt);
+    const reopened = await updateAnalysis(db, ctx, analysis.id, {
+      status: "in_progress",
+    });
+    expect([reopened.status, reopened.completedAt]).toEqual([
+      "in_progress",
+      null,
+    ]);
+    await rejects(
+      updateAnalysis(db, ctx, analysis.id, {
+        status: "archived" as "completed",
+      }),
+      "invalid",
+    );
+  });
+
   it("protects models in use and each organization's analyses", async () => {
     const { entity, model, v1 } = setup;
     const analysis = await createAnalysis(db, ctx, {

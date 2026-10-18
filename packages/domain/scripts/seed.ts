@@ -32,6 +32,7 @@ import {
   setFinancialModelCharts,
   setFinancingItems,
   setModelInput,
+  updateAnalysis,
   type ChartDefinition,
   type DebtSchedule,
   type FinancingItems,
@@ -260,7 +261,9 @@ async function seed() {
     ))
       await setModelInput(db, ctx, margined.id, period.id, code, value);
   }
-  console.log("Borrowing base: inventory by type for Northwind.");
+  // Margined and done, so the overview shows a completed analysis.
+  await updateAnalysis(db, ctx, margined.id, { status: "completed" });
+  console.log("Borrowing base: inventory by type for Northwind, completed.");
 
   const realEstate = await scoringModel(
     "real-estate.csv",

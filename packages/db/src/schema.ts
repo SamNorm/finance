@@ -496,6 +496,13 @@ export const projectionMode = pgEnum("projection_mode", [
   "client",
 ]);
 
+// Where the analyst is with it: still working, or done, e.g. once it's in the
+// credit file. Completed analyses can be reopened; nothing is locked.
+export const analysisStatus = pgEnum("analysis_status", [
+  "in_progress",
+  "completed",
+]);
+
 export const analyses = pgTable(
   "analyses",
   {
@@ -524,12 +531,18 @@ export const analyses = pgTable(
     // Periods shown with a post-project column next to them, by run period
     // key; null means the default, the last fiscal year.
     postProjectKeys: text().array(),
+    status: analysisStatus().notNull().default("in_progress"),
+    completedAt: timestamp({ withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     index("analyses_organization").on(t.organizationId),
     index("analyses_entity").on(t.entityId),
+    check(
+      "analyses_completed_at",
+      sql`(${t.status} = 'completed') = (${t.completedAt} is not null)`,
+    ),
     index("analyses_financial_model_version").on(t.financialModelVersionId),
     check(
       "analyses_projection_years",
