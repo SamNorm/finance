@@ -1,5 +1,5 @@
 export type NavIcon =
-  "overview" | "borrowers" | "analyses" | "scoring" | "financial";
+  "overview" | "borrowers" | "analyses" | "scoring" | "financial" | "documents";
 
 export interface NavItem {
   href: string;
@@ -36,6 +36,7 @@ export const navSections = (modelsLabel: string): NavSection[] => [
         label: "Financial models",
         icon: "financial",
       },
+      { href: "/documents", label: "Documents", icon: "documents" },
     ],
   },
 ];

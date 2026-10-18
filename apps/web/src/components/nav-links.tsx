@@ -3,6 +3,7 @@
 import {
   Building2,
   ChartLine,
+  FileText,
   LayoutDashboard,
   ListTree,
   Sigma,
@@ -17,6 +18,7 @@ const ICONS: Record<NavIcon, typeof Sigma> = {
   analyses: ChartLine,
   scoring: ListTree,
   financial: Sigma,
+  documents: FileText,
 };
 
 // The sidebar's sections. `pathname` is null while it loads, in the static

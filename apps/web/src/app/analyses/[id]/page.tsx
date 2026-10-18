@@ -12,6 +12,7 @@ import {
   spreadErrors,
   type AnalysisRun,
 } from "@finance/domain";
+import { BUILT_IN_TEMPLATES, listDocuments } from "@finance/documents";
 import { Dec } from "@finance/engine";
 import { Building2, Sigma, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
@@ -24,6 +25,7 @@ import { formatDate, formatDay, formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
 import { AnalysisActions } from "../_components/analysis-actions";
 import { AnalysisCharts } from "../_components/analysis-charts";
+import { AnalysisDocuments } from "../_components/analysis-documents";
 import { AnalysisSettings } from "../_components/analysis-settings";
 import { CovenantResults } from "../_components/covenant-results";
 import { CovenantSummary } from "../_components/covenant-summary";
@@ -64,11 +66,12 @@ async function AnalysisView({ params, searchParams }: Props) {
   });
   const scenario =
     detail.scenarios.find((s) => s.id === query.scenario) ?? null;
-  const [results, spread, scoringItems, debt] = await Promise.all([
+  const [results, spread, scoringItems, debt, documents] = await Promise.all([
     runAnalysis(db, ctx, id, scenario?.id ?? null),
     getSpread(db, ctx, detail.entity.id),
     listItems(db, ctx, detail.version.scoringModelVersionId),
     getDebtSchedules(db, ctx, detail.entity.id),
+    listDocuments(db, ctx, { analysisId: id }),
   ]);
   const scoringModel = await getScoringModel(
     db,
@@ -305,6 +308,32 @@ async function AnalysisView({ params, searchParams }: Props) {
               />
             ) : (
               <BaseCase analysisId={analysis.id} assumptions={assumptions} />
+            ),
+          },
+          {
+            value: "documents",
+            label: "Documents",
+            count: documents.length,
+            content: (
+              <AnalysisDocuments
+                analysisId={analysis.id}
+                scenario={scenario && { id: scenario.id, name: scenario.name }}
+                templates={BUILT_IN_TEMPLATES.map(
+                  ({ key, name, description }) => ({ key, name, description }),
+                )}
+                documents={documents.map((d) => ({
+                  id: d.id,
+                  title: d.title,
+                  templateName: d.templateName,
+                  scenario: d.scenarioId
+                    ? (detail.scenarios.find((s) => s.id === d.scenarioId)
+                        ?.name ?? "A scenario since deleted")
+                    : "Base case",
+                  pages: d.pages,
+                  size: d.size,
+                  createdAt: d.createdAt.toISOString(),
+                }))}
+              />
             ),
           },
         ]}
