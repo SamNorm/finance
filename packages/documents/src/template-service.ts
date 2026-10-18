@@ -1,7 +1,17 @@
-import { and, asc, eq, schema, type Db } from "@finance/db";
+import {
+  and,
+  asc,
+  eq,
+  isNotNull,
+  isNull,
+  or,
+  schema,
+  type Db,
+} from "@finance/db";
 import {
   DomainError,
   getFinancialModel,
+  getOrganization,
   hasErrors,
   listLines,
   type ChartDefinition,
@@ -10,7 +20,12 @@ import {
   type ModelLine,
 } from "@finance/domain";
 import { checkDefinition, parseBlocks } from "./check";
-import { templateOf, type Definition, type Orientation } from "./templates";
+import {
+  BUILT_IN_TEMPLATES,
+  templateOf,
+  type Definition,
+  type Orientation,
+} from "./templates";
 
 // An organization's own documents (documents-plan.md §6), made from the
 // same blocks as the built-ins. Each keeps a draft, which edits change, and
@@ -18,7 +33,7 @@ import { templateOf, type Definition, type Orientation } from "./templates";
 // over it. A template that names lines or charts reads one financial model,
 // and stays on it once published.
 
-const { documentTemplates: templates, financialModels } = schema;
+const { documentTemplates: templates, financialModels, organizations } = schema;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -269,6 +284,8 @@ export async function createTemplate(
     blocks: [],
   };
   let model: string | null = null;
+  // A copy says what its source said, unless it's given its own.
+  let description: string | null = null;
   if (input.from) {
     const builtIn = templateOf(input.from);
     if (builtIn) {
@@ -277,10 +294,12 @@ export async function createTemplate(
         orientation: builtIn.orientation,
         blocks: builtIn.blocks,
       };
+      description = builtIn.description;
     } else {
       const source = await selectTemplate(db, ctx, input.from);
       draft = source.draft as Definition;
       model = source.financialModelId;
+      description = source.description;
     }
   }
   if (input.financialModelId !== undefined)
@@ -290,7 +309,7 @@ export async function createTemplate(
     .values({
       organizationId: ctx.organizationId,
       name,
-      description: input.description?.trim() || null,
+      description: input.description?.trim() || description,
       financialModelId: model,
       basedOn: input.from || null,
       draft,
@@ -435,4 +454,82 @@ export async function templateToPrint(
       ? { id: row.financialModelId, name: row.financialModelName ?? "" }
       : null,
   };
+}
+
+// What an analysis on this model prints as: the organization's published
+// documents that read it or no model, then the built-ins it still offers.
+export interface PrintableTemplate {
+  // A built-in's key, or the template's id.
+  key: string;
+  name: string;
+  description: string;
+  builtIn: boolean;
+}
+
+export async function listPrintableTemplates(
+  db: Db,
+  ctx: Context,
+  financialModelId: string,
+): Promise<PrintableTemplate[]> {
+  const [organization, own] = await Promise.all([
+    getOrganization(db, ctx),
+    db
+      .select({
+        id: templates.id,
+        name: templates.name,
+        description: templates.description,
+      })
+      .from(templates)
+      .where(
+        and(
+          eq(templates.organizationId, ctx.organizationId),
+          isNotNull(templates.published),
+          isNull(templates.archivedAt),
+          or(
+            isNull(templates.financialModelId),
+            UUID.test(financialModelId)
+              ? eq(templates.financialModelId, financialModelId)
+              : undefined,
+          ),
+        ),
+      )
+      .orderBy(asc(templates.name)),
+  ]);
+  return [
+    ...own.map((t) => ({
+      key: t.id,
+      name: t.name,
+      description: t.description ?? "",
+      builtIn: false,
+    })),
+    ...BUILT_IN_TEMPLATES.filter(
+      (t) => !organization.hiddenBuiltIns.includes(t.key),
+    ).map(({ key, name, description }) => ({
+      key,
+      name,
+      description,
+      builtIn: true,
+    })),
+  ];
+}
+
+// Stops offering a built-in document to print, for one of the
+// organization's own, or offers it again. Returns the keys hidden.
+export async function setBuiltInHidden(
+  db: Db,
+  ctx: Context,
+  key: string,
+  hidden: boolean,
+): Promise<string[]> {
+  if (!templateOf(key))
+    throw new DomainError("not_found", "No such built-in document.");
+  const { hiddenBuiltIns } = await getOrganization(db, ctx);
+  const next = hidden
+    ? [...new Set([...hiddenBuiltIns, key])]
+    : hiddenBuiltIns.filter((k) => k !== key);
+  await db
+    .update(organizations)
+    .set({ hiddenBuiltIns: next })
+    .where(eq(organizations.id, ctx.organizationId));
+  return next;
 }

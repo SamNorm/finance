@@ -83,7 +83,15 @@ async function findTemplate(
   financialModel: { id: string; name: string } | null;
 }> {
   const builtIn = templateOf(key);
-  if (builtIn) return { template: builtIn, financialModel: null };
+  if (builtIn) {
+    const { hiddenBuiltIns } = await getOrganization(db, ctx);
+    if (hiddenBuiltIns.includes(key))
+      throw new DomainError(
+        "invalid",
+        `Your organization no longer offers the ${builtIn.name.toLowerCase()}. Choose one of its own documents instead.`,
+      );
+    return { template: builtIn, financialModel: null };
+  }
   if (UUID.test(key)) return templateToPrint(db, ctx, key, draft);
   throw new DomainError(
     "invalid",

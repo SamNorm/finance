@@ -45,6 +45,12 @@ export const organizations = pgTable("organizations", {
   id: uuid().primaryKey().defaultRandom(),
   name: text().notNull(),
   branding: jsonb().$type<Branding>().notNull().default({}),
+  // Built-in documents it no longer offers to print, by key: it has its own
+  // instead.
+  hiddenBuiltIns: text()
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   createdAt: createdAt(),
 }).enableRLS();
 

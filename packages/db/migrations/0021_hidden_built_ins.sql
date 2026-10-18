@@ -1,0 +1,1 @@
+ALTER TABLE "organizations" ADD COLUMN "hidden_built_ins" text[] DEFAULT '{}'::text[] NOT NULL;

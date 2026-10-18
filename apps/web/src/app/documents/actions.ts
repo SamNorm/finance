@@ -9,14 +9,17 @@ import {
   generateDocument,
   publishTemplate,
   setBranding,
+  setBuiltInHidden,
+  templateOf,
   updateTemplate,
   type BrandingInput,
   type Orientation,
 } from "@finance/documents";
+import { getAnalysis } from "@finance/domain";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
-import { attempt, run, text } from "@/lib/actions";
+import { attempt, invalid, run, text } from "@/lib/actions";
 
 const editor = (templateId: string) => `/documents/templates/${templateId}`;
 
@@ -138,4 +141,41 @@ export async function deleteTemplateAction(
   );
   if (!result.ok) return result;
   redirect("/documents");
+}
+
+// A copy of a built-in from an analysis's Documents tab, reading the
+// analysis's model so its lines can be picked; opens in the editor,
+// previewing that analysis and scenario.
+export async function copyForAnalysisAction(
+  analysisId: string,
+  scenarioId: string | null,
+  template: string,
+): Promise<ActionResult> {
+  const result = await attempt(async (db, ctx) => {
+    const builtIn = templateOf(String(template));
+    if (!builtIn) throw invalid("Only a built-in document copies from here.");
+    const { analysis, model } = await getAnalysis(db, ctx, String(analysisId));
+    const copy = await createTemplate(db, ctx, {
+      name: `Copy of ${builtIn.name}`,
+      from: builtIn.key,
+      financialModelId: model.id,
+    });
+    return { id: copy.id, analysisId: analysis.id };
+  });
+  if (!result.ok) return result;
+  redirect(
+    `${editor(result.value.id)}?${new URLSearchParams({
+      analysis: result.value.analysisId,
+      ...(scenarioId ? { scenario: String(scenarioId) } : {}),
+    })}`,
+  );
+}
+
+export async function setBuiltInHiddenAction(
+  template: string,
+  hidden: boolean,
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    setBuiltInHidden(db, ctx, String(template), hidden === true),
+  );
 }

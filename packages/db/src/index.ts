@@ -16,6 +16,9 @@ export {
   eq,
   getTableColumns,
   inArray,
+  isNotNull,
+  isNull,
   max,
+  or,
   sql,
 } from "drizzle-orm";

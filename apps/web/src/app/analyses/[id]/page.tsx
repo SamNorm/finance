@@ -12,7 +12,7 @@ import {
   spreadErrors,
   type AnalysisRun,
 } from "@finance/domain";
-import { BUILT_IN_TEMPLATES, listDocuments } from "@finance/documents";
+import { listDocuments, listPrintableTemplates } from "@finance/documents";
 import { Dec } from "@finance/engine";
 import { Building2, Sigma, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
@@ -67,13 +67,15 @@ async function AnalysisView({ params, searchParams }: Props) {
   });
   const scenario =
     detail.scenarios.find((s) => s.id === query.scenario) ?? null;
-  const [results, spread, scoringItems, debt, documents] = await Promise.all([
-    runAnalysis(db, ctx, id, scenario?.id ?? null),
-    getSpread(db, ctx, detail.entity.id),
-    listItems(db, ctx, detail.version.scoringModelVersionId),
-    getDebtSchedules(db, ctx, detail.entity.id),
-    listDocuments(db, ctx, { analysisId: id }),
-  ]);
+  const [results, spread, scoringItems, debt, documents, printable] =
+    await Promise.all([
+      runAnalysis(db, ctx, id, scenario?.id ?? null),
+      getSpread(db, ctx, detail.entity.id),
+      listItems(db, ctx, detail.version.scoringModelVersionId),
+      getDebtSchedules(db, ctx, detail.entity.id),
+      listDocuments(db, ctx, { analysisId: id }),
+      listPrintableTemplates(db, ctx, detail.model.id),
+    ]);
   const scoringModel = await getScoringModel(
     db,
     ctx,
@@ -319,9 +321,7 @@ async function AnalysisView({ params, searchParams }: Props) {
               <AnalysisDocuments
                 analysisId={analysis.id}
                 scenario={scenario && { id: scenario.id, name: scenario.name }}
-                templates={BUILT_IN_TEMPLATES.map(
-                  ({ key, name, description }) => ({ key, name, description }),
-                )}
+                templates={printable}
                 documents={documentRows(documents)}
               />
             ),

@@ -24,8 +24,10 @@ import {
   deleteTemplate,
   discardTemplateChanges,
   getTemplate,
+  listPrintableTemplates,
   listTemplates,
   publishTemplate,
+  setBuiltInHidden,
   updateTemplate,
 } from "./template-service";
 import { BUILT_IN_TEMPLATES } from "./templates";
@@ -74,6 +76,7 @@ describe("document templates", () => {
     });
     expect(copy).toMatchObject({
       basedOn: "analysis-report",
+      description: report.description,
       draft: {
         title: report.title,
         orientation: "landscape",
@@ -277,6 +280,66 @@ describe("document templates", () => {
     const base = await html(null);
     expect(base).not.toContain("Has a project");
     expect(base).toContain("<h2>Base case only</h2>");
+  });
+
+  it("offer analysts what's published for their analysis's model", async () => {
+    const make = async (name: string, model: string | null, publish = true) => {
+      const { id } = await createTemplate(db, ctx, {
+        name,
+        from: "debt-summary",
+        financialModelId: model,
+      });
+      if (publish) await publishTemplate(db, ctx, id);
+      return id;
+    };
+    const any = await make("Any model", null);
+    const ours = await make("On the demo model", financialModelId);
+    const draft = await make("Never published", null, false);
+    const archived = await make("Archived", null);
+    await archiveTemplate(db, ctx, archived);
+    const other = await createFinancialModel(db, ctx, {
+      name: "Agriculture",
+      scoringModelId,
+    });
+    const elsewhere = await make("On another model", other.model.id, false);
+
+    const printable = await listPrintableTemplates(db, ctx, financialModelId);
+    const keys = printable.map((t) => t.key);
+    expect(keys).toEqual(expect.arrayContaining([any, ours]));
+    for (const key of [draft, archived, elsewhere])
+      expect(keys).not.toContain(key);
+    // Its own come first, then the built-ins.
+    expect(printable.at(-1)).toMatchObject({
+      key: "debt-summary",
+      builtIn: true,
+    });
+    expect(printable.find((t) => t.key === ours)).toMatchObject({
+      name: "On the demo model",
+      builtIn: false,
+    });
+
+    // A built-in it has replaced is no longer offered or printed.
+    expect(await setBuiltInHidden(db, ctx, "deal-summary", true)).toEqual([
+      "deal-summary",
+    ]);
+    expect(
+      (await listPrintableTemplates(db, ctx, financialModelId)).map(
+        (t) => t.key,
+      ),
+    ).not.toContain("deal-summary");
+    await rejects(
+      previewDocument(db, ctx, { analysisId, template: "deal-summary" }),
+      "invalid",
+    );
+    expect(await setBuiltInHidden(db, ctx, "deal-summary", false)).toEqual([]);
+    expect(
+      (await previewDocument(db, ctx, { analysisId, template: "deal-summary" }))
+        .title,
+    ).toContain("Northwind");
+    await rejects(setBuiltInHidden(db, ctx, "memo", true), "not_found");
+    for (const id of [any, ours, draft, archived, elsewhere])
+      await deleteTemplate(db, ctx, id);
+    await deleteFinancialModel(db, ctx, other.model.id);
   });
 
   it.skipIf(!browserPath())(

@@ -9,12 +9,13 @@ import { FileText } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { Card, EmptyState, Page, PageHeader } from "@/components/page";
+import { Badge, Card, EmptyState, Page, PageHeader } from "@/components/page";
 import { rowLink, table } from "@/components/styles";
 import { Tabs } from "@/components/tabs";
 import { formatDate } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
 import { BrandingForm } from "./_components/branding-form";
+import { BuiltInVisibility } from "./_components/built-in-visibility";
 import { NewDocument } from "./_components/new-document";
 import { TemplateStatus } from "./_components/template-status";
 
@@ -71,7 +72,7 @@ async function DocumentsView({
                 <Templates templates={templates} />
                 <Card
                   title="Built in"
-                  description="Ready to print from any analysis. Copy one to change its sections or wording."
+                  description="Ready to print from any analysis. Copy one to change its sections or wording, and hide one your own replaces."
                   flush
                 >
                   <ul className="divide-y divide-line">
@@ -81,7 +82,12 @@ async function DocumentsView({
                         className="flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-3"
                       >
                         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                          <span className="text-sm font-medium">{t.name}</span>
+                          <span className="flex items-center gap-2 text-sm font-medium">
+                            {t.name}
+                            {organization.hiddenBuiltIns.includes(t.key) && (
+                              <Badge>Hidden from analysts</Badge>
+                            )}
+                          </span>
                           <span className="text-sm text-muted">
                             {t.description}
                           </span>
@@ -102,10 +108,16 @@ async function DocumentsView({
                               ))}
                           </span>
                         </div>
-                        <NewDocument
-                          {...newDocument}
-                          copy={{ from: t.key, name: t.name }}
-                        />
+                        <div className="flex items-start gap-2">
+                          <BuiltInVisibility
+                            template={{ key: t.key, name: t.name }}
+                            hidden={organization.hiddenBuiltIns.includes(t.key)}
+                          />
+                          <NewDocument
+                            {...newDocument}
+                            copy={{ from: t.key, name: t.name }}
+                          />
+                        </div>
                       </li>
                     ))}
                   </ul>
