@@ -136,7 +136,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get an analysis",
       description:
-        "An analysis's settings, its model's lines (codes to pass to run_analysis), and its scenarios: assumption overrides and the project each finances (sources and uses at closing, with each new loan's payment and maturity). The base case is the borrower as is and isn't a scenario.",
+        "An analysis's settings, its model's lines (codes to pass to run_analysis), and its scenarios: assumption overrides, for every year and year by year, and the project each finances (sources and uses at closing, with each new loan's payment and maturity). The base case is the borrower as is and isn't a scenario.",
       inputSchema: z.object({ analysisId }),
       annotations: READ,
     },
@@ -272,11 +272,31 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
           })),
           assumptions: assumptions.map((line) => {
             const a = run.assumptions[line.code];
+            // Values the scenario sets year by year come period by period,
+            // as lines' do.
+            const byYear =
+              Boolean(a?.byPeriod.length) ||
+              Boolean(post?.assumptions[line.code]?.byPeriod.length);
             return {
               code: line.code,
               label: line.label,
               value: figure(a?.value ?? null, line.format),
               ...(a?.overridden ? { base: figure(a.base, line.format) } : {}),
+              ...(byYear
+                ? {
+                    values:
+                      run.cells[line.code]?.map((c) => value(c, line)) ?? [],
+                    ...(post
+                      ? {
+                          postProject: run.periods.map((_, i) =>
+                            eligible(i)
+                              ? value(post.cells[line.code]?.[i], line)
+                              : null,
+                          ),
+                        }
+                      : {}),
+                  }
+                : {}),
             };
           }),
           // Each covenant's test in each fiscal year, in the periods' order;

@@ -708,6 +708,37 @@ describe("MCP server", () => {
       years: 10,
       closing: "2024-12-31",
     });
+    // An assumption of its own post-project, from the last fiscal year on.
+    const { value: yearly } = await call("update_scenario", {
+      scenarioId: expansion.id,
+      byYear: { MIN_DSCR: { "2024-12-31": "1.5" } },
+    });
+    expect(yearly.byYear).toEqual([
+      {
+        code: "MIN_DSCR",
+        label: "Minimum DSCR",
+        values: { "2024-12-31": "1.50x" },
+      },
+    ]);
+    const { value: post } = await call("run_analysis", {
+      analysisId: analysis.id,
+      scenarioId: expansion.id,
+      lines: ["MIN_DSCR"],
+    });
+    expect(post.assumptions).toEqual([
+      {
+        code: "MIN_DSCR",
+        label: "Minimum DSCR",
+        value: "1.25x",
+        values: ["1.25x", "1.25x"],
+        postProject: [null, "1.50x"],
+      },
+    ]);
+    const { value: cleared } = await call("update_scenario", {
+      scenarioId: expansion.id,
+      byYear: { MIN_DSCR: { "2024-12-31": null } },
+    });
+    expect(cleared.byYear).toEqual([]);
     expect(
       await call("set_analysis_status", {
         analysisId: analysis.id,

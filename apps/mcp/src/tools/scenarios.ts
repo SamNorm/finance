@@ -27,6 +27,9 @@ import { ADD, CHANGE, invalid, respond } from "../respond";
 const VALUES =
   'Percentages take their percent sign ("-15%", "2.5%"): a number without one is taken as is, so "5" is 500%. Ratios and amounts are plain numbers ("1.25", "500000").';
 
+const BY_YEAR =
+  "A value by year applies in that period alone: a projected year, or post-project from the last fiscal year on (the pro forma column). Elsewhere the scenario's override, or else the model's default, applies; a model can leave an assumption blank by default and fall back on the statements with ISBLANK.";
+
 export function describeScenario(
   s: Scenario,
   lines: readonly ModelLine[],
@@ -40,6 +43,19 @@ export function describeScenario(
       code,
       label: byCode.get(code)?.label ?? code,
       value: figure(raw, byCode.get(code)?.format ?? "text"),
+    })),
+    // Values that change year by year, by period end.
+    byYear: Object.entries(s.periodOverrides).map(([code, values]) => ({
+      code,
+      label: byCode.get(code)?.label ?? code,
+      values: Object.fromEntries(
+        Object.entries(values)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([end, raw]) => [
+            end,
+            figure(raw, byCode.get(code)?.format ?? "text"),
+          ]),
+      ),
     })),
     project: s.project ? describeProject(s.project, debtSchedules) : null,
     capexPlan: describeCapex(s.capex),
@@ -62,7 +78,7 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
     "add_scenario",
     {
       title: "Add a scenario",
-      description: `Adds a scenario to an analysis, to stress its assumptions or to finance a project; add the project's entries afterwards, starting with add_project_loan or add_project_use. ${VALUES}`,
+      description: `Adds a scenario to an analysis, to stress its assumptions or to finance a project; add the project's entries afterwards, starting with add_project_loan or add_project_use. ${BY_YEAR} ${VALUES}`,
       inputSchema: z.object({
         analysisId,
         name: z
@@ -74,15 +90,25 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
           .describe(
             'Assumption code → value, e.g. {"REVENUE_GROWTH": "-15%"}. Codes are the analysis\'s assumption lines, from get_analysis.',
           ),
+        byYear: z
+          .record(z.string(), z.record(z.string(), z.string()))
+          .optional()
+          .describe(
+            'Assumption code → period end → value, e.g. {"ASSUMED_DIVIDENDS": {"2025-12-31": "200000", "2026-12-31": "250000"}}. Period ends are from run_analysis.',
+          ),
       }),
       annotations: ADD,
     },
-    ({ analysisId, name, overrides }) =>
+    ({ analysisId, name, overrides, byYear }) =>
       respond(async () =>
         described(
           db,
           ctx,
-          await addScenario(db, ctx, analysisId, { name, overrides }),
+          await addScenario(db, ctx, analysisId, {
+            name,
+            overrides,
+            periodOverrides: byYear,
+          }),
         ),
       ),
   );
@@ -91,7 +117,7 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
     "update_scenario",
     {
       title: "Change a scenario's assumptions",
-      description: `Renames a scenario or changes its assumption overrides. Overrides given are set and the others stay; a null or empty value removes one, back to the model's default. ${VALUES}`,
+      description: `Renames a scenario or changes its assumption overrides, for every year or year by year. Values given are set and the others stay; a null or empty value removes one, back to the model's default (or, for a year, to the scenario's override). ${BY_YEAR} ${VALUES}`,
       inputSchema: z.object({
         scenarioId,
         name: z.string().optional(),
@@ -101,12 +127,18 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
           .describe(
             'Assumption code → value, e.g. {"REVENUE_GROWTH": "-10%", "MARGIN_SHIFT": null}.',
           ),
+        byYear: z
+          .record(z.string(), z.record(z.string(), z.string().nullable()))
+          .optional()
+          .describe(
+            'Assumption code → period end → value, e.g. {"ASSUMED_DIVIDENDS": {"2025-12-31": "200000", "2026-12-31": null}}.',
+          ),
       }),
       annotations: CHANGE,
     },
-    ({ scenarioId, name, overrides }) =>
+    ({ scenarioId, name, overrides, byYear }) =>
       respond(async () => {
-        if (name === undefined && overrides === undefined)
+        if (name === undefined && overrides === undefined && !byYear)
           throw invalid("Give a new name or overrides.");
         const current = await getScenario(db, ctx, scenarioId);
         const merged = { ...current.overrides };
@@ -114,9 +146,16 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
           if (value === null || !value.trim()) delete merged[code];
           else merged[code] = value;
         }
+        // Blanks are dropped when saved.
+        const yearly: Record<string, Record<string, string | null>> = {
+          ...current.periodOverrides,
+        };
+        for (const [code, values] of Object.entries(byYear ?? {}))
+          yearly[code] = { ...yearly[code], ...values };
         const scenario = await updateScenario(db, ctx, scenarioId, {
           name,
           ...(overrides ? { overrides: merged } : {}),
+          ...(byYear ? { periodOverrides: yearly } : {}),
         });
         return described(db, ctx, scenario);
       }),
@@ -127,7 +166,7 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Duplicate a scenario",
       description:
-        "Copies a scenario, its overrides and its project, to vary from it: the same deal with a longer amortization, say.",
+        "Copies a scenario, its overrides (every year and by year) and its project, to vary from it: the same deal with a longer amortization, say.",
       inputSchema: z.object({
         scenarioId,
         name: z
