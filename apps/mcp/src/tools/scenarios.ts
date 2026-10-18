@@ -4,9 +4,11 @@ import {
   deleteScenario,
   duplicateScenario,
   getAnalysis,
+  getEntity,
   getScenario,
   updateScenario,
   type Context,
+  type DebtSchedule,
   type ModelLine,
   type Scenario,
 } from "@finance/domain";
@@ -24,7 +26,11 @@ import { ADD, CHANGE, invalid, respond } from "../respond";
 const VALUES =
   'Percentages take their percent sign ("-15%", "2.5%"): a number without one is taken as is, so "5" is 500%. Ratios and amounts are plain numbers ("1.25", "500000").';
 
-export function describeScenario(s: Scenario, lines: readonly ModelLine[]) {
+export function describeScenario(
+  s: Scenario,
+  lines: readonly ModelLine[],
+  debtSchedule?: DebtSchedule,
+) {
   const byCode = new Map(lines.map((l) => [l.code, l]));
   return {
     id: s.id,
@@ -34,14 +40,15 @@ export function describeScenario(s: Scenario, lines: readonly ModelLine[]) {
       label: byCode.get(code)?.label ?? code,
       value: figure(raw, byCode.get(code)?.format ?? "text"),
     })),
-    project: s.project ? describeProject(s.project) : null,
+    project: s.project ? describeProject(s.project, debtSchedule) : null,
     capexPlan: describeCapex(s.capex),
   };
 }
 
 async function described(db: Db, ctx: Context, scenario: Scenario) {
-  const { lines } = await getAnalysis(db, ctx, scenario.analysisId);
-  return describeScenario(scenario, lines);
+  const { lines, entity } = await getAnalysis(db, ctx, scenario.analysisId);
+  const { debtSchedule } = await getEntity(db, ctx, entity.id);
+  return describeScenario(scenario, lines, debtSchedule);
 }
 
 export function scenarioTools(server: McpServer, db: Db, ctx: Context) {

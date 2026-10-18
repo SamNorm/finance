@@ -106,8 +106,12 @@ export function loanPayments(loan: Amortizing, start: string) {
 }
 
 // A scenario's sources and uses at closing, its line of credit increases,
-// subordinations and adjustments, and whether it balances.
-export function describeProject(project: Project) {
+// subordinations, consolidated loans and adjustments, and whether it
+// balances. The borrower's debt schedule names the loans consolidated.
+export function describeProject(
+  project: Project,
+  debtSchedule: DebtSchedule = { asOf: null, loans: [] },
+) {
   const totals = projectTotals(project);
   const off = imbalance(project);
   return {
@@ -149,6 +153,19 @@ export function describeProject(project: Project) {
       interestSaved: money(s.interestSaved),
       principalSaved: money(s.principalSaved),
     })),
+    // The borrower's existing loans repaid or refinanced at closing: their
+    // debt service stops then, post-project.
+    consolidatedLoans: debtSchedule.loans
+      .filter((loan) => project.consolidatedLoans?.includes(loan.id))
+      .map((loan) => ({
+        id: loan.id,
+        name: loan.name,
+        owedAtClosing: money(
+          amortize(loan, debtSchedule.asOf!, true).balanceAt(
+            monthIndex(project.closing),
+          ),
+        ),
+      })),
     // Changes that move no funds, added to an item post-project: balance
     // sheet ones from closing on, others yearly.
     adjustments: (project.adjustments ?? []).map((a) => ({

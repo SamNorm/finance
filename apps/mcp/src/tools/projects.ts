@@ -2,9 +2,12 @@ import type { Db } from "@finance/db";
 import {
   addProjectEntry,
   addProjectLoan,
+  getAnalysis,
+  getEntity,
   getProjectSetup,
   getScenario,
   removeProjectEntry,
+  setConsolidatedLoans,
   setProjectClosing,
   updateProjectEntry,
   type Context,
@@ -70,23 +73,27 @@ function kindOf(project: Project | null, id: string) {
   return null;
 }
 
-// The project after an edit, and the entry it was about.
-function edited(scenario: Scenario, id?: string) {
-  const project = scenario.project && describeProject(scenario.project);
-  const entry =
-    id && project
-      ? [
-          ...project.sources,
-          ...project.uses,
-          ...project.lineOfCreditIncreases,
-          ...project.subordinations,
-          ...project.adjustments,
-        ].find((e) => e.id === id)
-      : undefined;
-  return { scenario: scenario.name, ...(entry ? { entry } : {}), project };
-}
-
 export function projectTools(server: McpServer, db: Db, ctx: Context) {
+  // The project after an edit, and the entry it was about; the borrower's
+  // debt schedule names the loans it consolidates.
+  const edited = async (scenario: Scenario, id?: string) => {
+    const { entity } = await getAnalysis(db, ctx, scenario.analysisId);
+    const { debtSchedule } = await getEntity(db, ctx, entity.id);
+    const project =
+      scenario.project && describeProject(scenario.project, debtSchedule);
+    const entry =
+      id && project
+        ? [
+            ...project.sources,
+            ...project.uses,
+            ...project.lineOfCreditIncreases,
+            ...project.subordinations,
+            ...project.adjustments,
+          ].find((e) => e.id === id)
+        : undefined;
+    return { scenario: scenario.name, ...(entry ? { entry } : {}), project };
+  };
+
   server.registerTool(
     "list_balance_sheet_items",
     {
@@ -373,6 +380,29 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
         );
         return edited(scenario, entryId);
       }),
+  );
+
+  server.registerTool(
+    "set_consolidated_loans",
+    {
+      title: "Consolidate existing loans in a project",
+      description: [
+        "Sets which of the borrower's existing loans (ids from get_borrower) the scenario's project repays or refinances at closing. Post-project, their interest and principal stop then; the borrower keeps them for its other analyses and scenarios.",
+        "Returns what each owes at closing: add a use to repay it (posting to long-term debt) and the loan or funds refinancing it, so sources and uses still balance. An empty list consolidates none.",
+      ].join(" "),
+      inputSchema: z.object({
+        scenarioId,
+        loanIds: z.array(z.string()).describe("The existing loans' ids."),
+        closing,
+      }),
+      annotations: CHANGE,
+    },
+    ({ scenarioId, loanIds, closing }) =>
+      respond(async () =>
+        edited(
+          await setConsolidatedLoans(db, ctx, scenarioId, loanIds, closing),
+        ),
+      ),
   );
 
   server.registerTool(

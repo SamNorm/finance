@@ -246,6 +246,7 @@ describe("MCP server", () => {
       update_project_entry: "changes",
       remove_project_entry: "changes",
       set_project_closing: "changes",
+      set_consolidated_loans: "changes",
       list_financial_models: "reads",
       create_analysis: "adds",
       update_analysis: "changes",
@@ -1028,6 +1029,49 @@ describe("MCP server", () => {
     const call = await connect();
     expect(await call("list_analyses", { borrowerId: "acme" })).toEqual({
       error: "No such borrower.",
+    });
+  });
+
+  it("consolidates an existing loan in a scenario, not the borrower", async () => {
+    const call = await connect();
+    const { value: mortgage } = await call("add_existing_loan", {
+      borrowerId: ids.acme,
+      name: "Mortgage",
+      balance: "500,000",
+      rate: "5%",
+      repayment: "equal_principal",
+      years: 10,
+      asOf: "2024-12-31",
+    });
+    const { value: scenario } = await call("add_scenario", {
+      analysisId: ids.analysis,
+      name: "Refinance the mortgage",
+    });
+    expect(
+      await call("set_consolidated_loans", {
+        scenarioId: scenario.id,
+        loanIds: ["nope"],
+        closing: "2025-06-30",
+      }),
+    ).toEqual({ error: "That isn't one of the borrower's existing loans." });
+    const { value } = await call("set_consolidated_loans", {
+      scenarioId: scenario.id,
+      loanIds: [mortgage.loan.id],
+      closing: "2025-06-30",
+    });
+    // Six months of equal principal paid by the end of June.
+    expect(value.project).toMatchObject({
+      closing: "2025-06-30",
+      consolidatedLoans: [{ name: "Mortgage", owedAtClosing: "475,000.00" }],
+    });
+    const { value: borrower } = await call("get_borrower", {
+      borrowerId: ids.acme,
+    });
+    expect(borrower.existingLoans.loans).toMatchObject([{ name: "Mortgage" }]);
+    await call("remove_scenario", { scenarioId: scenario.id });
+    await call("remove_existing_loan", {
+      borrowerId: ids.acme,
+      loanId: mortgage.loan.id,
     });
   });
 

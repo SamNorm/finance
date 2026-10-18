@@ -142,6 +142,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
+        const { debtSchedule } = await getEntity(db, ctx, detail.entity.id);
         const warnings = await spreadWarnings(
           db,
           ctx,
@@ -179,7 +180,9 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
                 ? { default: figure(l.defaultValue, l.format) }
                 : {}),
             })),
-          scenarios: detail.scenarios.map((s) => describeScenario(s, lines)),
+          scenarios: detail.scenarios.map((s) =>
+            describeScenario(s, lines, debtSchedule),
+          ),
         };
       }),
   );
