@@ -1,5 +1,5 @@
 import { getOrganization } from "@finance/domain";
-import { BUILT_IN_TEMPLATES, type BlockType } from "@finance/documents";
+import { BUILT_IN_TEMPLATES, SECTIONS } from "@finance/documents";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Badge, Card, Page, PageHeader } from "@/components/page";
@@ -7,20 +7,6 @@ import { getContext, getDb } from "@/lib/server";
 import { BrandingForm } from "./_components/branding-form";
 
 export const metadata: Metadata = { title: "Documents" };
-
-// What each kind of block prints.
-const BLOCKS: Record<BlockType, string> = {
-  heading: "Heading",
-  text: "Text",
-  facts: "Facts",
-  lines: "Model lines by period",
-  covenants: "Covenants",
-  charts: "Charts",
-  sourcesUses: "Sources and uses",
-  debt: "Debt",
-  amortization: "Schedules by year",
-  pageBreak: "Page break",
-};
 
 export default function DocumentsPage() {
   return (
@@ -65,7 +51,7 @@ async function DocumentsView() {
                       key={i}
                       className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-muted"
                     >
-                      {BLOCKS[b.type]}
+                      {SECTIONS[b.type]}
                     </span>
                   ))}
               </span>

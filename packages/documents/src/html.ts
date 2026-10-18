@@ -14,7 +14,12 @@ import {
 import { chartSvg, legendHtml, type ChartInput } from "./chart";
 import type { DocumentData, DocumentRun } from "./data";
 import { date, escape, figure, money, rate, type Format } from "./format";
-import type { Block, Template } from "./templates";
+import {
+  MERGE_FIELD,
+  type Block,
+  type Condition,
+  type Template,
+} from "./templates";
 
 // A template's blocks rendered over a document's data, as one standalone
 // HTML page with print CSS: what the PDF prints (pdf.ts), and what a preview
@@ -29,36 +34,103 @@ export interface RenderedDocument {
   orientation: "portrait" | "landscape";
 }
 
-// Documents wide enough to need landscape: every period of an analysis.
-const LANDSCAPE = new Set(["analysis-report"]);
-
 const DEFAULT_COLOR = "#1e3a8a";
+
+// A merge field's value, e.g. "borrower.name" or "line.DSCR.post"; null
+// for a field there's no such thing as.
+function field(path: string, data: DocumentData): string | null {
+  const [head, code, post] = path.split(".");
+  if (head === "line" && code) {
+    const line = data.lines.find((l) => l.code === code);
+    if (!line || line.kind === "header" || (post && post !== "post"))
+      return null;
+    const p = lastYear(data.run);
+    const run = post ? data.project : data.run;
+    return p < 0 || !run
+      ? ""
+      : figure(run.values[line.code]?.[p] ?? null, line.format as Format);
+  }
+  const fields: Record<string, string> = {
+    "borrower.name": data.borrower.name,
+    "borrower.industry": data.borrower.industry ?? "",
+    "analysis.name": data.analysis.name,
+    "model.name": data.model.name,
+    "model.version": `v${data.model.version}`,
+    "scenario.name": data.scenario?.name ?? "Base case",
+    "organization.name": data.organization.name,
+    date: date(data.date),
+  };
+  return fields[path] ?? null;
+}
 
 // {{borrower.name}} and the like; unknown fields are left as typed.
 export function merge(text: string, data: DocumentData): string {
-  return text.replace(/\{\{\s*([\w.:/-]+)\s*\}\}/g, (whole, path: string) => {
-    const [head, code, post] = path.split(".");
-    if (head === "line" && code) {
-      const line = data.lines.find((l) => l.code === code);
-      if (!line) return whole;
-      const p = lastYear(data.run);
-      const run = post === "post" ? data.project : data.run;
-      return p < 0 || !run
-        ? ""
-        : figure(run.values[line.code]?.[p] ?? null, line.format as Format);
-    }
-    const fields: Record<string, string> = {
-      "borrower.name": data.borrower.name,
-      "borrower.industry": data.borrower.industry ?? "",
-      "analysis.name": data.analysis.name,
-      "model.name": data.model.name,
-      "model.version": `v${data.model.version}`,
-      "scenario.name": data.scenario?.name ?? "Base case",
-      "organization.name": data.organization.name,
-      date: date(data.date),
-    };
-    return fields[path] ?? whole;
-  });
+  return text.replace(
+    MERGE_FIELD,
+    (whole, path: string) => field(path, data) ?? whole,
+  );
+}
+
+// A text block's paragraphs, between blank lines, with "- " bullets,
+// **bold** and *italics*. What's typed is escaped before it's formatted, and
+// merge fields are filled in last, so neither can make markup.
+function prose(text: string, data: DocumentData): string {
+  const inline = (line: string) =>
+    escape(line)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(MERGE_FIELD, (whole, path: string) =>
+        escape(field(path, data) ?? whole),
+      );
+  const bullet = /^[-*]\s+/;
+  return text
+    .split(/\n\s*\n/)
+    .map((paragraph) => {
+      const lines = paragraph
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      // Runs of bullets become lists; other lines, paragraphs.
+      const runs: { list: boolean; lines: string[] }[] = [];
+      for (const line of lines) {
+        const list = bullet.test(line);
+        const last = runs.at(-1);
+        if (last?.list === list) last.lines.push(line);
+        else runs.push({ list, lines: [line] });
+      }
+      return runs
+        .map((run) =>
+          run.list
+            ? `<ul>${run.lines.map((l) => `<li>${inline(l.replace(bullet, ""))}</li>`).join("")}</ul>`
+            : `<p>${run.lines.map(inline).join("<br>")}</p>`,
+        )
+        .join("");
+    })
+    .join("");
+}
+
+// Whether a block with this condition shows in this document.
+export function shows(when: Condition | undefined, data: DocumentData) {
+  const results = [
+    ...data.covenants.run,
+    ...(data.covenants.project ?? []),
+  ].flatMap((c) => c.periods.map((p) => p.pass));
+  switch (when) {
+    case undefined:
+      return true;
+    case "project":
+      return data.deal !== null;
+    case "noProject":
+      return data.deal === null;
+    case "scenario":
+      return data.scenario !== null;
+    case "baseCase":
+      return data.scenario === null;
+    case "covenantFails":
+      return results.includes(false);
+    case "covenantsPass":
+      return results.includes(true) && !results.includes(false);
+  }
 }
 
 const QUALITIES: Record<DocumentRun["periods"][number]["quality"], string> = {
@@ -497,11 +569,12 @@ function amortizationBlock(data: DocumentData): string {
 }
 
 function block(b: Block, data: DocumentData): string {
+  if (!shows(b.when, data)) return "";
   switch (b.type) {
     case "heading":
       return `<h2>${escape(merge(b.text, data))}</h2>`;
     case "text":
-      return `<p>${escape(merge(b.text, data))}</p>`;
+      return prose(b.text, data);
     case "facts":
       return factsBlock(data);
     case "lines":
@@ -555,7 +628,8 @@ tr.section td { font-weight: 600; color: ${color}; text-transform: uppercase; fo
 table.covenants td.room { font-size: 8pt; color: #334155; max-width: 220px; }
 small.note { font-style: italic; }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-ul.extras { margin: 4px 0 8px; padding-left: 16px; }
+ul { margin: 4px 0; padding-left: 16px; }
+ul.extras { margin: 4px 0 8px; }
 .charts { display: grid; grid-template-columns: repeat(${orientation === "landscape" ? 3 : 2}, 1fr); gap: 14px; }
 figure { margin: 0; padding: 8px; border: 1px solid #e2e8f0; border-radius: 6px; break-inside: avoid; }
 figcaption { font-weight: 600; margin-bottom: 4px; }
@@ -577,7 +651,7 @@ export function renderDocument(
   const color = /^#[0-9a-f]{6}$/i.test(branding.color ?? "")
     ? branding.color!
     : DEFAULT_COLOR;
-  const orientation = LANDSCAPE.has(template.key) ? "landscape" : "portrait";
+  const { orientation } = template;
   const subtitle = [
     data.analysis.name,
     `${data.model.name} v${data.model.version}`,

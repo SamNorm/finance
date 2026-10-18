@@ -141,6 +141,13 @@
       "when": 1792352173353,
       "tag": "0019_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792361521863,
+      "tag": "0020_document_templates",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 # PDF Documents: Draft Plan
 
-_Status: phase 1 built (§4), phase 3 planned (§6) · Last updated: 2026-10-18_
+_Status: phase 1 built (§4); phase 3 under way, slice 1 built (§6.6) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -144,7 +144,7 @@ The built-in documents ship as default templates made of these same blocks, so t
   - a covenant fails in a year shown, or all pass.
 - **Text:** paragraphs with a small Markdown subset (bold, italics, bullets), escaped and then formatted, with merge fields as now.
 - **Merge fields:** as now (`{{borrower.name}}`, `{{line.CODE}}`, `{{line.CODE.post}}`, …). The editor lists them, with the bound model's line codes, and inserts one at the cursor.
-- **Checks** (`checkTemplate`, beside `checkCharts`), run on every save and at publish. The blocks come from the editor and from MCP as JSON, so the check parses them fully:
+- **Checks** (`checkDefinition`, beside `checkCharts`), run on every save and at publish. The blocks come from the editor and from MCP as JSON, so the check parses them fully:
   - an unknown section or setting;
   - a line code, chart or merge field the model's latest published version doesn't have;
   - a template with no sections.
@@ -181,7 +181,10 @@ The built-in documents ship as default templates made of these same blocks, so t
 
 Each slice is committed and merged on its own.
 
-1. **Templates as data:** the table, `orientation` and `when`, `checkTemplate`, the service (create, copy, edit the draft, publish, discard, archive, delete), and printing resolving a template's id as well as a built-in's key. Tests on PGlite.
+1. **Templates as data (built):** the table, `orientation` and `when`, the checks, the service (create, copy, edit the draft, publish, discard, archive, delete), and printing resolving a template's id as well as a built-in's key. Tests on PGlite.
+
+   How it's built: `document_templates` holds each one's draft and published definition as JSON. `check.ts` parses sections from untrusted JSON (`parseBlocks`) and checks them against the model's latest published version (`checkDefinition`). `template-service.ts` holds the service, and `generateDocument` and `previewDocument` take a template's id, with `draft` to preview one. A bound template prints only for analyses on its model, and its model can't be deleted while it exists.
+
 2. **The editor and the template list**, under Model setup, with the live preview.
 3. **Printing them:** the analysis tab's list filtered by model, **Copy and edit**, and hiding built-ins.
 4. **MCP:** listing and printing them, then authoring.

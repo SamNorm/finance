@@ -8,6 +8,7 @@ import {
 import { analysisDocumentData, dataHash } from "./data";
 import { renderDocument, type RenderedDocument } from "./html";
 import { printPdf } from "./pdf";
+import { templateToPrint } from "./template-service";
 import { BUILT_IN_TEMPLATES, templateOf, type Template } from "./templates";
 
 // Documents generated from an analysis and kept as snapshots for the credit
@@ -66,23 +67,48 @@ export interface DocumentInput {
   analysisId: string;
   // The scenario it shows; the base case when null.
   scenarioId?: string | null;
-  // A built-in template's key.
+  // A built-in's key, or an organization template's id.
   template: string;
 }
 
-function findTemplate(key: string): Template {
-  const template = templateOf(key);
-  if (!template)
-    throw new DomainError(
-      "invalid",
-      `"${key}" isn't a document. Choose one of: ${BUILT_IN_TEMPLATES.map((t) => t.key).join(", ")}.`,
-    );
-  return template;
+// A built-in, or an organization's template as published (or its draft, to
+// preview), with the model it reads.
+async function findTemplate(
+  db: Db,
+  ctx: Context,
+  key: string,
+  draft: boolean,
+): Promise<{
+  template: Template;
+  financialModel: { id: string; name: string } | null;
+}> {
+  const builtIn = templateOf(key);
+  if (builtIn) return { template: builtIn, financialModel: null };
+  if (UUID.test(key)) return templateToPrint(db, ctx, key, draft);
+  throw new DomainError(
+    "invalid",
+    `"${key}" isn't a document. Choose one of: ${BUILT_IN_TEMPLATES.map((t) => t.key).join(", ")}, or one of your organization's by its id.`,
+  );
 }
 
-async function render(db: Db, ctx: Context, input: DocumentInput) {
-  const template = findTemplate(input.template);
+async function render(
+  db: Db,
+  ctx: Context,
+  input: DocumentInput,
+  draft = false,
+) {
+  const { template, financialModel } = await findTemplate(
+    db,
+    ctx,
+    input.template,
+    draft,
+  );
   const detail = await getAnalysis(db, ctx, input.analysisId);
+  if (financialModel && financialModel.id !== detail.model.id)
+    throw new DomainError(
+      "invalid",
+      `${template.name} reads ${financialModel.name}, and this analysis runs on ${detail.model.name}.`,
+    );
   if (
     input.scenarioId &&
     !detail.scenarios.some((s) => s.id === input.scenarioId)
@@ -97,13 +123,14 @@ async function render(db: Db, ctx: Context, input: DocumentInput) {
   return { template, detail, data, rendered: renderDocument(template, data) };
 }
 
-// The document as HTML, without keeping it: a preview.
+// The document as HTML, without keeping it: a preview. With `draft`, an
+// organization template's draft rather than what's published.
 export async function previewDocument(
   db: Db,
   ctx: Context,
-  input: DocumentInput,
+  input: DocumentInput & { draft?: boolean },
 ): Promise<RenderedDocument> {
-  return (await render(db, ctx, input)).rendered;
+  return (await render(db, ctx, input, input.draft)).rendered;
 }
 
 // Generates a document's PDF and keeps it with what it was built from.
@@ -123,6 +150,7 @@ export async function generateDocument(
       scenarioId: input.scenarioId ?? null,
       title: rendered.title,
       template: template.key,
+      templateId: templateOf(template.key) ? null : template.key,
       definition: template,
       data,
       dataHash: dataHash(data),

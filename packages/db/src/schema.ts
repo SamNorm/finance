@@ -796,6 +796,43 @@ export const analysisScenarios = pgTable(
 // template's blocks, the data they read (without lineage) and its hash, and
 // the model version, so it reads the same however the analysis changes.
 
+// An organization's own document (documents-plan.md §6): a title with merge
+// fields, an orientation and blocks, kept as a draft and as published.
+// Analysts print the published definition, so edits reach them only when
+// published; each printed document keeps its own copy.
+export const documentTemplates = pgTable(
+  "document_templates",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    description: text(),
+    // The model whose lines and charts it names; null when it names none, so
+    // any analysis prints it. It stays put once published.
+    financialModelId: uuid().references(() => financialModels.id),
+    // The built-in's key, or the template's id, it was copied from.
+    basedOn: text(),
+    // { title, orientation, blocks }
+    draft: jsonb().notNull(),
+    published: jsonb(),
+    publishedAt: timestamp({ withTimezone: true }),
+    // No longer offered to print; what was printed from it stays.
+    archivedAt: timestamp({ withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("document_templates_organization").on(t.organizationId),
+    index("document_templates_financial_model").on(t.financialModelId),
+    check(
+      "document_templates_published_at",
+      sql`(${t.published} is null) = (${t.publishedAt} is null)`,
+    ),
+  ],
+).enableRLS();
+
 export const documents = pgTable(
   "documents",
   {
@@ -810,14 +847,16 @@ export const documents = pgTable(
     // The scenario it shows, when one; kept when the scenario is deleted.
     scenarioId: uuid(),
     title: text().notNull(),
-    // The template's key and the blocks it had when generated.
+    // The template's key (a built-in's, or an organization template's id)
+    // and the definition it had when generated.
     template: text().notNull(),
+    templateId: uuid().references(() => documentTemplates.id, {
+      onDelete: "set null",
+    }),
     definition: jsonb().notNull(),
     data: jsonb().notNull(),
     dataHash: text().notNull(),
-    financialModelVersionId: uuid().references(
-      () => financialModelVersions.id,
-    ),
+    financialModelVersionId: uuid().references(() => financialModelVersions.id),
     pdf: bytea().notNull(),
     pages: integer().notNull(),
     createdAt: createdAt(),
@@ -827,5 +866,6 @@ export const documents = pgTable(
     index("documents_entity").on(t.entityId),
     index("documents_analysis").on(t.analysisId),
     index("documents_financial_model_version").on(t.financialModelVersionId),
+    index("documents_template").on(t.templateId),
   ],
 ).enableRLS();

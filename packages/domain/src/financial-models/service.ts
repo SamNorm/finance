@@ -304,6 +304,18 @@ export async function deleteFinancialModel(
       "Analyses use this model. Delete them first.",
     );
   }
+  // Documents name its lines and charts.
+  const [read] = await db
+    .select({ name: schema.documentTemplates.name })
+    .from(schema.documentTemplates)
+    .where(eq(schema.documentTemplates.financialModelId, modelId))
+    .limit(1);
+  if (read) {
+    throw new DomainError(
+      "conflict",
+      `The document "${read.name}" reads this model. Delete it, or copy it onto another model, first.`,
+    );
+  }
   await db.delete(models).where(eq(models.id, modelId));
 }
 
