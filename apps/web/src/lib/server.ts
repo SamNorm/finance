@@ -1,15 +1,19 @@
 import "server-only";
 import { connection } from "next/server";
-import { createDb } from "@finance/db";
+import { createClient, createDb, schema, type Client } from "@finance/db";
 import {
   devContext,
   ensureDevOrganization,
   type Context,
 } from "@finance/domain";
 
-// One connection pool per server process, kept across dev hot reloads.
+// One connection pool per server process, kept across dev hot reloads. The
+// Drizzle instance over it is made again when a reload brings a new schema:
+// it caches each table's columns the first time it queries the table, so
+// the old one would build queries with no name for a column added since.
 const cache = globalThis as unknown as {
-  db?: ReturnType<typeof createDb>;
+  client?: Client;
+  db?: { schema: typeof schema; db: ReturnType<typeof createDb> };
   devOrganization?: Promise<void>;
 };
 
@@ -20,7 +24,9 @@ export function getDb() {
       "DATABASE_URL is not set. Copy .env.example to .env at the repo root and fill it in.",
     );
   }
-  return (cache.db ??= createDb(url));
+  if (cache.db?.schema !== schema)
+    cache.db = { schema, db: createDb((cache.client ??= createClient(url))) };
+  return cache.db.db;
 }
 
 // Who is making the request. There's no sign-in yet (§9.5): `next dev` acts as
