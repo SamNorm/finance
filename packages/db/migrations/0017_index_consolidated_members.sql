@@ -1,0 +1,1 @@
+CREATE INDEX "consolidated_statements_member" ON "consolidated_statements" USING btree ("member_id");

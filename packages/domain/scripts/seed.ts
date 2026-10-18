@@ -3,6 +3,8 @@
 //   estate input sheet (fixtures/*.csv).
 // - Three commercial borrowers with three years of spreads, one with the
 //   client's projections, and an apartment building on the real estate sheet.
+// - A property company that leases its warehouse to one of them, with March
+//   year ends, and the two consolidated less the rent between them.
 // - Three financial models with charts: debt service, a borrowing base on
 //   inventory by type, and income property value.
 // - Analyses with stress and post-project scenarios.
@@ -12,8 +14,10 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { eq, schema } from "@finance/db";
 import {
+  addConsolidatedPeriod,
   addScenario,
   createAnalysis,
+  createConsolidatedClient,
   createEntity,
   createFinancialModel,
   createScoringModel,
@@ -30,6 +34,7 @@ import {
   replaceLines,
   setCheckItems,
   setDebtSchedule,
+  setEliminations,
   setFinancialModelCharts,
   setFinancingItems,
   setPeriodControls,
@@ -48,6 +53,7 @@ import {
   inventoryByType,
 } from "../src/demo/borrowing-base";
 import { demoCompanies, demoReconciliation } from "../src/demo/companies";
+import { demoPropertyCompany, GROUP_ELIMINATIONS } from "../src/demo/group";
 import {
   DEMO_CAPEX_SCENARIO,
   DEMO_MODEL,
@@ -262,6 +268,47 @@ async function seed() {
   }
   console.log(
     "Analyses: an annual review per borrower, and a management case.",
+  );
+
+  // Laurentian Foods and the company that owns its warehouse, consolidated:
+  // each December year with the March year end that follows it, less the
+  // rent between them.
+  const foods = borrowers[1]!;
+  const properties = demoPropertyCompany();
+  const landlord = await borrower(commercial.id, properties);
+  const group = await createConsolidatedClient(db, ctx, {
+    name: "Laurentian group (consolidated)",
+    scoringModelId: commercial.id,
+    industry: "Food distribution and its warehouse",
+    notes:
+      "Laurentian Foods and Laurentian Properties, under the same shareholders. No consolidated statements from the accountant.",
+    memberIds: [foods.entity.id, landlord.entity.id],
+  });
+  for (const [i, year] of foods.periods.entries()) {
+    const period = await addConsolidatedPeriod(db, ctx, group.id, {
+      periodEnd: year.periodEnd,
+      months: year.months,
+      statements: [
+        { memberId: foods.entity.id, periodId: year.id },
+        { memberId: landlord.entity.id, periodId: landlord.periods[i]!.id },
+      ],
+    });
+    await setEliminations(db, ctx, period.id, GROUP_ELIMINATIONS);
+  }
+  const groupLoans = [companies[1]!, properties]
+    .map((c) => Number(c.periods.at(-1)!.values.SHAREHOLDER_LOANS ?? 0))
+    .reduce((sum, n) => sum + n, 0);
+  await analysis(
+    {
+      entityId: group.id,
+      financialModelVersionId: debtService.id,
+      name: "Group review 2024",
+      projectionYears: 2,
+    },
+    demoScenarios(String(groupLoans)),
+  );
+  console.log(
+    "Consolidated: Laurentian Foods and its landlord, with a group review.",
   );
 
   // Northwind's operating line, margined on its inventory listing.

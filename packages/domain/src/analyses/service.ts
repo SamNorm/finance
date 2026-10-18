@@ -33,6 +33,7 @@ import {
 } from "../scoring-models/service";
 import type { ScoringItem } from "../scoring-models/types";
 import { isNumeric } from "../spreads/checks";
+import { getDebtSchedules, type Consolidation } from "../spreads/consolidation";
 import {
   getEntity,
   getSpread,
@@ -496,13 +497,15 @@ async function projectContext(db: Db, ctx: Context, detail: AnalysisDetail) {
     ctx,
     detail.version.scoringModelVersionId,
   );
-  const [items, model, entity] = await Promise.all([
+  const [items, model, debt] = await Promise.all([
     listItems(db, ctx, scoring.id),
     getScoringModel(db, ctx, scoring.scoringModelId),
-    getEntity(db, ctx, detail.entity.id),
+    getDebtSchedules(db, ctx, detail.entity.id),
   ]);
   return {
-    existingLoans: new Set(entity.debtSchedule.loans.map((l) => l.id)),
+    existingLoans: new Set(
+      debt.flatMap(({ schedule }) => schedule.loans.map((l) => l.id)),
+    ),
     items,
     sides: balanceSheetSides(items),
     mapping: model.financingItems,
@@ -722,9 +725,10 @@ export async function runAnalysis(
     : undefined;
   if (scenarioId && !scenario)
     throw new DomainError("not_found", "No such scenario.");
-  const [spread, { items, sides, mapping }] = await Promise.all([
+  const [spread, { items, sides, mapping }, debt] = await Promise.all([
     getSpread(db, ctx, detail.entity.id),
     projectContext(db, ctx, detail),
+    getDebtSchedules(db, ctx, detail.entity.id),
   ]);
   const { projectionMode, projectionYears } = detail.analysis;
   const client = projectionMode === "client";
@@ -743,6 +747,8 @@ export async function runAnalysis(
     db,
     periods.map((p) => p.key),
   );
+  if (spread.consolidation)
+    await addMemberInputs(db, spread.consolidation, detail.lines, inputs);
   for (const period of periods) period.modelInputs = inputs[period.key] ?? {};
   const run = (
     overrides: Record<string, string>,
@@ -758,7 +764,7 @@ export async function runAnalysis(
       overrides,
       project,
       capex,
-      debtSchedule: spread.entity.debtSchedule,
+      debtSchedules: debt.map((d) => d.schedule),
       items: items
         .filter((item) => item.kind !== "header")
         .map((item) => ({
@@ -813,6 +819,39 @@ async function modelInputsOf(db: Db, periodIds: string[]) {
       row.amount !== null ? normalizeNumber(row.amount) : row.text!;
   }
   return result;
+}
+
+// A consolidated client's input lines read its members' figures, added up,
+// where it has none of its own: amounts and counts only, as rates and text
+// don't add.
+async function addMemberInputs(
+  db: Db,
+  consolidation: Consolidation,
+  lines: readonly ModelLine[],
+  inputs: Record<string, Record<string, string>>,
+) {
+  const additive = lines.filter(
+    (l) =>
+      l.kind === "input" && (l.format === "amount" || l.format === "count"),
+  );
+  if (!additive.length) return;
+  const periods = Object.entries(consolidation.periods);
+  const members = await modelInputsOf(
+    db,
+    periods.flatMap(([, p]) => p.statements.map((s) => s.periodId)),
+  );
+  for (const [periodId, { statements }] of periods) {
+    for (const { code } of additive) {
+      if (inputs[periodId]?.[code] !== undefined) continue;
+      const figures = statements.flatMap(
+        (s) => members[s.periodId]?.[code] ?? [],
+      );
+      if (figures.length)
+        (inputs[periodId] ??= {})[code] = figures
+          .reduce((sum, v) => sum.plus(v), new Dec(0))
+          .toFixed();
+    }
+  }
 }
 
 // Postgres pads numerics to their scale ("12.50"); keep the canonical form.

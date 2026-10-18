@@ -1,4 +1,5 @@
 export {
+  addToItems,
   checkControls,
   checkPeriod,
   effectiveAmounts,
@@ -8,6 +9,7 @@ export {
   type ReconciliationLine,
   type StatementControls,
 } from "./checks";
+export * from "./consolidation";
 export {
   parseSpreadPaste,
   type PasteColumn,

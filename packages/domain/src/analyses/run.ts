@@ -17,8 +17,7 @@ import {
   type FinancingValue,
 } from "../financing/common";
 import {
-  debtScheduleValues,
-  EMPTY_SCHEDULE,
+  debtSchedulesValues,
   type DebtSchedule,
 } from "../financing/debt-schedule";
 import {
@@ -132,8 +131,8 @@ export interface RunInput {
   // The scenario's project: given, the run is post-project. Its effect on
   // balance sheet items comes in the periods' figures.
   project?: Project | null;
-  // The borrower's existing loans.
-  debtSchedule?: DebtSchedule;
+  // The borrower's existing loans, or a consolidated client's members'.
+  debtSchedules?: readonly DebtSchedule[];
   // The scenario's purchases planned in projected years.
   capex?: readonly CapexItem[];
   // Items of the scoring model version the model is bound to.
@@ -198,8 +197,8 @@ export function runModel(input: RunInput): AnalysisRun {
           ]),
         )
   ) as Record<FinancingCode, FinancingValue[]>;
-  const schedule = debtScheduleValues(
-    input.debtSchedule ?? EMPTY_SCHEDULE,
+  const schedule = debtSchedulesValues(
+    input.debtSchedules ?? [],
     info,
     project ? monthIndex(project.closing) : null,
     new Set(project?.consolidatedLoans),

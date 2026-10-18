@@ -29,16 +29,34 @@ import {
   type CheckItems,
   type ReconciliationLine,
 } from "./checks";
+import {
+  consolidatedClientsOf,
+  consolidatedPeriodsUsing,
+  consolidatedSpread,
+  syncPeriods,
+  type Consolidation,
+} from "./consolidation";
 import { parseSpreadPaste, type PasteColumn, type PasteRow } from "./paste";
+import {
+  checkPeriodInput,
+  consolidatedFigures,
+  findDuplicate,
+  findPeriod,
+  UUID,
+} from "./periods";
 import { parseValue } from "./values";
+
+export { STATEMENT_QUALITIES } from "./periods";
 
 // Borrowers and their spreads (§5.5). A borrower follows one of the
 // organization's scoring models; each period records the version its figures
-// were entered against, and figures are keyed by item code.
+// were entered against, and figures are keyed by item code. A consolidated
+// client's spread adds up its members' (see consolidation.ts).
 
 const { entities, statementPeriods: periods, statementValues: values } = schema;
 
 export type Entity = typeof entities.$inferSelect;
+export type EntityKind = Entity["kind"];
 export type StatementPeriod = typeof periods.$inferSelect;
 export type StatementQuality = StatementPeriod["quality"];
 export type EntityInput = {
@@ -54,16 +72,6 @@ export type PeriodInput = Pick<
   "periodEnd" | "months" | "quality"
 > &
   Partial<Pick<StatementPeriod, "currency" | "consolidated">>;
-
-export const STATEMENT_QUALITIES: StatementQuality[] = [
-  "audited",
-  "review",
-  "compilation",
-  "internal",
-  "projected",
-];
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface EntitySummary extends Entity {
   scoringModelName: string;
@@ -134,7 +142,7 @@ function checkNaics(code: string | null | undefined) {
 export async function createEntity(
   db: Db,
   ctx: Context,
-  input: EntityInput,
+  input: EntityInput & { kind?: EntityKind },
 ): Promise<Entity> {
   const name = input.name.trim();
   if (!name) throw new DomainError("invalid", "Give the borrower a name.");
@@ -145,6 +153,7 @@ export async function createEntity(
     .insert(entities)
     .values({
       organizationId: ctx.organizationId,
+      kind: input.kind ?? "borrower",
       name,
       scoringModelId: model.id,
       industry: optional(input.industry) ?? null,
@@ -156,14 +165,20 @@ export async function createEntity(
   return entity!;
 }
 
-// Replaces the borrower's existing loans, as of a date.
+// Replaces the borrower's existing loans, as of a date. A consolidated
+// client's are its members'.
 export async function setDebtSchedule(
   db: Db,
   ctx: Context,
   entityId: string,
   input: Parameters<typeof normalizeDebtSchedule>[0],
 ): Promise<Entity> {
-  await getEntity(db, ctx, entityId);
+  const current = await getEntity(db, ctx, entityId);
+  if (current.kind === "consolidated")
+    throw new DomainError(
+      "invalid",
+      `${current.name} is a consolidated client: its existing loans are its members'. Enter them on the members' pages.`,
+    );
   const [entity] = await db
     .update(entities)
     .set({ debtSchedule: normalizeDebtSchedule(input) })
@@ -204,7 +219,7 @@ export async function updateEntity(
   const naicsCode = optional(patch.naicsCode);
   checkNaics(naicsCode);
   // The scoring model lays the spread out, so it only changes before any
-  // figures are entered.
+  // figures are entered, and while no consolidated client relies on it.
   let scoringModelId: string | undefined;
   if (patch.scoringModelId && patch.scoringModelId !== current.scoringModelId) {
     const [period] = await db
@@ -218,6 +233,22 @@ export async function updateEntity(
         "The borrower has periods on its scoring model. Delete them to switch models.",
       );
     }
+    const clients = await consolidatedClientsOf(db, entityId);
+    if (clients.length)
+      throw new DomainError(
+        "conflict",
+        `${current.name} is a member of ${clients.join(", ")}, on the same scoring model. Remove it there to switch models.`,
+      );
+    const [member] = await db
+      .select({ id: schema.consolidationMembers.memberId })
+      .from(schema.consolidationMembers)
+      .where(eq(schema.consolidationMembers.entityId, entityId))
+      .limit(1);
+    if (member)
+      throw new DomainError(
+        "conflict",
+        `${current.name}'s members follow its scoring model. Remove them to switch models.`,
+      );
     scoringModelId = (await getScoringModel(db, ctx, patch.scoringModelId)).id;
   }
   const [entity] = await db
@@ -235,62 +266,21 @@ export async function updateEntity(
   return entity!;
 }
 
+// A consolidated client's members stay, as borrowers; a member can't go
+// while a consolidated client adds it up.
 export async function deleteEntity(
   db: Db,
   ctx: Context,
   entityId: string,
 ): Promise<void> {
-  await getEntity(db, ctx, entityId);
-  await db.delete(entities).where(eq(entities.id, entityId));
-}
-
-function checkPeriodInput(input: Partial<PeriodInput>) {
-  if (input.periodEnd !== undefined) {
-    const valid =
-      /^\d{4}-\d{2}-\d{2}$/.test(input.periodEnd) &&
-      new Date(`${input.periodEnd}T00:00:00Z`)
-        .toISOString()
-        .startsWith(input.periodEnd);
-    if (!valid)
-      throw new DomainError(
-        "invalid",
-        `"${input.periodEnd}" isn't a date (YYYY-MM-DD).`,
-      );
-  }
-  if (
-    input.months !== undefined &&
-    (!Number.isInteger(input.months) || input.months < 1 || input.months > 24)
-  ) {
-    throw new DomainError("invalid", "A period covers 1 to 24 months.");
-  }
-  if (
-    input.quality !== undefined &&
-    !STATEMENT_QUALITIES.includes(input.quality)
-  ) {
+  const entity = await getEntity(db, ctx, entityId);
+  const clients = await consolidatedClientsOf(db, entityId);
+  if (clients.length)
     throw new DomainError(
-      "invalid",
-      `"${input.quality}" isn't a statement quality.`,
+      "conflict",
+      `${entity.name} is a member of ${clients.join(", ")}. Remove it there first.`,
     );
-  }
-}
-
-async function findDuplicate(
-  db: Db,
-  entityId: string,
-  periodEnd: string,
-  months: number,
-) {
-  const [existing] = await db
-    .select({ id: periods.id })
-    .from(periods)
-    .where(
-      and(
-        eq(periods.entityId, entityId),
-        eq(periods.periodEnd, periodEnd),
-        eq(periods.months, months),
-      ),
-    );
-  return existing?.id ?? null;
+  await db.delete(entities).where(eq(entities.id, entityId));
 }
 
 // The version new periods are entered against: the latest published version
@@ -317,6 +307,11 @@ export async function addPeriod(
   input: PeriodInput,
 ): Promise<StatementPeriod> {
   const entity = await getEntity(db, ctx, entityId);
+  if (entity.kind === "consolidated")
+    throw new DomainError(
+      "invalid",
+      `${entity.name} is a consolidated client: add its periods with the members' statements they add up.`,
+    );
   checkPeriodInput(input);
   const version = await requireLayoutVersion(db, ctx, entity);
   if (await findDuplicate(db, entityId, input.periodEnd, input.months)) {
@@ -340,30 +335,27 @@ export async function addPeriod(
   return period!;
 }
 
-async function findPeriod(db: Db, ctx: Context, periodId: string) {
-  if (!UUID.test(periodId))
-    throw new DomainError("not_found", "No such period.");
-  const [row] = await db
-    .select({ period: periods })
-    .from(periods)
-    .innerJoin(entities, eq(entities.id, periods.entityId))
-    .where(
-      and(
-        eq(periods.id, periodId),
-        eq(entities.organizationId, ctx.organizationId),
-      ),
-    );
-  if (!row) throw new DomainError("not_found", "No such period.");
-  return row.period;
-}
-
+// A consolidated period takes its quality and currency from the statements
+// it adds up; only its end and length change. A member's period changing
+// passes its quality and currency on to the consolidated periods using it.
 export async function updatePeriod(
   db: Db,
   ctx: Context,
   periodId: string,
   patch: Partial<PeriodInput>,
 ): Promise<StatementPeriod> {
-  const period = await findPeriod(db, ctx, periodId);
+  const { period, entity } = await findPeriod(db, ctx, periodId);
+  if (
+    entity.kind === "consolidated" &&
+    ((patch.quality !== undefined && patch.quality !== period.quality) ||
+      (patch.currency !== undefined &&
+        patch.currency.trim().toUpperCase() !== period.currency) ||
+      patch.consolidated === false)
+  )
+    throw new DomainError(
+      "invalid",
+      `${entity.name}'s periods take their quality and currency from the members' statements they add up.`,
+    );
   checkPeriodInput(patch);
   const periodEnd = patch.periodEnd ?? period.periodEnd;
   const months = patch.months ?? period.months;
@@ -374,26 +366,39 @@ export async function updatePeriod(
       `There's already a ${months}-month period ending ${periodEnd}.`,
     );
   }
+  const consolidated = entity.kind === "consolidated";
   const [updated] = await db
     .update(periods)
     .set({
       periodEnd: patch.periodEnd,
       months: patch.months,
-      quality: patch.quality,
-      currency: patch.currency?.trim().toUpperCase(),
-      consolidated: patch.consolidated,
+      quality: consolidated ? undefined : patch.quality,
+      currency: consolidated ? undefined : patch.currency?.trim().toUpperCase(),
+      consolidated: consolidated ? undefined : patch.consolidated,
     })
     .where(eq(periods.id, periodId))
     .returning();
+  if (!consolidated)
+    await syncPeriods(
+      db,
+      (await consolidatedPeriodsUsing(db, periodId)).map((u) => u.periodId),
+    );
   return updated!;
 }
 
+// A member's period can't go while a consolidated period adds it up.
 export async function deletePeriod(
   db: Db,
   ctx: Context,
   periodId: string,
 ): Promise<void> {
-  await findPeriod(db, ctx, periodId);
+  const { period, entity } = await findPeriod(db, ctx, periodId);
+  const uses = await consolidatedPeriodsUsing(db, periodId);
+  if (uses.length)
+    throw new DomainError(
+      "conflict",
+      `${entity.name}'s statements ending ${period.periodEnd} are in ${uses.map((u) => `${u.client}'s period ending ${u.periodEnd}`).join(", ")}. Choose other statements there first.`,
+    );
   await db.delete(periods).where(eq(periods.id, periodId));
 }
 
@@ -434,7 +439,8 @@ export async function setValues(
   periodId: string,
   figures: Record<string, string>,
 ): Promise<Record<string, string | null>> {
-  const period = await findPeriod(db, ctx, periodId);
+  const { period, entity } = await findPeriod(db, ctx, periodId);
+  if (entity.kind === "consolidated") throw consolidatedFigures(entity.name);
   const items = await listItems(db, ctx, period.scoringModelVersionId);
   const entries = Object.entries(figures);
   if (!entries.length)
@@ -493,6 +499,9 @@ export interface Spread {
   checks: Record<string, Issue[]>;
   // The scoring model's net income and retained earnings, for its checks.
   checkItems: CheckItems;
+  // For a consolidated client, what each period adds up; null for a
+  // borrower.
+  consolidation: Consolidation | null;
 }
 
 export async function getSpread(
@@ -501,6 +510,8 @@ export async function getSpread(
   entityId: string,
 ): Promise<Spread> {
   const entity = await getEntity(db, ctx, entityId);
+  if (entity.kind === "consolidated")
+    return consolidatedSpread(db, ctx, entity);
   const list = await db
     .select()
     .from(periods)
@@ -544,6 +555,7 @@ export async function getSpread(
     computed: {},
     checks: {},
     checkItems,
+    consolidation: null,
   };
   const figures = new Map(
     list.map((period) => [
@@ -637,7 +649,18 @@ export async function setPeriodControls(
   periodId: string,
   input: PeriodControlsInput,
 ): Promise<StatementPeriod> {
-  await findPeriod(db, ctx, periodId);
+  const { entity } = await findPeriod(db, ctx, periodId);
+  // Members' statements are checked against their own net income.
+  if (
+    entity.kind === "consolidated" &&
+    input.reportedNetIncome !== undefined &&
+    input.reportedNetIncome !== null &&
+    String(input.reportedNetIncome).trim()
+  )
+    throw new DomainError(
+      "invalid",
+      `${entity.name} is a consolidated client: there's no net income as printed to enter. Each member's statements are checked against their own.`,
+    );
   let reportedNetIncome: string | null | undefined;
   if (input.reportedNetIncome !== undefined) {
     const parsed = parseValue(String(input.reportedNetIncome ?? ""), "amount");
@@ -659,14 +682,14 @@ export async function setPeriodControls(
 
 // Forces retained earnings to roll forward from the period before: a line
 // for what's left once net income and the reconciliation's other lines are
-// counted, replacing any forced before. It stays in the reconciliation, so
-// a reviewer sees what was forced.
+// counted (a consolidated period's members' too), replacing any forced
+// before. It stays in the reconciliation, so a reviewer sees what was forced.
 export async function forceRetainedEarnings(
   db: Db,
   ctx: Context,
   periodId: string,
 ): Promise<StatementPeriod> {
-  const period = await findPeriod(db, ctx, periodId);
+  const { period } = await findPeriod(db, ctx, periodId);
   const spread = await getSpread(db, ctx, period.entityId);
   const { netIncome, retainedEarnings } = spread.checkItems;
   if (!netIncome || !retainedEarnings)
@@ -691,7 +714,9 @@ export async function forceRetainedEarnings(
       "Retained earnings need a figure in both periods to roll forward.",
     );
   const kept = current.reconciliation.filter((line) => !line.forced);
-  const difference = kept
+  const members =
+    spread.consolidation?.periods[periodId]?.memberReconciliation ?? [];
+  const difference = [...members, ...kept]
     .reduce(
       (left, line) => left.minus(line.amount),
       new Dec(end).minus(start).minus(figure(periodId, netIncome) ?? 0),
@@ -733,6 +758,7 @@ export async function previewPaste(
   text: string,
 ): Promise<PastePreview> {
   const entity = await getEntity(db, ctx, entityId);
+  if (entity.kind === "consolidated") throw consolidatedFigures(entity.name);
   const version = await requireLayoutVersion(db, ctx, entity);
   const items = await listItems(db, ctx, version.id);
   const parsed = parseSpreadPaste(text, items);
@@ -869,6 +895,7 @@ export async function pasteSpread(
   targets: PasteTarget[],
 ): Promise<{ periods: number; figures: number }> {
   const entity = await getEntity(db, ctx, entityId);
+  if (entity.kind === "consolidated") throw consolidatedFigures(entity.name);
   const version = await requireLayoutVersion(db, ctx, entity);
   const items = await listItems(db, ctx, version.id);
   const parsed = parseSpreadPaste(text, items);

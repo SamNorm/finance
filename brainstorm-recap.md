@@ -148,6 +148,15 @@ Each financial model version contains:
 
   A model takes new principal either from the current portion or from `PROFORMA_PRINCIPAL`, never both. Lineage shows each source's share.
 
+- **Consolidated clients** add up other borrowers' spreads on the same scoring model, when there are no consolidated statements from the accountant (for those, spread the accountant's version as one borrower). Analyses, projects and MCP work on them as on any borrower.
+  - **Computed, never copied:** the spread is the members' as they stand, so it follows them as they change. Its figures and existing loans can't be entered on it, only on the members.
+  - **Each period** takes one set of statements per member, which may end on another date (a December year with the March one that follows). All are on one version of the scoring model. The period's quality is the weakest statements'.
+  - **Added at 100%**, with no non-controlling interest. Amounts and counts add up; rates and dates are kept when the members agree.
+  - **Eliminations** are amounts added to input items per period, negative to reduce them, such as intercompany rent out of revenue and rent expense. Balance sheet ones must balance among themselves. Subtotals pasted as figures move with them.
+  - **Flagged, not blocked:** statements more than six months from the period's end or of another length, a member with no statements, statements already consolidated or used in two periods (their figures may count twice), mixed currencies, and actual statements mixed with projections. A member's critical errors and unbalanced eliminations are errors.
+  - **Checks:** retained earnings roll forward with the members' reconciliation lines plus the group's own, such as an intercompany dividend. There's no net income as printed: each member is checked against its own.
+  - **Existing debt** is the members' schedules, each as of its own date, with loans named after their member.
+  - A member, or a period a consolidated client uses, can't be deleted until it's taken out.
 - **Projections** come from one of two places, chosen per analysis:
   - **From assumptions:** the model's projection formulas compute a number of years after the last actual period.
   - **The client's projections:** spread like any statement, as periods of quality "projected", and read with the model's regular formulas. `PROJECTED()` is true in both.
@@ -200,7 +209,8 @@ Without a scoring model, where do the inputs live?
 
 - **M&A pro forma:** combine entities and add acquisition debt, synergies, and sources and uses.
 - **Normalization adjustments:** remove non-recurring items and adjust owner compensation to get adjusted EBITDA.
-- **Consolidation** of groups and connected entities.
+- **Consolidation** beyond adding members at 100%: ownership shares and non-controlling interest, consolidated clients within others, and intercompany loans in members' debt schedules (built so far: consolidated clients, §5.5).
+- **PDF documents** and institutions' own templates: see `documents-plan.md`.
 - **Annual review memo drafting**, done by the client's LLM through MCP.
 - **Covenant breach forecasting** from projections.
 - **Portfolio views and benchmarking** within the institution's own book.

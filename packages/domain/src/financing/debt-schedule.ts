@@ -162,6 +162,34 @@ export function debtScheduleValues(
   return result;
 }
 
+// Several schedules' values added up, such as a consolidated client's
+// members', each read as of its own date. Blank where every schedule is.
+export function debtSchedulesValues(
+  schedules: readonly DebtSchedule[],
+  periods: readonly FinancingPeriod[],
+  closing: number | null = null,
+  repaid: ReadonlySet<string> = new Set(),
+): ScheduleValues {
+  const each = schedules.map((schedule) =>
+    debtScheduleValues(schedule, periods, closing, repaid),
+  );
+  const total = (key: keyof ScheduleValues) =>
+    periods.map((_, p): FinancingValue | null => {
+      const cells = each.flatMap((values) => values[key][p] ?? []);
+      if (!cells.length) return null;
+      return {
+        value: cells.reduce((sum, cell) => sum.plus(cell.value!), new Dec(0)),
+        parts: cells.flatMap((cell) => cell.parts),
+      };
+    });
+  return {
+    interest: total("interest"),
+    principal: total("principal"),
+    prepayments: total("prepayments"),
+    balance: total("balance"),
+  };
+}
+
 // Each loan's debt service over the twelve months after the schedule's date.
 export function nextYearDebtService(schedule: DebtSchedule) {
   const { asOf } = schedule;

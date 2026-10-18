@@ -257,7 +257,11 @@ export interface DebtSchedule {
   }[];
 }
 
-// A borrower or acquisition target.
+// borrower: spread from its own statements. consolidated: a client whose
+// spread adds up other borrowers' statements, less eliminations.
+export const entityKind = pgEnum("entity_kind", ["borrower", "consolidated"]);
+
+// A borrower or acquisition target, or a consolidated client of several.
 export const entities = pgTable(
   "entities",
   {
@@ -265,6 +269,7 @@ export const entities = pgTable(
     organizationId: uuid()
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
+    kind: entityKind().notNull().default("borrower"),
     name: text().notNull(),
     // The scoring model the borrower's spreads follow.
     scoringModelId: uuid()
@@ -329,6 +334,9 @@ export const statementPeriods = pgTable(
     // Net income as printed on the statements, which the spread's must match.
     reportedNetIncome: numeric(),
     reconciliation: jsonb().$type<ReconciliationLine[]>().notNull().default([]),
+    // A consolidated client's period: what it eliminates from the sum of its
+    // members' statements.
+    eliminations: jsonb().$type<Elimination[]>().notNull().default([]),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -342,6 +350,64 @@ export const statementPeriods = pgTable(
       t.scoringModelVersionId,
     ),
     check("statement_periods_months", sql`${t.months} between 1 and 24`),
+  ],
+).enableRLS();
+
+// An amount added to an input item of a consolidated client's period,
+// negative to reduce it, such as intercompany rent taken out of revenue.
+// Those on the balance sheet must balance among themselves. The amount is a
+// canonical decimal.
+export interface Elimination {
+  id: string;
+  name: string;
+  item: string;
+  amount: string;
+}
+
+// The borrowers a consolidated client adds up, in the order its worksheet
+// shows them. Members follow its scoring model and stay borrowers in their
+// own right; one can't be deleted while it's a member.
+export const consolidationMembers = pgTable(
+  "consolidation_members",
+  {
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    memberId: uuid()
+      .notNull()
+      .references(() => entities.id),
+    position: integer().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.entityId, t.memberId] }),
+    index("consolidation_members_member").on(t.memberId),
+    check(
+      "consolidation_members_not_itself",
+      sql`${t.entityId} <> ${t.memberId}`,
+    ),
+  ],
+).enableRLS();
+
+// The statements a consolidated client's period adds up: at most one period
+// per member, which may end on another date. A member's period can't be
+// deleted while a consolidated period uses it.
+export const consolidatedStatements = pgTable(
+  "consolidated_statements",
+  {
+    periodId: uuid()
+      .notNull()
+      .references(() => statementPeriods.id, { onDelete: "cascade" }),
+    memberId: uuid()
+      .notNull()
+      .references(() => entities.id),
+    memberPeriodId: uuid()
+      .notNull()
+      .references(() => statementPeriods.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.periodId, t.memberId] }),
+    index("consolidated_statements_member").on(t.memberId),
+    index("consolidated_statements_member_period").on(t.memberPeriodId),
   ],
 ).enableRLS();
 

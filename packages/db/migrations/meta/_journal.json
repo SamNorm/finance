@@ -113,6 +113,20 @@
       "when": 1792343978721,
       "tag": "0015_capex_plan",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792348732536,
+      "tag": "0016_consolidated_clients",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792349885575,
+      "tag": "0017_index_consolidated_members",
+      "breakpoints": true
     }
   ]
 }

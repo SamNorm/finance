@@ -29,6 +29,8 @@ import {
   demoReconciliation,
   type DemoPeriod,
 } from "./companies";
+import { consolidateFigures } from "../spreads/consolidation";
+import { demoPropertyCompany, GROUP_ELIMINATIONS } from "./group";
 import { DEMO_CAPEX_SCENARIO, DEMO_MODEL, demoScenarios } from "./model";
 import {
   demoProperty,
@@ -109,7 +111,7 @@ function run(
     overrides: options.overrides ?? {},
     project,
     capex: options.capex,
-    debtSchedule: options.debtSchedule,
+    debtSchedules: options.debtSchedule ? [options.debtSchedule] : [],
     items: items
       .filter((i) => i.kind !== "header")
       .map((i) => ({ code: i.code, label: i.label, numeric: isNumeric(i) })),
@@ -173,6 +175,54 @@ describe("demo data", () => {
       ).toEqual([]);
       expect(Number(period.values.RE_CASH)).toBeGreaterThan(0);
     }
+  });
+
+  it("the property company consolidates with Laurentian Foods, its tenant", () => {
+    const tenant = companies[1]!;
+    const landlord = demoPropertyCompany();
+    const net = (values: Record<string, string>) =>
+      effectiveAmounts(commercial, new Map(Object.entries(values)))
+        .amounts.get("NET_INCOME")!
+        .toNumber();
+    landlord.periods.forEach((period, i) => {
+      const entered = new Map(Object.entries(period.values));
+      expect(checkPeriod(commercial, entered), period.end).toEqual([]);
+      expect(Number(period.values.CASH)).toBeGreaterThan(0);
+      const before = landlord.periods[i - 1];
+      expect(
+        checkControls(commercial, entered, {
+          items: CHECKED,
+          reportedNetIncome: null,
+          reconciliation: demoReconciliation(period),
+          previous: before
+            ? {
+                end: before.end,
+                items: commercial,
+                entered: new Map(Object.entries(before.values)),
+              }
+            : null,
+        }),
+        period.end,
+      ).toEqual([]);
+      // Its rent is the tenant's, so it eliminates exactly: the group
+      // balances and earns what the two do.
+      const lease = tenant.periods[i]!;
+      expect(period.values.REVENUE).toBe(lease.values.RENT_EXPENSE);
+      const group = consolidateFigures(
+        commercial,
+        [lease, period].map((p) => ({
+          name: p.end,
+          entered: p.values,
+          computed: {},
+        })),
+        GROUP_ELIMINATIONS.map((e, n) => ({ ...e, id: String(n) })),
+      );
+      expect(checkPeriod(commercial, new Map(Object.entries(group)))).toEqual(
+        [],
+      );
+      expect(net(group)).toBe(net(lease.values) + net(period.values));
+      expect(Number(group.RENT_EXPENSE)).toBe(0);
+    });
   });
 
   it("cash flow statements explain the change in cash", () => {

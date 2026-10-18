@@ -11,7 +11,7 @@ import type {
   ProjectSource,
   ProjectUse,
 } from "../financing/financing";
-import { getEntity } from "../spreads/service";
+import { getDebtSchedules } from "../spreads/consolidation";
 import {
   getAnalysis,
   getScenario,
@@ -207,8 +207,10 @@ export async function setConsolidatedLoans(
       `The project closes on ${project.closing}. Change its closing date to close on another.`,
     );
   const { entity } = await getAnalysis(db, ctx, analysisId);
-  const { debtSchedule } = await getEntity(db, ctx, entity.id);
-  if (loanIds.some((id) => !debtSchedule.loans.some((l) => l.id === id)))
+  const loans = (await getDebtSchedules(db, ctx, entity.id)).flatMap(
+    ({ schedule }) => schedule.loans,
+  );
+  if (loanIds.some((id) => !loans.some((l) => l.id === id)))
     throw new DomainError(
       "not_found",
       "That isn't one of the borrower's existing loans.",
