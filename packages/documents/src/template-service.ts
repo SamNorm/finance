@@ -4,10 +4,12 @@ import {
   getFinancialModel,
   hasErrors,
   listLines,
+  type ChartDefinition,
   type Context,
   type Issue,
+  type ModelLine,
 } from "@finance/domain";
-import { checkDefinition, parseBlocks, type TemplateModel } from "./check";
+import { checkDefinition, parseBlocks } from "./check";
 import { templateOf, type Definition, type Orientation } from "./templates";
 
 // An organization's own documents (documents-plan.md §6), made from the
@@ -104,21 +106,30 @@ function toSummary(row: Row): TemplateSummary {
   };
 }
 
-// The lines and charts of the model's latest published version; null when
-// it has none yet.
-async function modelOf(
+// The model a template reads, with its latest published version's lines
+// and charts, which the template can name; `version` is null until one is
+// published.
+export interface BoundModel {
+  id: string;
+  name: string;
+  version: number | null;
+  lines: ModelLine[];
+  charts: ChartDefinition[];
+}
+
+export async function templateModel(
   db: Db,
   ctx: Context,
-  financialModelId: string | null,
-): Promise<{ name: string; model: TemplateModel | null } | null> {
-  if (!financialModelId) return null;
+  financialModelId: string,
+): Promise<BoundModel> {
   const detail = await getFinancialModel(db, ctx, financialModelId);
   const version = detail.versions.findLast((v) => v.status === "published");
-  if (!version) return { name: detail.name, model: null };
-  const lines = await listLines(db, ctx, version.id);
   return {
+    id: detail.id,
     name: detail.name,
-    model: { name: detail.name, lines, charts: version.charts },
+    version: version?.number ?? null,
+    lines: version ? await listLines(db, ctx, version.id) : [],
+    charts: version?.charts ?? [],
   };
 }
 
@@ -128,17 +139,19 @@ async function issuesOf(
   definition: Definition,
   financialModelId: string | null,
 ): Promise<Issue[]> {
-  const bound = await modelOf(db, ctx, financialModelId);
-  if (bound && !bound.model)
+  const model = financialModelId
+    ? await templateModel(db, ctx, financialModelId)
+    : null;
+  if (model?.version === null)
     return [
       {
         severity: "error",
         code: "model_unpublished",
-        message: `Publish ${bound.name} first: the document reads its lines and charts.`,
+        message: `Publish ${model.name} first: the document reads its lines and charts.`,
       },
       ...checkDefinition(definition, null).filter((i) => i.code !== "no_model"),
     ];
-  return checkDefinition(definition, bound?.model ?? null);
+  return checkDefinition(definition, model);
 }
 
 async function selectTemplate(db: Db, ctx: Context, templateId: string) {

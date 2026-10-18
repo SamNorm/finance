@@ -3,6 +3,7 @@ import {
   CONDITIONS,
   MERGE_FIELD,
   MERGE_FIELDS,
+  SECTIONS,
   type Block,
   type BlockType,
   type Definition,
@@ -12,20 +13,6 @@ import {
 // parsed into blocks, then checked against the financial model it reads
 // (documents-plan.md §6.3). What can't be stored stops a save; any error
 // stops publishing.
-
-// What a document's blocks are called where people see them.
-export const SECTIONS: Record<BlockType, string> = {
-  heading: "Heading",
-  text: "Text",
-  facts: "Facts",
-  lines: "Model lines",
-  covenants: "Covenants",
-  charts: "Charts",
-  sourcesUses: "Sources and uses",
-  debt: "Debt",
-  amortization: "Schedules by year",
-  pageBreak: "Page break",
-};
 
 // Each block's settings besides `type` and `when`, and what each holds.
 const SETTINGS: Record<
@@ -67,7 +54,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 // "Section 3 (Model lines)", as issues name a block.
 const where = (index: number, type: BlockType) =>
-  `Section ${index + 1} (${SECTIONS[type]})`;
+  `Section ${index + 1} (${SECTIONS[type].label})`;
 
 // Blocks from untrusted JSON. Issues are what keeps them from being stored:
 // an unknown section or setting, or a setting of the wrong kind.

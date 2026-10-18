@@ -1,6 +1,6 @@
 # PDF Documents: Draft Plan
 
-_Status: phase 1 built (§4); phase 3 under way, slice 1 built (§6.6) · Last updated: 2026-10-18_
+_Status: phase 1 built (§4); phase 3 under way, slices 1 and 2 built (§6.6) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -185,7 +185,10 @@ Each slice is committed and merged on its own.
 
    How it's built: `document_templates` holds each one's draft and published definition as JSON. `check.ts` parses sections from untrusted JSON (`parseBlocks`) and checks them against the model's latest published version (`checkDefinition`). `template-service.ts` holds the service, and `generateDocument` and `previewDocument` take a template's id, with `draft` to preview one. A bound template prints only for analyses on its model, and its model can't be deleted while it exists.
 
-2. **The editor and the template list**, under Model setup, with the live preview.
+2. **The editor and the template list (built)**, under Model setup, with the live preview.
+
+   How it's built: the Documents page has Documents and Branding tabs. The editor at `/documents/templates/[id]` saves every change to the draft through server actions in `app/documents/actions.ts`, replacing the whole list of sections, as MCP will. The preview is `/documents/preview` with `draft=1`, rendered at its printed width and scaled to fit. Client components read the section names, conditions and merge fields from `@finance/documents/templates`, which holds no server code.
+
 3. **Printing them:** the analysis tab's list filtered by model, **Copy and edit**, and hiding built-ins.
 4. **MCP:** listing and printing them, then authoring.
 5. **French and English** (§3.6), the documents' part of the app's i18n (recap §7): a template's language sets its fixed wording (headings, "Base case", "Page 1 of 3", months) and number formats (1 234 567,89 $). Model line labels then need a French label, which is a change to financial models. Text sections are already in whatever language they're written in, and templates refer to codes rather than labels, so templates aren't stuck in one language meanwhile.

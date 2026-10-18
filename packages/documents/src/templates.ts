@@ -57,6 +57,48 @@ export type Block =
 
 export type BlockType = Block["type"];
 
+// What each block is called where people see it, and what it prints.
+export const SECTIONS: Record<
+  BlockType,
+  { label: string; description: string }
+> = {
+  heading: { label: "Heading", description: "A heading, with merge fields." },
+  text: {
+    label: "Text",
+    description: "Paragraphs with merge fields, bullets, bold and italics.",
+  },
+  facts: {
+    label: "Facts",
+    description: "The borrower, the analysis and what it runs on.",
+  },
+  lines: {
+    label: "Model lines",
+    description:
+      "The model's lines by period: all of them by section, or those picked.",
+  },
+  covenants: {
+    label: "Covenants",
+    description: "Each covenant tested, year by year, with the room left.",
+  },
+  charts: {
+    label: "Charts",
+    description: "The model's and the analysis's charts, or those picked.",
+  },
+  sourcesUses: {
+    label: "Sources and uses",
+    description: "The scenario's project at closing.",
+  },
+  debt: {
+    label: "Debt",
+    description: "Existing loans and the project's new ones.",
+  },
+  amortization: {
+    label: "Schedules by year",
+    description: "Each loan's schedule, year by year.",
+  },
+  pageBreak: { label: "Page break", description: "Starts a new page." },
+};
+
 export type Orientation = "portrait" | "landscape";
 
 // What a document prints: the part of a template its draft and published

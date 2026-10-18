@@ -4,7 +4,8 @@ import { getContext, getDb } from "@/lib/server";
 
 // A document as HTML, rendered from the analysis as it stands and not kept:
 // a quick look before generating the PDF. The browser's print gives the same
-// pages. ?analysis=…&template=…, and &scenario=… for a scenario.
+// pages. ?analysis=…&template=…, &scenario=… for a scenario, and &draft=1
+// for an organization template's draft, as its editor previews it.
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
   try {
@@ -12,6 +13,7 @@ export async function GET(request: Request) {
       analysisId: query.get("analysis") ?? "",
       scenarioId: query.get("scenario") || null,
       template: query.get("template") ?? "",
+      draft: query.get("draft") === "1",
     });
     return new Response(html, {
       headers: {

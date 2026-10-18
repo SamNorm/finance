@@ -4,12 +4,7 @@ export {
   type DocumentData,
   type DocumentRun,
 } from "./data";
-export {
-  checkDefinition,
-  parseBlocks,
-  SECTIONS,
-  type TemplateModel,
-} from "./check";
+export { checkDefinition, parseBlocks, type TemplateModel } from "./check";
 export { merge, renderDocument, type RenderedDocument } from "./html";
 export { browserPath, closeBrowser, printPdf } from "./pdf";
 export * from "./service";
