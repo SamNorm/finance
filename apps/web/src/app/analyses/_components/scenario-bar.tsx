@@ -215,10 +215,19 @@ export function NewScenario({
   );
 }
 
-// An override as typed: percentages back as "5%", the rest as stored.
+// An override as typed: percentages back as "5%", amounts with their
+// thousands ("700,000"), the rest as stored.
 function display(raw: string | null | undefined, format: ModelLine["format"]) {
   if (raw === null || raw === undefined) return "";
-  return format === "percent" ? `${new Dec(raw).times(100).toString()}%` : raw;
+  if (format === "percent") return `${new Dec(raw).times(100).toString()}%`;
+  if (format === "amount") {
+    const [whole, fraction] = raw.split(".");
+    return (
+      whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ",") +
+      (fraction ? `.${fraction}` : "")
+    );
+  }
+  return raw;
 }
 
 // An assumption's base case value, as the model sets it.
