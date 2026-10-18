@@ -24,6 +24,7 @@ import {
   StreamableHTTPClientTransport,
   type VersionNegotiationMode,
 } from "@modelcontextprotocol/client";
+import { browserPath, closeBrowser } from "@finance/documents";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "./server";
@@ -245,6 +246,9 @@ describe("MCP server", () => {
       update_covenant: "changes",
       remove_covenant: "changes",
       use_covenants_in_force: "changes",
+      list_document_templates: "reads",
+      generate_document: "adds",
+      list_documents: "reads",
       list_analyses: "reads",
       get_analysis: "reads",
       run_analysis: "reads",
@@ -1293,6 +1297,51 @@ describe("MCP server", () => {
       ],
     });
   });
+
+  it("lists the documents an analysis prints as", async () => {
+    const call = await connect();
+    const { value } = await call("list_document_templates");
+    expect(value.map((t: { template: string }) => t.template)).toEqual([
+      "analysis-report",
+      "deal-summary",
+      "debt-summary",
+    ]);
+    expect(
+      (
+        await call("generate_document", {
+          analysisId: ids.analysis,
+          template: "memo",
+        })
+      ).error,
+    ).toMatch(/^"memo" isn't a document\./);
+    expect(
+      (await call("list_documents", { analysisId: ids.analysis })).value,
+    ).toEqual([]);
+  });
+
+  it.skipIf(!browserPath())(
+    "prints a document and links to its PDF",
+    async () => {
+      const call = await connect();
+      const { value } = await call("generate_document", {
+        analysisId: ids.analysis,
+        template: "debt-summary",
+      });
+      expect(value).toMatchObject({
+        title: "Acme Fabrication: debt summary",
+        url: `http://localhost:3000/documents/${value.id}/pdf`,
+      });
+      expect(value.pages).toBeGreaterThan(0);
+      const { value: listed } = await call("list_documents", {
+        borrowerId: ids.acme,
+      });
+      expect(listed).toMatchObject([
+        { id: value.id, document: "Debt summary" },
+      ]);
+      await closeBrowser();
+    },
+    60_000,
+  );
 
   it("acts within the caller's organization only", async () => {
     const call = await connect({ organizationId: randomUUID() });

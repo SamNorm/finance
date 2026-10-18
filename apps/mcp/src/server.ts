@@ -6,6 +6,7 @@ import { capexTools } from "./tools/capex";
 import { borrowerTools } from "./tools/borrowers";
 import { consolidationTools } from "./tools/consolidation";
 import { covenantTools } from "./tools/covenants";
+import { documentTools } from "./tools/documents";
 import { loanTools } from "./tools/loans";
 import { projectTools } from "./tools/projects";
 import { scenarioTools } from "./tools/scenarios";
@@ -25,6 +26,7 @@ const INSTRUCTIONS = `Credit analysis for commercial lending.
 - Spreads come from the institution's scoring system. To enter one the user pastes, preview it, show the user what was read and get their confirmation, then import it.
 - A consolidated client adds up other borrowers' spreads on the same scoring model, when there are no consolidated statements from the accountant: each period takes one set of statements per member, less eliminations of what they owe, sell or pay each other. Its figures and existing loans are its members': change them on the members. Analyses run on it like on any borrower.
 - A spread's critical errors (a balance sheet that doesn't balance, net income that isn't the one printed on the statements) keep its periods out of analyses until fixed. Retained earnings that don't roll forward are a warning; force them only when the user asks.
+- Documents for the credit file (an analysis report, a deal summary, a debt summary) are printed as PDFs with generate_document and kept as printed; give the user the link it returns. Every figure in them comes from the app.
 - Find ids with list_borrowers and list_analyses; never guess one.
 - Before changing anything, make sure you have what the user meant. Ask for missing figures, dates or which scenario rather than inventing them.
 - The app never computes a risk rating, and you shouldn't either.`;
@@ -43,5 +45,6 @@ export function createServer(db: Db, ctx: Context): McpServer {
   projectTools(server, db, ctx);
   capexTools(server, db, ctx);
   loanTools(server, db, ctx);
+  documentTools(server, db, ctx);
   return server;
 }
