@@ -6,7 +6,8 @@ const round = (value: { toFixed: (n: number) => string } | null) =>
   value?.toFixed(2) ?? null;
 
 describe("amortize", () => {
-  const start = monthIndex("2025-09-30");
+  const date = "2025-09-30";
+  const start = monthIndex(date);
 
   it("runs forward from its date and back before it on the same payments", () => {
     const loan = amortize(
@@ -16,7 +17,7 @@ describe("amortize", () => {
         repayment: "equal_principal",
         months: 120,
       },
-      start,
+      date,
       true,
     );
     // October to December: three payments of 10,000.
@@ -33,7 +34,7 @@ describe("amortize", () => {
   it("owes nothing before a new loan is drawn", () => {
     const loan = amortize(
       { balance: "100000", rate: "0.06", repayment: "blended", months: 60 },
-      start,
+      date,
     );
     expect(round(loan.balanceAt(start - 1))).toBe("0.00");
     expect(round(loan.flows(start - 12, start).interest)).toBe("0.00");

@@ -2,10 +2,12 @@ import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 
 // Loan schedules, shared by the borrower's existing debt and the new loans a
-// scenario adds. Dates are reduced to months: a payment falls one, three, six
-// or twelve months after the previous one, whatever the day. Kept free of
-// server code so the browser can draw a loan's schedule (subpath
-// @finance/domain/amortization).
+// scenario adds. Periods read a schedule by months: the k-th payment counts
+// 12k/n months after the start's month, rounded up, for n payments a year. So
+// any twelve months hold a year's payments, 52 of them weekly, even though a
+// calendar year can hold 53 weeks; after some years a weekly payment's date
+// can fall a few days off the month it counts in. Kept free of server code
+// so the browser can draw a loan's schedule (@finance/domain/amortization).
 
 type Amount = InstanceType<typeof Dec>;
 
@@ -20,18 +22,35 @@ export const REPAYMENTS: Record<Repayment, string> = {
 };
 
 export const FREQUENCIES: Record<Frequency, string> = {
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  semimonthly: "Twice a month",
   monthly: "Monthly",
   quarterly: "Quarterly",
   semiannual: "Semi-annual",
   annual: "Annual",
 };
 
-// Months from one payment to the next.
-export const PERIOD_MONTHS: Record<Frequency, number> = {
-  monthly: 1,
-  quarterly: 3,
-  semiannual: 6,
-  annual: 12,
+export const PAYMENTS_PER_YEAR: Record<Frequency, number> = {
+  weekly: 52,
+  biweekly: 26,
+  semimonthly: 24,
+  monthly: 12,
+  quarterly: 4,
+  semiannual: 2,
+  annual: 1,
+};
+
+// The period between two payments, singular and plural: what a moratorium is
+// counted in.
+export const PERIOD_UNITS: Record<Frequency, [string, string]> = {
+  weekly: ["week", "weeks"],
+  biweekly: ["two-week period", "two-week periods"],
+  semimonthly: ["half-month", "half-months"],
+  monthly: ["month", "months"],
+  quarterly: ["quarter", "quarters"],
+  semiannual: ["half-year", "half-years"],
+  annual: ["year", "years"],
 };
 
 export const MORATORIUMS: Record<Moratorium["kind"], string> = {
@@ -46,6 +65,46 @@ export const monthIndex = (date: string) =>
 // A count of months → "2025-09", the month it stands for.
 export const monthOf = (index: number) =>
   `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+
+// How many payments repay a loan over `months` at a frequency, to the
+// nearest payment: 20 years is 1,040 weekly payments.
+export const paymentCount = (months: number, frequency: Frequency) =>
+  Math.max(1, Math.round((months * PAYMENTS_PER_YEAR[frequency]) / 12));
+
+const DAY = 86_400_000;
+const lastDay = (month: number) =>
+  new Date(Date.UTC(Math.floor(month / 12), (month % 12) + 1, 0)).getUTCDate();
+const dateIn = (month: number, day: number) =>
+  `${monthOf(month)}-${String(day).padStart(2, "0")}`;
+
+// The date of the k-th payment after a schedule's start; k = 0 is a payment on
+// the start date, and k < 0 those before it. Weekly payments fall every seven
+// days from the start. Twice a month: the 15th and the last day, from the
+// month after the start's. Otherwise every one, three, six or twelve months,
+// on the start's day of the month (the month's last day when the start is on
+// its month's last day).
+export function paymentDate(
+  start: string,
+  frequency: Frequency,
+  k: number,
+): string {
+  if (frequency === "weekly" || frequency === "biweekly") {
+    const days = frequency === "weekly" ? 7 : 14;
+    const time = Date.parse(`${start}T00:00:00Z`) + k * days * DAY;
+    return new Date(time).toISOString().slice(0, 10);
+  }
+  const from = monthIndex(start);
+  if (frequency === "semimonthly") {
+    const month = from + Math.ceil(k / 2);
+    return dateIn(month, k % 2 === 0 ? lastDay(month) : 15);
+  }
+  const month = from + k * (12 / PAYMENTS_PER_YEAR[frequency]);
+  const day = Number(start.slice(8, 10));
+  return dateIn(
+    month,
+    day >= lastDay(from) ? lastDay(month) : Math.min(day, lastDay(month)),
+  );
+}
 
 export interface Amortizing {
   balance: string;
@@ -62,7 +121,8 @@ export interface Amortizing {
 }
 
 export interface Payment {
-  // The month it falls in.
+  date: string;
+  // The month it counts in.
   month: number;
   interest: Amount;
   principal: Amount;
@@ -81,42 +141,46 @@ export interface Schedule {
   flows(from: number, to: number): { interest: Amount; principal: Amount };
   // What's owed at the end of a month.
   balanceAt(month: number): Amount;
-  // The payments after `start`: all of them, or for a loan that never
-  // matures (interest only), those in the first `horizon` months.
+  // The payments after the start: all of them, or for a loan that never
+  // matures (interest only), those in the `horizon` months after its month.
   payments(horizon?: number): Payment[];
 }
 
 const MAX_HISTORY = 120;
 const zero = new Dec(0);
 
-// The loan's payments after `start`, the month its balance is known at. With
-// `history`, the same payments run back before `start`, for periods that
-// began earlier (an existing loan known at a date); without, nothing is owed
-// before it (a new loan drawn that month). A moratorium comes first; when
-// the amortization includes it, the principal is repaid over what's left.
+// The loan's payments after `start`, the date its balance is known at. With
+// `history`, the same payments run back before it, for periods that began
+// earlier (an existing loan known at a date); without, nothing is owed before
+// it (a new loan drawn that day). A moratorium comes first; when the
+// amortization includes it, the principal is repaid over what's left.
 export function amortize(
   loan: Amortizing,
-  start: number,
+  start: string,
   history = false,
 ): Schedule {
   const balance = new Dec(loan.balance);
-  const every = PERIOD_MONTHS[loan.frequency ?? "monthly"];
-  const rate = new Dec(loan.rate).times(every).div(12);
+  const frequency = loan.frequency ?? "monthly";
+  const perYear = PAYMENTS_PER_YEAR[frequency];
+  const rate = new Dec(loan.rate).div(perYear);
+  const startMonth = monthIndex(start);
   const moratorium = loan.moratorium;
   const full = moratorium?.kind === "full";
   // Payments in the moratorium, then payments that repay principal.
-  const held = moratorium ? Math.floor(moratorium.months / every) : 0;
+  const held = moratorium?.payments ?? 0;
   const repaying =
     loan.repayment === "interest_only"
       ? Infinity
       : Math.max(
           1,
-          Math.floor(
-            (loan.months - (moratorium?.included ? moratorium.months : 0)) /
-              every,
-          ),
+          paymentCount(loan.months, frequency) -
+            (moratorium?.included ? held : 0),
         );
   const count = held + repaying;
+  const when = (k: number) => ({
+    date: paymentDate(start, frequency, k),
+    month: startMonth + Math.ceil((12 * k) / perYear),
+  });
 
   // The level payment or equal principal, set on the balance the
   // amortization starts from: the known one, or the one the moratorium
@@ -138,14 +202,13 @@ export function amortize(
     if (k < 1 || k > count) return null;
     while (forward.length < k) {
       const n = forward.length + 1;
-      const month = start + n * every;
       const owed = forward.at(-1)?.after ?? balance;
       const interest = owed.times(rate);
       if (n <= held) {
         forward.push(
           full
             ? {
-                month,
+                ...when(n),
                 interest: zero,
                 principal: zero,
                 capitalized: interest,
@@ -153,7 +216,7 @@ export function amortize(
                 moratorium: true,
               }
             : {
-                month,
+                ...when(n),
                 interest,
                 principal: zero,
                 capitalized: zero,
@@ -171,7 +234,7 @@ export function amortize(
             ? owed
             : Dec.min(step ?? level!.minus(interest), owed);
       forward.push({
-        month,
+        ...when(n),
         interest,
         principal,
         capitalized: zero,
@@ -182,22 +245,23 @@ export function amortize(
     return forward[k - 1]!;
   };
 
-  // backward[j] is the payment j periods before start (j = 0 is the start
-  // month's own payment, which left the known balance). A loan in a
-  // moratorium at its date has been in it all along.
+  // backward[j] is the payment j periods before start (j = 0 is a payment on
+  // the start date, which left the known balance), back ten years. A loan in
+  // a moratorium at its date has been in it all along.
   const backward: Payment[] = [];
   const paymentBefore = (j: number): Payment | null => {
-    if (!history || j * every >= MAX_HISTORY) return null;
+    if (!history) return null;
     while (backward.length <= j) {
+      const at = when(-backward.length);
+      if (startMonth - at.month >= MAX_HISTORY) return null;
       const later = backward.at(-1);
       const after = later
         ? later.after.plus(later.principal).minus(later.capitalized)
         : balance;
-      const month = start - backward.length * every;
       if (held && full) {
         const owed = after.div(rate.plus(1));
         backward.push({
-          month,
+          ...at,
           interest: zero,
           principal: zero,
           capitalized: after.minus(owed),
@@ -213,7 +277,7 @@ export function amortize(
             ? after.plus(step)
             : after.plus(level!).div(rate.plus(1));
       backward.push({
-        month,
+        ...at,
         interest: owed.times(rate),
         principal: owed.minus(after),
         capitalized: zero,
@@ -228,34 +292,48 @@ export function amortize(
     flows(from, to) {
       let interest = zero;
       let principal = zero;
-      for (let m = from + 1; m <= to; m++) {
-        const offset = m - start;
-        if (offset % every !== 0) continue;
-        const payment =
-          offset > 0
-            ? paymentAfter(offset / every)
-            : paymentBefore(-offset / every);
-        if (!payment) continue;
+      const add = (payment: Payment) => {
         interest = interest.plus(payment.interest);
         principal = principal.plus(payment.principal);
+      };
+      for (let k = 1; k <= count; k++) {
+        const payment = paymentAfter(k)!;
+        if (payment.month > to) break;
+        if (payment.month > from) add(payment);
+      }
+      for (let j = 0; ; j++) {
+        const payment = paymentBefore(j);
+        if (!payment || payment.month <= from) break;
+        if (payment.month <= to) add(payment);
       }
       return { interest, principal };
     },
     balanceAt(month) {
-      if (month >= start) {
-        const k = Math.min(Math.floor((month - start) / every), count);
-        return k ? paymentAfter(k)!.after : balance;
+      if (month >= startMonth) {
+        let owed = balance;
+        for (let k = 1; k <= count; k++) {
+          const payment = paymentAfter(k)!;
+          if (payment.month > month) break;
+          owed = payment.after;
+        }
+        return owed;
       }
       if (!history) return zero;
       // After the last payment in or before the month.
-      return (
-        paymentBefore(Math.ceil((start - month) / every))?.after ?? balance
-      );
+      for (let j = 0; ; j++) {
+        const payment = paymentBefore(j);
+        if (!payment) return balance;
+        if (payment.month <= month) return payment.after;
+      }
     },
     payments(horizon = MAX_HISTORY) {
-      const last = Number.isFinite(count) ? count : Math.floor(horizon / every);
       const list: Payment[] = [];
-      for (let k = 1; k <= last; k++) list.push(paymentAfter(k)!);
+      for (let k = 1; k <= count; k++) {
+        const payment = paymentAfter(k)!;
+        if (!Number.isFinite(count) && payment.month > startMonth + horizon)
+          break;
+        list.push(payment);
+      }
       return list;
     },
   };

@@ -3,6 +3,7 @@
 import {
   FREQUENCIES,
   MORATORIUMS,
+  PERIOD_UNITS,
   REPAYMENTS,
   type Amortizing,
   type Frequency,
@@ -20,7 +21,8 @@ export interface TermsDraft {
   years: string;
   frequency: Frequency;
   moratorium: Moratorium["kind"] | "";
-  moratoriumMonths: string;
+  // How many of the loan's payments it suspends.
+  moratoriumPayments: string;
   moratoriumIncluded: boolean;
 }
 
@@ -29,7 +31,7 @@ export const NEW_TERMS: TermsDraft = {
   years: "",
   frequency: "monthly",
   moratorium: "",
-  moratoriumMonths: "",
+  moratoriumPayments: "",
   moratoriumIncluded: false,
 };
 
@@ -41,7 +43,7 @@ export const termsDraft = (loan: Amortizing): TermsDraft => ({
   years: loan.months ? yearsOf(loan.months) : "",
   frequency: loan.frequency ?? "monthly",
   moratorium: loan.moratorium?.kind ?? "",
-  moratoriumMonths: loan.moratorium ? String(loan.moratorium.months) : "",
+  moratoriumPayments: loan.moratorium ? String(loan.moratorium.payments) : "",
   moratoriumIncluded: loan.moratorium?.included ?? false,
 });
 
@@ -55,13 +57,13 @@ export function termsInput(draft: TermsDraft) {
     years: amortizing ? draft.years : "",
     frequency: draft.frequency,
     moratorium,
-    moratoriumMonths: moratorium ? draft.moratoriumMonths : "",
+    moratoriumPayments: moratorium ? draft.moratoriumPayments : "",
     moratoriumIncluded: moratorium ? draft.moratoriumIncluded : false,
   };
 }
 
-// "7 years · blended payments · quarterly · 12-month moratorium on principal,
-// included in the amortization".
+// "20 years · blended payments · every 2 weeks · moratorium of 10 two-week
+// periods on principal, included in the amortization".
 export function describeTerms(loan: Amortizing): string {
   const parts: string[] = [];
   if (loan.repayment !== "interest_only") {
@@ -72,12 +74,14 @@ export function describeTerms(loan: Amortizing): string {
   if (loan.frequency && loan.frequency !== "monthly")
     parts.push(FREQUENCIES[loan.frequency].toLowerCase());
   const m = loan.moratorium;
-  if (m)
+  if (m) {
+    const [one, many] = PERIOD_UNITS[loan.frequency ?? "monthly"];
     parts.push(
-      `${m.months}-month moratorium ${MORATORIUMS[m.kind].toLowerCase()}${
+      `moratorium of ${m.payments} ${m.payments === 1 ? one : many} ${MORATORIUMS[m.kind].toLowerCase()}${
         m.kind === "full" ? " (interest capitalized)" : ""
       }, ${m.included ? "included in" : "before"} the amortization`,
     );
+  }
   return parts.join(" · ");
 }
 
@@ -108,8 +112,8 @@ export function FrequencySelect({
   );
 }
 
-// What a moratorium suspends, for how many months, and whether the
-// amortization includes them. `left`: an existing loan's, counted from its
+// What a moratorium suspends, for how many of the loan's payment periods
+// (weeks, months, quarters…), and whether the amortization includes them. `left`: an existing loan's, counted from its
 // schedule's date. Interest-only loans have no principal to suspend.
 export function MoratoriumFields({
   draft,
@@ -121,6 +125,8 @@ export function MoratoriumFields({
   onChange: (patch: Partial<TermsDraft>) => void;
 }) {
   const amortizing = draft.repayment !== "interest_only";
+  const unit = PERIOD_UNITS[draft.frequency][1];
+  const periods = `${unit[0]!.toUpperCase()}${unit.slice(1)}`;
   return (
     <>
       <label className="flex w-56 flex-col gap-1">
@@ -145,12 +151,14 @@ export function MoratoriumFields({
       </label>
       {amortizing && draft.moratorium && (
         <>
-          <label className="flex w-28 flex-col gap-1">
-            <span className={caption}>{left ? "Months left" : "Months"}</span>
+          <label className="flex w-40 flex-col gap-1">
+            <span className={caption}>
+              {left ? `${periods} left` : periods}
+            </span>
             <input
-              value={draft.moratoriumMonths}
+              value={draft.moratoriumPayments}
               inputMode="numeric"
-              onChange={(e) => onChange({ moratoriumMonths: e.target.value })}
+              onChange={(e) => onChange({ moratoriumPayments: e.target.value })}
               className={`${input} text-right tabular-nums`}
             />
           </label>

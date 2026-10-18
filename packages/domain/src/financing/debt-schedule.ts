@@ -77,10 +77,11 @@ export function debtScheduleValues(
   const blank = periods.map(() => null);
   if (!schedule.asOf || !schedule.loans.length)
     return { interest: blank, principal: blank, balance: blank };
-  const start = monthIndex(schedule.asOf);
+  const { asOf } = schedule;
+  const start = monthIndex(asOf);
   const loans = schedule.loans.map((loan) => ({
     loan,
-    schedule: amortize(loan, start, true),
+    schedule: amortize(loan, asOf, true),
   }));
   const result: ScheduleValues = {
     interest: [],
@@ -137,10 +138,11 @@ export function debtScheduleValues(
 
 // Each loan's debt service over the twelve months after the schedule's date.
 export function nextYearDebtService(schedule: DebtSchedule) {
-  if (!schedule.asOf) return [];
-  const start = monthIndex(schedule.asOf);
+  const { asOf } = schedule;
+  if (!asOf) return [];
+  const start = monthIndex(asOf);
   return schedule.loans.map((loan) => {
-    const { interest, principal } = amortize(loan, start, true).flows(
+    const { interest, principal } = amortize(loan, asOf, true).flows(
       start,
       start + 12,
     );

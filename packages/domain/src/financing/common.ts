@@ -5,7 +5,9 @@ import { parseValue } from "../spreads/values";
 import {
   FREQUENCIES,
   MORATORIUMS,
-  PERIOD_MONTHS,
+  paymentCount,
+  PAYMENTS_PER_YEAR,
+  PERIOD_UNITS,
   REPAYMENTS,
   type Amortizing,
   type Frequency,
@@ -81,8 +83,9 @@ export function parseMonths(raw: unknown, what: string): number {
 }
 
 // A loan's terms as typed: how it's repaid, over how long, how often, and any
-// moratorium at the start of its schedule. Amortization is typed in years;
-// a saved loan, copied, has months and its moratorium as an object.
+// moratorium at the start of its schedule. Amortization is typed in years
+// and paid to the nearest payment; a saved loan, copied, has months and its
+// moratorium as an object.
 export interface LoanTermsInput {
   repayment?: unknown;
   years?: unknown;
@@ -90,20 +93,14 @@ export interface LoanTermsInput {
   frequency?: unknown;
   // "principal", "full", or blank for none.
   moratorium?: unknown;
-  // Months of moratorium, and whether the amortization includes them.
-  moratoriumMonths?: unknown;
+  // How many of the loan's payments the moratorium suspends, and whether the
+  // amortization includes them.
+  moratoriumPayments?: unknown;
   moratoriumIncluded?: unknown;
 }
 
-export const MAX_MORATORIUM_MONTHS = 120;
-
-// The unit a frequency's payments fall in, for messages.
-const PERIOD_NAMES: Record<Frequency, string> = {
-  monthly: "months",
-  quarterly: "quarters",
-  semiannual: "half-years",
-  annual: "years",
-};
+// A moratorium suspends up to ten years of payments.
+export const MAX_MORATORIUM_YEARS = 10;
 
 export function parseTerms(
   raw: LoanTermsInput,
@@ -115,21 +112,12 @@ export function parseTerms(
   const frequency = (String(raw.frequency ?? "") || "monthly") as Frequency;
   if (!Object.hasOwn(FREQUENCIES, frequency))
     throw invalid(`${what}: choose how often it's paid.`);
-  const every = PERIOD_MONTHS[frequency];
-  const whole = (months: number, field: string) => {
-    if (months % every !== 0)
-      throw invalid(
-        `${what}: with ${FREQUENCIES[frequency].toLowerCase()} payments, the ${field} must be a whole number of ${PERIOD_NAMES[frequency]}.`,
-      );
-  };
   if (repayment === "interest_only") return { repayment, months: 0, frequency };
 
   const months = parseMonths(
     raw.years ?? (typeof raw.months === "number" ? raw.months / 12 : ""),
     what,
   );
-  whole(months, "amortization");
-
   const saved =
     raw.moratorium && typeof raw.moratorium === "object"
       ? (raw.moratorium as Record<string, unknown>)
@@ -138,17 +126,17 @@ export function parseTerms(
   if (!kind) return { repayment, months, frequency };
   if (!Object.hasOwn(MORATORIUMS, kind))
     throw invalid(`${what}: "${kind}" isn't a kind of moratorium.`);
-  const length = Number(
-    String((saved ? saved.months : raw.moratoriumMonths) ?? "").trim(),
+  const payments = Number(
+    String((saved ? saved.payments : raw.moratoriumPayments) ?? "").trim(),
   );
-  if (!Number.isInteger(length) || length < 1 || length > MAX_MORATORIUM_MONTHS)
+  const most = MAX_MORATORIUM_YEARS * PAYMENTS_PER_YEAR[frequency];
+  if (!Number.isInteger(payments) || payments < 1 || payments > most)
     throw invalid(
-      `${what}: the moratorium lasts 1 to ${MAX_MORATORIUM_MONTHS} months.`,
+      `${what}: the moratorium lasts 1 to ${most} ${PERIOD_UNITS[frequency][1]}.`,
     );
-  whole(length, "moratorium");
   const flag = saved ? saved.included : raw.moratoriumIncluded;
   const included = flag === true || flag === "true";
-  if (included && length >= months)
+  if (included && payments >= paymentCount(months, frequency))
     throw invalid(
       `${what}: the moratorium must end before the amortization does.`,
     );
@@ -156,7 +144,7 @@ export function parseTerms(
     repayment,
     months,
     frequency,
-    moratorium: { kind: kind as Moratorium["kind"], months: length, included },
+    moratorium: { kind: kind as Moratorium["kind"], payments, included },
   };
 }
 

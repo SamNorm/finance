@@ -183,13 +183,21 @@ export const scoringModelItems = pgTable(
 
 // How often a loan is paid; monthly when absent.
 export type PaymentFrequency =
-  "monthly" | "quarterly" | "semiannual" | "annual";
+  | "weekly"
+  | "biweekly"
+  | "semimonthly"
+  | "monthly"
+  | "quarterly"
+  | "semiannual"
+  | "annual";
 
 // Payments suspended at the start of a loan's schedule. "principal": interest
 // is still paid. "full": nothing is paid and interest is capitalized.
 export interface Moratorium {
   kind: "principal" | "full";
-  months: number;
+  // How many of the loan's payments it suspends: 10 on a loan paid every two
+  // weeks is 20 weeks.
+  payments: number;
   // Within the amortization (a 20-year loan with a year's moratorium repays
   // its principal over the 19 that follow) or before it (over 20 more).
   included: boolean;

@@ -4,6 +4,7 @@ import {
   amortize,
   monthIndex,
   monthOf,
+  PAYMENTS_PER_YEAR,
   type Amortizing,
 } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
@@ -79,9 +80,11 @@ function ScheduleTable({ loan, start }: { loan: Amortizing; start: string }) {
   const [view, setView] = useState<"payments" | "years">("payments");
   const from = monthIndex(start);
   const payments = useMemo(
-    () => amortize(loan, from).payments(INTEREST_ONLY_YEARS * 12),
-    [loan, from],
+    () => amortize(loan, start).payments(INTEREST_ONLY_YEARS * 12),
+    [loan, start],
   );
+  // Paid more than once a month: payments show their dates.
+  const dated = PAYMENTS_PER_YEAR[loan.frequency ?? "monthly"] > 12;
   const annual = loan.frequency === "annual";
   const capitalizes = loan.moratorium?.kind === "full";
   const opening = new Dec(loan.balance);
@@ -92,8 +95,8 @@ function ScheduleTable({ loan, start }: { loan: Amortizing; start: string }) {
           key: String(p.month),
           label: (
             <>
-              <span className="inline-block w-8 text-muted">{i + 1}</span>
-              {monthLabel(p.month)}
+              <span className="inline-block w-12 text-muted">{i + 1}</span>
+              {dated ? formatDate(p.date) : monthLabel(p.month)}
             </>
           ),
           interest: p.interest,

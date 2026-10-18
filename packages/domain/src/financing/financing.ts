@@ -303,12 +303,12 @@ function windowOf(period: FinancingPeriod, closing: number): Window | null {
   };
 }
 
-const loanSchedules = (project: Project, closing: number) =>
+const loanSchedules = (project: Project) =>
   project.sources
     .filter((s): s is ProjectLoan => s.kind === "loan")
     .map((loan) => ({
       loan,
-      schedule: amortize({ ...loan, balance: loan.amount }, closing),
+      schedule: amortize({ ...loan, balance: loan.amount }, project.closing),
     }));
 
 // The project's built-in inputs in each period of a post-project run.
@@ -339,7 +339,7 @@ export function projectValues(
   };
 
   const closing = monthIndex(project.closing);
-  const loans = loanSchedules(project, closing);
+  const loans = loanSchedules(project);
   periods.forEach((period, p) => {
     const w = windowOf(period, closing);
     if (!w) return;
@@ -395,7 +395,7 @@ export function projectItemAdjustments(
   items: FinancingItems,
 ): Map<string, ItemAdjustment>[] {
   const closing = monthIndex(project.closing);
-  const loans = loanSchedules(project, closing);
+  const loans = loanSchedules(project);
   return periods.map((period) => {
     const adjustments = new Map<string, ItemAdjustment>();
     const w = windowOf(period, closing);

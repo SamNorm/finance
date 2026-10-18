@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { amortize, monthIndex } from "./amortization";
+import {
+  amortize,
+  monthIndex,
+  paymentCount,
+  paymentDate,
+} from "./amortization";
 import { parseTerms } from "./common";
 
 const round = (value: { toFixed: (n: number) => string } | null) =>
   value?.toFixed(2) ?? null;
 
 describe("moratoriums and payment frequencies", () => {
-  const start = monthIndex("2025-09-30");
+  const date = "2025-09-30";
+  const start = monthIndex(date);
 
   it("repays principal over what's left when the amortization includes the moratorium", () => {
     // 20 years with a year of interest only: principal over the next 19.
@@ -19,9 +25,9 @@ describe("moratoriums and payment frequencies", () => {
     const within = amortize(
       {
         ...terms,
-        moratorium: { kind: "principal", months: 12, included: true },
+        moratorium: { kind: "principal", payments: 12, included: true },
       },
-      start,
+      date,
     );
     const first = within.flows(start, start + 12);
     expect(round(first.principal)).toBe("0.00");
@@ -39,9 +45,9 @@ describe("moratoriums and payment frequencies", () => {
     const before = amortize(
       {
         ...terms,
-        moratorium: { kind: "principal", months: 12, included: false },
+        moratorium: { kind: "principal", payments: 12, included: false },
       },
-      start,
+      date,
     );
     expect(round(before.flows(start + 12, start + 24).principal)).toBe(
       "114000.00",
@@ -57,9 +63,9 @@ describe("moratoriums and payment frequencies", () => {
         rate: "0.12",
         repayment: "blended",
         months: 12,
-        moratorium: { kind: "full", months: 3, included: false },
+        moratorium: { kind: "full", payments: 3, included: false },
       },
-      start,
+      date,
     );
     const held = loan.flows(start, start + 3);
     expect(round(held.interest)).toBe("0.00");
@@ -86,7 +92,7 @@ describe("moratoriums and payment frequencies", () => {
         months: 60,
         frequency: "quarterly",
       },
-      start,
+      date,
     );
     expect(round(quarterly.flows(start, start + 2).interest)).toBe("0.00");
     const first = quarterly.flows(start, start + 3);
@@ -102,6 +108,88 @@ describe("moratoriums and payment frequencies", () => {
     expect(round(quarterly.balanceAt(start + 60))).toBe("0.00");
   });
 
+  it("dates payments by the frequency", () => {
+    // A month-end start pays at month ends; other days keep their day.
+    expect(paymentDate(date, "monthly", 1)).toBe("2025-10-31");
+    expect(paymentDate("2025-01-31", "monthly", 1)).toBe("2025-02-28");
+    expect(paymentDate("2025-01-15", "quarterly", 1)).toBe("2025-04-15");
+    expect(paymentDate(date, "weekly", 1)).toBe("2025-10-07");
+    expect(paymentDate(date, "biweekly", -1)).toBe("2025-09-16");
+    // Twice a month: the 15th and the last day, from the next month.
+    expect(
+      [-2, -1, 0, 1, 2, 3].map((k) => paymentDate(date, "semimonthly", k)),
+    ).toEqual([
+      "2025-08-31",
+      "2025-09-15",
+      "2025-09-30",
+      "2025-10-15",
+      "2025-10-31",
+      "2025-11-15",
+    ]);
+    expect(paymentCount(240, "weekly")).toBe(1040);
+    expect(paymentCount(89, "quarterly")).toBe(30);
+  });
+
+  it("pays every two weeks, counting a moratorium in payments", () => {
+    const loan = amortize(
+      {
+        balance: "52000",
+        rate: "0.052",
+        repayment: "equal_principal",
+        months: 12,
+        frequency: "biweekly",
+        moratorium: { kind: "principal", payments: 10, included: false },
+      },
+      date,
+    );
+    const payments = loan.payments();
+    expect(payments).toHaveLength(36);
+    expect(round(payments[0]!.interest)).toBe("104.00");
+    // Ten two-week periods of interest only, then 26 payments of 2,000.
+    expect(payments.filter((p) => p.moratorium)).toHaveLength(10);
+    expect(payments[10]!.date).toBe("2026-03-03");
+    expect(round(payments[10]!.principal)).toBe("2000.00");
+    // 22 of the 26 paid by the end of 2026.
+    expect(round(loan.balanceAt(monthIndex("2026-12-31")))).toBe("8000.00");
+  });
+
+  it("counts 52 weekly payments in any twelve months", () => {
+    const loan = amortize(
+      {
+        balance: "1040000",
+        rate: "0.05",
+        repayment: "equal_principal",
+        months: 240,
+        frequency: "weekly",
+      },
+      // A Thursday: 2026 has 53 of them, but counts 52 payments.
+      "2025-12-25",
+    );
+    const twelve = (end: string) =>
+      loan.flows(monthIndex(end) - 12, monthIndex(end)).principal;
+    for (const end of ["2026-12-31", "2027-12-31", "2028-06-30", "2044-03-31"])
+      expect(round(twelve(end))).toBe("52000.00");
+    expect(loan.payments()).toHaveLength(1040);
+    expect(loan.payments().at(-1)!.month).toBe(monthIndex("2045-12-31"));
+  });
+
+  it("pays twice a month", () => {
+    const loan = amortize(
+      {
+        balance: "240000",
+        rate: "0.06",
+        repayment: "equal_principal",
+        months: 120,
+        frequency: "semimonthly",
+      },
+      date,
+    );
+    const october = loan.flows(start, start + 1);
+    expect(round(october.principal)).toBe("2000.00");
+    expect(round(october.interest)).toBe("1197.50");
+    expect(round(loan.balanceAt(start + 12))).toBe("216000.00");
+  });
+
   it("runs an existing loan in a moratorium back on moratorium payments", () => {
     const principal = amortize(
       {
@@ -109,9 +197,9 @@ describe("moratoriums and payment frequencies", () => {
         rate: "0.06",
         repayment: "blended",
         months: 120,
-        moratorium: { kind: "principal", months: 6, included: false },
+        moratorium: { kind: "principal", payments: 6, included: false },
       },
-      start,
+      date,
       true,
     );
     expect(round(principal.flows(start - 3, start).interest)).toBe("7500.00");
@@ -124,9 +212,9 @@ describe("moratoriums and payment frequencies", () => {
         rate: "0.12",
         repayment: "blended",
         months: 12,
-        moratorium: { kind: "full", months: 3, included: false },
+        moratorium: { kind: "full", payments: 3, included: false },
       },
-      start,
+      date,
       true,
     );
     expect(round(full.flows(start - 3, start).interest)).toBe("0.00");
@@ -139,9 +227,9 @@ describe("moratoriums and payment frequencies", () => {
         {
           repayment: "blended",
           years: "20",
-          frequency: "quarterly",
+          frequency: "biweekly",
           moratorium: "principal",
-          moratoriumMonths: "12",
+          moratoriumPayments: "10",
           moratoriumIncluded: "true",
         },
         "Loan",
@@ -149,8 +237,8 @@ describe("moratoriums and payment frequencies", () => {
     ).toEqual({
       repayment: "blended",
       months: 240,
-      frequency: "quarterly",
-      moratorium: { kind: "principal", months: 12, included: true },
+      frequency: "biweekly",
+      moratorium: { kind: "principal", payments: 10, included: true },
     });
     // A saved loan, copied.
     expect(
@@ -159,37 +247,48 @@ describe("moratoriums and payment frequencies", () => {
           repayment: "equal_principal",
           months: 60,
           frequency: "monthly",
-          moratorium: { kind: "full", months: 6, included: false },
+          moratorium: { kind: "full", payments: 6, included: false },
         },
         "Loan",
       ).moratorium,
-    ).toEqual({ kind: "full", months: 6, included: false });
+    ).toEqual({ kind: "full", payments: 6, included: false });
     // Monthly unless said otherwise; no moratorium on interest only.
     expect(
       parseTerms(
-        { repayment: "interest_only", moratorium: "full", moratoriumMonths: 6 },
+        {
+          repayment: "interest_only",
+          moratorium: "full",
+          moratoriumPayments: 6,
+        },
         "Loan",
       ),
     ).toEqual({ repayment: "interest_only", months: 0, frequency: "monthly" });
 
     const bad = [
-      // Not a whole number of quarters.
-      { repayment: "blended", years: "7.4", frequency: "quarterly" },
-      { repayment: "blended", years: "5", frequency: "weekly" },
+      { repayment: "blended", years: "5", frequency: "daily" },
       { repayment: "blended", years: "5", moratorium: "sometimes" },
       { repayment: "blended", years: "5", moratorium: "full" },
       {
         repayment: "blended",
         years: "5",
-        frequency: "semiannual",
         moratorium: "principal",
-        moratoriumMonths: "4",
+        moratoriumPayments: "2.5",
       },
+      // More than ten years of weekly payments.
+      {
+        repayment: "blended",
+        years: "25",
+        frequency: "weekly",
+        moratorium: "principal",
+        moratoriumPayments: "521",
+      },
+      // A year of biweekly payments is 26.
       {
         repayment: "blended",
         years: "1",
+        frequency: "biweekly",
         moratorium: "principal",
-        moratoriumMonths: "12",
+        moratoriumPayments: "26",
         moratoriumIncluded: "true",
       },
     ];
