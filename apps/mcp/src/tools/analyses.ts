@@ -4,12 +4,14 @@ import {
   getAnalysis,
   getEntity,
   getFinancialModel,
+  getSpread,
   imbalance,
   listAnalyses,
   listFinancialModels,
   repinAnalysis,
   runAnalysis,
   setModelInput,
+  spreadErrors,
   updateAnalysis,
   type Analysis,
   type Context,
@@ -42,6 +44,23 @@ function describePeriod(p: RunPeriod) {
   // Projected years computed from assumptions aren't spread periods.
   const id = p.projection === "assumptions" ? {} : { id: p.key };
   return { ...id, end: p.end, months: p.months, kind };
+}
+
+// Critical errors in the periods an analysis uses: its results can't be
+// relied on, and it can't be completed, until the spread is fixed.
+async function spreadWarnings(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  analysis: Analysis,
+) {
+  const spread = await getSpread(db, ctx, entityId);
+  return spreadErrors(spread, analysis).flatMap(({ period, issues }) =>
+    issues.map(
+      (i) =>
+        `${period.periodEnd}: ${i.message} Results can't be relied on, and the analysis can't be completed, until the spread is fixed.`,
+    ),
+  );
 }
 
 const periodIds = z
@@ -122,10 +141,17 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
+        const warnings = await spreadWarnings(
+          db,
+          ctx,
+          detail.entity.id,
+          analysis,
+        );
         return {
           id: analysis.id,
           name: analysis.name,
           status: analysis.status,
+          ...(warnings.length ? { warnings } : {}),
           borrower: detail.entity,
           model: {
             name: detail.model.name,
@@ -208,11 +234,15 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
         );
         const scenario = detail.scenarios.find((s) => s.id === scenarioId);
         const off = scenario?.project && imbalance(scenario.project);
+        const warnings = [
+          ...(await spreadWarnings(db, ctx, detail.entity.id, detail.analysis)),
+          ...(off ? [imbalanceWarning(off)] : []),
+        ];
         return {
           analysis: detail.analysis.name,
           borrower: detail.entity.name,
           scenario: scenario?.name ?? "Base case",
-          ...(off ? { warning: imbalanceWarning(off) } : {}),
+          ...(warnings.length ? { warnings } : {}),
           periods: run.periods.map(describePeriod),
           // Each line's values follow the periods' order; postProject is
           // null where it doesn't apply.

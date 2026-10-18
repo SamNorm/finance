@@ -12,6 +12,7 @@ import * as z from "zod";
 import { borrowerId } from "../fields";
 import { figure } from "../format";
 import { describeDebtSchedule } from "../loans";
+import { describeControls } from "./spreads";
 import { invalid, matches, READ, respond } from "../respond";
 
 export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
@@ -95,7 +96,7 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get a borrower's spread",
       description:
-        "A borrower's financial statements as spread, by scoring model item and period: figures entered, and subtotals summed from their lines. Items with no figure in any period are left out. Also lists each period's failed checks, such as a balance sheet that doesn't balance.",
+        "A borrower's financial statements as spread, by scoring model item and period: figures entered, and subtotals summed from their lines. Items with no figure in any period are left out. Each period also has its net income as printed on the statements, its retained earnings reconciliation, and its failed checks. Errors (a balance sheet that doesn't balance, net income that isn't the statements') keep the period out of analyses until fixed; warnings (retained earnings that don't roll forward) only flag.",
       inputSchema: z.object({
         borrowerId,
         codes: z
@@ -141,6 +142,8 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
             end: p.periodEnd,
             months: p.months,
             quality: p.quality,
+            // What the statements say beyond the figures, for the checks.
+            ...describeControls(p),
             checks: (spread.checks[p.id] ?? []).map(
               (c) => `${c.severity}: ${c.message}`,
             ),

@@ -14,6 +14,7 @@ import {
   publishFinancialModelVersion,
   publishVersion,
   replaceItems,
+  setCheckItems,
   setFinancingItems,
   setValue,
   type Context,
@@ -37,10 +38,12 @@ TOTAL_ASSETS,Total assets,BS,,subtotal,,,,
 CPLTD,Current portion of long-term debt,BS,TOTAL_LIABILITIES_AND_EQUITY,,,,,
 LONG_TERM_DEBT,Long-term debt,BS,TOTAL_LIABILITIES_AND_EQUITY,,,,,
 EQUITY,Equity,BS,TOTAL_LIABILITIES_AND_EQUITY,,,,,
+RETAINED_EARNINGS,Retained earnings,BS,TOTAL_LIABILITIES_AND_EQUITY,,,,,
 TOTAL_LIABILITIES_AND_EQUITY,Total liabilities and equity,BS,,subtotal,,,,
 REVENUE,Revenue,IS,,,,,,
 EBITDA,EBITDA,IS,,,,,,
-INTEREST_EXPENSE,Interest expense,IS,,,,,,`;
+INTEREST_EXPENSE,Interest expense,IS,,,,,,
+NET_INCOME,Net income,IS,,,,,,`;
 
 let db: Db;
 let ctx: Context;
@@ -66,6 +69,10 @@ beforeAll(async () => {
     longTermDebt: "LONG_TERM_DEBT",
     currentDebt: "CPLTD",
     cash: "CASH",
+  });
+  await setCheckItems(db, ctx, scoringModel.id, {
+    netIncome: "NET_INCOME",
+    retainedEarnings: "RETAINED_EARNINGS",
   });
 
   const acme = await createEntity(db, ctx, {
@@ -221,6 +228,8 @@ describe("MCP server", () => {
       update_period: "changes",
       remove_period: "changes",
       set_spread_values: "changes",
+      set_period_controls: "changes",
+      force_retained_earnings: "changes",
       preview_spread_paste: "reads",
       import_spread_paste: "changes",
       list_analyses: "reads",
@@ -424,7 +433,9 @@ describe("MCP server", () => {
       scenarioId: scenario.id,
       lines: ["DSCR"],
     });
-    expect(results.warning).toMatch(/^Sources fall short of uses by 200,000/);
+    expect(results.warnings).toEqual([
+      expect.stringMatching(/^Sources fall short of uses by 200,000/),
+    ]);
     const { value: equity } = await call("add_project_funds", {
       scenarioId: scenario.id,
       name: "Equity injection",
@@ -768,6 +779,108 @@ describe("MCP server", () => {
       riskRating: "4",
     });
     expect(rated).toMatchObject({ name: "Laurentide Tools", riskRating: "4" });
+  });
+
+  it("checks a spread against the statements before analyzing it", async () => {
+    const call = await connect();
+    const { value: borrower } = await call("create_borrower", {
+      name: "Gaspé Marine",
+    });
+    const period = async (periodEnd: string, figures: object) => {
+      const { value } = await call("add_period", {
+        borrowerId: borrower.id,
+        periodEnd,
+        quality: "audited",
+      });
+      const { value: after } = await call("set_spread_values", {
+        borrowerId: borrower.id,
+        periodId: value.id,
+        figures,
+      });
+      return { id: value.id, checks: after.checks };
+    };
+    await period("2023-12-31", { CASH: "1000", RETAINED_EARNINGS: "1000" });
+    // 1,000 + 300 isn't 1,250: something left retained earnings.
+    const fy2024 = await period("2024-12-31", {
+      CASH: "1250",
+      RETAINED_EARNINGS: "1250",
+      NET_INCOME: "300",
+    });
+    expect(fy2024.checks).toEqual([
+      "warning: Retained earnings doesn't roll forward from 2023-12-31: 1,000 + net income 300 = 1,300, vs 1,250 on the balance sheet (difference -50).",
+    ]);
+    const control = (args: object) =>
+      call("set_period_controls", {
+        borrowerId: borrower.id,
+        periodId: fy2024.id,
+        ...args,
+      });
+    const { value: reconciled } = await control({
+      reconciliation: [{ label: "Dividends declared", amount: "-50" }],
+    });
+    expect(reconciled.checks).toEqual([]);
+
+    // Net income printed on the statements that the spread doesn't match
+    // keeps the period out of analyses.
+    const { value: misprinted } = await control({ netIncomeAsPrinted: "310" });
+    expect(misprinted).toMatchObject({
+      netIncomeAsPrinted: "310",
+      checks: [
+        "error: Net income is 300 in the spread but 310 on the statements (difference -10).",
+      ],
+    });
+    const create = {
+      borrowerId: borrower.id,
+      financialModelId: (await call("list_financial_models")).value[0].id,
+      name: "Review",
+    };
+    expect(await call("create_analysis", create)).toEqual({
+      error:
+        "Fix Gaspé Marine's spread before analyzing it. 2024-12-31: Net income is 300 in the spread but 310 on the statements (difference -10).",
+    });
+    await control({ netIncomeAsPrinted: null });
+    const { value: analysis } = await call("create_analysis", create);
+
+    // Broken after the analysis is made: its results warn, and it can't be
+    // completed.
+    await control({ netIncomeAsPrinted: "310" });
+    const { value: results } = await call("run_analysis", {
+      analysisId: analysis.id,
+      lines: ["DSCR"],
+    });
+    expect(results.warnings).toEqual([
+      expect.stringMatching(
+        /^2024-12-31: Net income is 300 in the spread but 310 on the statements/,
+      ),
+    ]);
+    expect(
+      await call("set_analysis_status", {
+        analysisId: analysis.id,
+        status: "completed",
+      }),
+    ).toMatchObject({ error: expect.stringMatching(/^Fix Gaspé Marine's/) });
+    await control({ netIncomeAsPrinted: "300" });
+
+    // Forcing the roll-forward leaves a visible line.
+    await control({ reconciliation: [] });
+    const { value: forced } = await call("force_retained_earnings", {
+      borrowerId: borrower.id,
+      periodId: fy2024.id,
+    });
+    expect(forced).toMatchObject({
+      checks: [],
+      retainedEarningsReconciliation: [
+        { label: "Unreconciled difference", amount: "-50", forced: true },
+      ],
+    });
+    const { value: spread } = await call("get_spread", {
+      borrowerId: borrower.id,
+      codes: ["NET_INCOME"],
+    });
+    expect(spread.periods[1]).toMatchObject({
+      netIncomeAsPrinted: "300",
+      retainedEarningsReconciliation: [{ forced: true }],
+    });
   });
 
   it("explains what's wrong rather than failing", async () => {

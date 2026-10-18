@@ -4,10 +4,12 @@ import {
   addPeriod,
   createEntity,
   deletePeriod,
+  forceRetainedEarnings,
   getSpread,
   listScoringModels,
   pasteSpread,
   previewPaste,
+  setPeriodControls,
   setValues,
   STATEMENT_QUALITIES,
   updateEntity,
@@ -72,6 +74,16 @@ const describePeriod = (p: StatementPeriod) => ({
   quality: p.quality,
   currency: p.currency,
   consolidated: p.consolidated,
+});
+
+// What a period's statements say beyond its figures.
+export const describeControls = (p: StatementPeriod) => ({
+  netIncomeAsPrinted: figure(p.reportedNetIncome, "amount"),
+  retainedEarningsReconciliation: p.reconciliation.map((l) => ({
+    label: l.label,
+    amount: figure(l.amount, "amount"),
+    ...(l.forced ? { forced: true } : {}),
+  })),
 });
 
 // The paste a preview read, so an import can be held to it: the text as
@@ -294,6 +306,76 @@ export function spreadTools(server: McpServer, db: Db, ctx: Context) {
             ]),
           ),
         };
+      }),
+  );
+
+  server.registerTool(
+    "set_period_controls",
+    {
+      title: "Record what a period's statements say",
+      description: [
+        "Records, for one period, what its financial statements say beyond the spread's figures. Net income as printed: the spread's must match it, or the period can't be analyzed. The retained earnings reconciliation: how retained earnings changed other than by net income, such as dividends declared or a prior-period adjustment, so they roll forward from the period before.",
+        "Only what's given changes; reconciliation lines given replace the period's. Returns the period's checks afterwards.",
+      ].join(" "),
+      inputSchema: z.object({
+        borrowerId,
+        periodId,
+        netIncomeAsPrinted: z
+          .string()
+          .nullable()
+          .optional()
+          .describe(
+            'As printed, e.g. "412,345" or "(15,000)"; null clears it.',
+          ),
+        reconciliation: z
+          .array(
+            z.object({
+              label: z.string().describe('e.g. "Dividends declared".'),
+              amount: z
+                .string()
+                .describe(
+                  'Negative when it reduces retained earnings, e.g. "-50,000".',
+                ),
+            }),
+          )
+          .optional()
+          .describe("Replaces the period's lines; an empty list clears them."),
+      }),
+      annotations: CHANGE,
+    },
+    ({ borrowerId, periodId, netIncomeAsPrinted, reconciliation }) =>
+      respond(async () => {
+        if (netIncomeAsPrinted === undefined && reconciliation === undefined)
+          throw invalid("Give net income as printed or reconciliation lines.");
+        const spread = await getSpread(db, ctx, borrowerId);
+        if (!spread.periods.some((p) => p.id === periodId))
+          throw invalid(`${spread.entity.name} has no such period.`);
+        const period = await setPeriodControls(db, ctx, periodId, {
+          reportedNetIncome: netIncomeAsPrinted,
+          reconciliation,
+        });
+        const [after] = await checksOf(db, ctx, borrowerId, [periodId]);
+        return { ...after, ...describeControls(period) };
+      }),
+  );
+
+  server.registerTool(
+    "force_retained_earnings",
+    {
+      title: "Force retained earnings to roll forward",
+      description:
+        'Only when the user asks: adds an "Unreconciled difference" line to a period\'s retained earnings reconciliation for whatever is left, so retained earnings roll forward from the period before. It replaces a line forced before and stays visible, so a reviewer sees what was forced.',
+      inputSchema: z.object({ borrowerId, periodId }),
+      annotations: CHANGE,
+    },
+    ({ borrowerId, periodId }) =>
+      respond(async () => {
+        const spread = await getSpread(db, ctx, borrowerId);
+        if (!spread.periods.some((p) => p.id === periodId))
+          throw invalid(`${spread.entity.name} has no such period.`);
+        const period = await forceRetainedEarnings(db, ctx, periodId);
+        const [after] = await checksOf(db, ctx, borrowerId, [periodId]);
+        return { ...after, ...describeControls(period) };
       }),
   );
 
