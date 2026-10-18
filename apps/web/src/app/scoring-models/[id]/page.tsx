@@ -36,6 +36,7 @@ import { formatDate } from "@/lib/format";
 import { inputsLabel, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { ModelActions } from "../_components/create-model";
+import { CheckItems } from "../_components/check-items";
 import { FinancingItems } from "../_components/financing-items";
 import { ItemsWorkspace } from "../_components/items-workspace";
 import {
@@ -215,6 +216,20 @@ async function ScoringModelView({ params: routeParams, searchParams }: Props) {
                     label: item.label,
                     side: sides.get(item.code)!,
                   }))}
+                amounts={publishedItems.flatMap((item) =>
+                  item.dataType === "amount" &&
+                  item.kind !== "header" &&
+                  (item.statement === "income_statement" ||
+                    item.statement === "balance_sheet")
+                    ? [
+                        {
+                          code: item.code,
+                          label: item.label,
+                          statement: item.statement,
+                        },
+                      ]
+                    : [],
+                )}
               />
             ),
           },
@@ -276,15 +291,22 @@ function VersionStatus({
   );
 }
 
-// Where the model's inputs come from, and where new loans post.
+// Where the model's inputs come from, where new loans post, and what the
+// spread's checks against the statements read.
 function Settings({
   model,
   published,
   items,
+  amounts,
 }: {
   model: ScoringModelWithVersions;
   published: ScoringModelVersion | undefined;
   items: { code: string; label: string; side: "assets" | "claims" }[];
+  amounts: {
+    code: string;
+    label: string;
+    statement: "income_statement" | "balance_sheet";
+  }[];
 }) {
   return (
     <div className="flex max-w-4xl flex-col gap-5">
@@ -328,6 +350,13 @@ function Settings({
               : "Publish a version with balance sheet items first. The items to post to are picked from the published version."}
           </p>
         </Card>
+      )}
+      {published && amounts.length > 0 && (
+        <CheckItems
+          modelId={model.id}
+          values={model.checkItems}
+          items={amounts}
+        />
       )}
     </div>
   );

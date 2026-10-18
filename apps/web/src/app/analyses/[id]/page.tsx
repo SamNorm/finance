@@ -7,6 +7,7 @@ import {
   imbalance,
   listItems,
   runAnalysis,
+  spreadErrors,
   type AnalysisRun,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
@@ -83,6 +84,8 @@ async function AnalysisView({ params, searchParams }: Props) {
     project: s.project,
     imbalance: s.project && imbalance(s.project),
   }));
+  // Critical errors in the periods it analyzes, which hold completion back.
+  const broken = spreadErrors(spread, detail.analysis);
   // The open scenario's project, when it's out of balance.
   const offBalance =
     scenarios.find((s) => s.id === scenario?.id)?.imbalance ?? null;
@@ -179,16 +182,20 @@ async function AnalysisView({ params, searchParams }: Props) {
           {
             value: "results",
             label: "Results",
-            alert: offBalance
-              ? "error"
-              : run.breakdowns.some((b) => !b.reconciles)
-                ? "warning"
-                : undefined,
+            alert:
+              offBalance || broken.length
+                ? "error"
+                : run.breakdowns.some((b) => !b.reconciles)
+                  ? "warning"
+                  : undefined,
             content:
               run.periods.length === 0 ? (
                 empty
               ) : (
                 <div className="flex flex-col gap-5">
+                  {broken.length > 0 && (
+                    <SpreadErrors entity={entity} broken={broken} />
+                  )}
                   {offBalance && <ProjectImbalance message={offBalance} />}
                   <Breakdowns run={run} />
                   <CovenantSummary
@@ -262,6 +269,48 @@ async function AnalysisView({ params, searchParams }: Props) {
           },
         ]}
       />
+    </div>
+  );
+}
+
+// Critical errors in the spread periods the analysis uses, such as a
+// balance sheet that doesn't balance: its results can't be relied on, and
+// it can't be completed until they're fixed.
+function SpreadErrors({
+  entity,
+  broken,
+}: {
+  entity: { id: string; name: string };
+  broken: ReturnType<typeof spreadErrors>;
+}) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm">
+      <TriangleAlert
+        className="mt-0.5 size-4 shrink-0 text-danger"
+        aria-hidden
+      />
+      <div className="flex flex-col gap-1">
+        <p className="font-medium text-danger">The spread has errors</p>
+        <ul className="flex flex-col gap-0.5 text-muted">
+          {broken.flatMap(({ period, issues }) =>
+            issues.map((issue) => (
+              <li key={`${period.id}:${issue.code}`}>
+                {formatDate(period.periodEnd)}: {issue.message}
+              </li>
+            )),
+          )}
+        </ul>
+        <p className="text-muted">
+          Results can&apos;t be relied on until they&apos;re fixed on{" "}
+          <Link
+            href={`/borrowers/${entity.id}`}
+            className="text-accent hover:underline"
+          >
+            {entity.name}&apos;s spread
+          </Link>
+          , and the analysis can&apos;t be completed until then.
+        </p>
+      </div>
     </div>
   );
 }

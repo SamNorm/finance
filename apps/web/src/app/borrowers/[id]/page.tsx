@@ -73,6 +73,8 @@ async function SpreadView({ params, searchParams }: Props) {
     quality: p.quality,
     currency: p.currency,
     consolidated: p.consolidated,
+    reportedNetIncome: p.reportedNetIncome,
+    reconciliation: p.reconciliation,
   }));
   const { entity } = spread;
   const scoringModel = scoringModels.find(
@@ -191,6 +193,13 @@ async function SpreadView({ params, searchParams }: Props) {
                   values={spread.values}
                   computed={spread.computed}
                   checks={spread.checks}
+                  checked={{
+                    netIncome: Boolean(spread.checkItems.netIncome),
+                    retainedEarnings: Boolean(
+                      spread.checkItems.netIncome &&
+                      spread.checkItems.retainedEarnings,
+                    ),
+                  }}
                   statement={statement}
                 />
               </div>

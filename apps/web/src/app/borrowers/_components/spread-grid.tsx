@@ -2,6 +2,7 @@
 
 import type {
   Issue,
+  ReconciliationLine,
   ScoringItem,
   Statement,
   StatementQuality,
@@ -22,7 +23,7 @@ import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITY_SHORT, STATEMENTS } from "@/lib/labels";
 import { setValueAction } from "../actions";
 import { PasteDialog } from "./paste-dialog";
-import { PeriodDialog } from "./period-dialog";
+import { PeriodDialog, type Checked } from "./period-dialog";
 
 export interface GridPeriod {
   id: string;
@@ -31,6 +32,10 @@ export interface GridPeriod {
   quality: StatementQuality;
   currency: string;
   consolidated: boolean;
+  // What the statements say beyond the figures, which the checks compare
+  // the spread with.
+  reportedNetIncome: string | null;
+  reconciliation: ReconciliationLine[];
 }
 
 // The spread laid out like the scoring model: one row per item, one column per
@@ -44,6 +49,7 @@ export function SpreadGrid({
   values,
   computed,
   checks,
+  checked,
   statement,
 }: {
   entityId: string;
@@ -52,6 +58,8 @@ export function SpreadGrid({
   values: Record<string, Record<string, string>>;
   computed: Record<string, Record<string, string>>;
   checks: Record<string, Issue[]>;
+  // Which checks against the statements the scoring model turns on.
+  checked: Checked;
   statement: Statement;
 }) {
   const [pasting, setPasting] = useState(false);
@@ -228,6 +236,8 @@ export function SpreadGrid({
       <PeriodDialog
         period={period}
         entityId={entityId}
+        checked={checked}
+        checks={period && period !== "new" ? (checks[period.id] ?? []) : []}
         onClose={() => setPeriod(null)}
       />
     </section>

@@ -18,6 +18,7 @@ import {
   publishVersion,
   removeItem,
   replaceItems,
+  setCheckItems,
   setFinancingItems,
   updateItem,
   updateScoringModel,
@@ -134,6 +135,19 @@ export async function setFinancingItemsAction(
       longTermDebt: String(items.longTermDebt ?? ""),
       currentDebt: String(items.currentDebt ?? ""),
       cash: String(items.cash ?? ""),
+    }),
+  );
+}
+
+// Which items the spread's checks against the statements read.
+export async function setCheckItemsAction(
+  modelId: string,
+  items: { netIncome: string; retainedEarnings: string },
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    setCheckItems(db, ctx, modelId, {
+      netIncome: String(items.netIncome ?? ""),
+      retainedEarnings: String(items.retainedEarnings ?? ""),
     }),
   );
 }
