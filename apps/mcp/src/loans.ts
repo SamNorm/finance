@@ -105,8 +105,8 @@ export function loanPayments(loan: Amortizing, start: string) {
   };
 }
 
-// A scenario's sources and uses at closing, its line of credit increases and
-// subordinations, and whether sources cover uses.
+// A scenario's sources and uses at closing, its line of credit increases,
+// subordinations and adjustments, and whether it balances.
 export function describeProject(project: Project) {
   const totals = projectTotals(project);
   const off = imbalance(project);
@@ -148,6 +148,15 @@ export function describeProject(project: Project) {
       amount: money(s.amount),
       interestSaved: money(s.interestSaved),
       principalSaved: money(s.principalSaved),
+    })),
+    // Changes that move no funds, added to an item post-project: balance
+    // sheet ones from closing on, others yearly.
+    adjustments: (project.adjustments ?? []).map((a) => ({
+      id: a.id,
+      name: a.name,
+      postsTo: a.item,
+      amount: money(a.amount),
+      ...(a.side ? {} : { yearly: true }),
     })),
     totals: {
       sources: money(totals.sources),

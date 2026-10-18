@@ -242,6 +242,7 @@ describe("MCP server", () => {
       add_project_use: "adds",
       add_line_of_credit_increase: "adds",
       add_subordination: "adds",
+      add_project_adjustment: "adds",
       update_project_entry: "changes",
       remove_project_entry: "changes",
       set_project_closing: "changes",
@@ -494,6 +495,39 @@ describe("MCP server", () => {
       entryId: sub.entry.id,
     });
     expect(removed.project.subordinations).toEqual([]);
+
+    // The old press, written off: one side, then its pair.
+    expect(items.otherStatements).toContainEqual({
+      code: "REVENUE",
+      label: "Revenue",
+      statement: "income_statement",
+    });
+    const { value: writeOff } = await call("add_project_adjustment", {
+      scenarioId: scenario.id,
+      name: "Write off old press",
+      postsTo: "MACHINERY",
+      amount: "-100,000",
+    });
+    expect(writeOff.entry).toMatchObject({ amount: "-100,000.00" });
+    expect(writeOff.project.warning).toMatch(
+      /^Balance sheet adjustments change assets by -100,000 but liabilities and equity by 0/,
+    );
+    const { value: paired } = await call("add_project_adjustment", {
+      scenarioId: scenario.id,
+      name: "Loss on disposal",
+      postsTo: "RETAINED_EARNINGS",
+      amount: -100000,
+    });
+    expect(paired.project).not.toHaveProperty("warning");
+    expect(
+      await call("update_project_entry", {
+        scenarioId: scenario.id,
+        entryId: writeOff.entry.id,
+        rate: "5%",
+      }),
+    ).toEqual({
+      error: "An adjustment has no rate; its fields are name, amount, postsTo.",
+    });
   });
 
   it("keeps a borrower's existing loans", async () => {

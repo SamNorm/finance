@@ -30,7 +30,8 @@ import { describeProject } from "../loans";
 import { ADD, CHANGE, invalid, READ, respond } from "../respond";
 
 // A scenario's project, an entry at a time: sources (new loans and other
-// funds) and uses at closing, line of credit increases and subordinations.
+// funds) and uses at closing, line of credit increases, subordinations and
+// adjustments.
 // Every edit returns the project as it stands, with its totals, so the model
 // can tell the user when sources and uses don't match yet.
 
@@ -56,6 +57,7 @@ const FIELDS = {
   use: ["name", "amount", "postsTo"],
   line: ["name", "increase", "averageUsage", "rate"],
   subordination: ["name", "amount", "interestSaved", "principalSaved"],
+  adjustment: ["name", "amount", "postsTo"],
 } as const;
 
 function kindOf(project: Project | null, id: string) {
@@ -64,6 +66,7 @@ function kindOf(project: Project | null, id: string) {
   if (project?.uses.some((u) => u.id === id)) return "use";
   if (project?.lines.some((l) => l.id === id)) return "line";
   if (project?.subordinations.some((s) => s.id === id)) return "subordination";
+  if (project?.adjustments?.some((a) => a.id === id)) return "adjustment";
   return null;
 }
 
@@ -77,6 +80,7 @@ function edited(scenario: Scenario, id?: string) {
           ...project.uses,
           ...project.lineOfCreditIncreases,
           ...project.subordinations,
+          ...project.adjustments,
         ].find((e) => e.id === id)
       : undefined;
   return { scenario: scenario.name, ...(entry ? { entry } : {}), project };
@@ -88,13 +92,13 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "List the items a project can post to",
       description:
-        "The balance sheet items an analysis's project entries can post to (postsTo), on the assets side or the liabilities and equity side, and where new loans post.",
+        "The balance sheet items an analysis's project entries can post to (postsTo), on the assets side or the liabilities and equity side, and where new loans post. Adjustments can also change the other statements' items listed.",
       inputSchema: z.object({ analysisId }),
       annotations: READ,
     },
     ({ analysisId }) =>
       respond(async () => {
-        const { items, loansPostTo } = await getProjectSetup(
+        const { items, loansPostTo, adjustable } = await getProjectSetup(
           db,
           ctx,
           analysisId,
@@ -107,6 +111,10 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
         return {
           assets: side("assets"),
           liabilitiesAndEquity: side("claims"),
+          // For adjustments only, as yearly amounts.
+          otherStatements: adjustable
+            .filter((i) => !i.side)
+            .map(({ code, label, statement }) => ({ code, label, statement })),
           newLoans:
             longTermDebt && currentDebt && cash
               ? { longTermDebt, currentDebt, cash }
@@ -274,12 +282,49 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
   );
 
   server.registerTool(
+    "add_project_adjustment",
+    {
+      title: "Adjust an item post-project",
+      description: [
+        "Adds an adjustment to a scenario's project: a change that moves no funds at closing, added to an item in post-project columns. Negative amounts reduce it.",
+        "On the balance sheet they go in balancing pairs: writing off a replaced asset is Machinery -300,000 and Retained earnings -300,000; shareholder loans converted to shares are Due to shareholders -250,000 and Share capital +250,000. Assets must change as much as liabilities and equity before the analysis can be completed.",
+        "On other statements, amounts are yearly: one-time legal fees added back are their expense item -80,000.",
+      ].join(" "),
+      inputSchema: z.object({
+        scenarioId,
+        name: z.string().describe('e.g. "Write off old press".'),
+        postsTo: z
+          .string()
+          .describe(
+            "The input item it changes, from list_balance_sheet_items (either side, or the other statements').",
+          ),
+        amount: z
+          .union([z.string(), z.number()])
+          .describe('Signed: "-300,000" reduces the item.'),
+        closing,
+      }),
+      annotations: ADD,
+    },
+    ({ scenarioId, postsTo, ...input }) =>
+      respond(async () => {
+        const { scenario, entry } = await addProjectEntry(
+          db,
+          ctx,
+          scenarioId,
+          "adjustments",
+          { ...input, item: postsTo },
+        );
+        return edited(scenario, entry.id);
+      }),
+  );
+
+  server.registerTool(
     "update_project_entry",
     {
       title: "Change a project entry",
       description: [
-        "Changes some fields of a project's loan, other funds, use, line of credit increase or subordination; the others stay.",
-        "Fields by kind: a loan has name, amount, rate, repayment, years, frequency and moratorium (null removes it); funds and uses have name, amount and postsTo; a line of credit increase has name, increase, averageUsage and rate; a subordination has name, amount, interestSaved and principalSaved.",
+        "Changes some fields of a project's loan, other funds, use, line of credit increase, subordination or adjustment; the others stay.",
+        "Fields by kind: a loan has name, amount, rate, repayment, years, frequency and moratorium (null removes it); funds, uses and adjustments have name, amount and postsTo; a line of credit increase has name, increase, averageUsage and rate; a subordination has name, amount, interestSaved and principalSaved.",
         BALANCE,
       ].join(" "),
       inputSchema: z.object({
@@ -312,7 +357,7 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
         const wrong = given.filter((k) => !fields.includes(k));
         if (kind && wrong.length)
           throw invalid(
-            `A ${kind === "funds" ? "funds source" : kind} has no ${wrong.join(", ")}; its fields are ${fields.join(", ")}.`,
+            `${kind === "adjustment" ? "An" : "A"} ${kind === "funds" ? "funds source" : kind} has no ${wrong.join(", ")}; its fields are ${fields.join(", ")}.`,
           );
         const { postsTo, averageUsage, ...rest } = changes;
         const { scenario } = await updateProjectEntry(
@@ -335,7 +380,7 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Remove a project entry",
       description:
-        "Removes a loan, other funds, use, line of credit increase or subordination from a scenario's project. A project left with nothing is removed. Confirm with the user first.",
+        "Removes a loan, other funds, use, line of credit increase, subordination or adjustment from a scenario's project. A project left with nothing is removed. Confirm with the user first.",
       inputSchema: z.object({ scenarioId, entryId }),
       annotations: CHANGE,
     },
