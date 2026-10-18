@@ -15,7 +15,15 @@ import {
   type Spread,
   type Statement,
 } from "@finance/domain";
-import { ChartLine, Landmark, Layers, ListTree, Plus } from "lucide-react";
+import { listDocuments, type DocumentSummary } from "@finance/documents";
+import {
+  ChartLine,
+  FileText,
+  Landmark,
+  Layers,
+  ListTree,
+  Plus,
+} from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -35,6 +43,8 @@ import { Tabs, type Tab } from "@/components/tabs";
 import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITIES, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
+import { PrintedDocuments } from "../../documents/_components/printed-documents";
+import { documentRows } from "../../documents/rows";
 import { BorrowerActions } from "../_components/borrower-actions";
 import {
   ConsolidatedSpread,
@@ -71,10 +81,11 @@ async function SpreadView({ params, searchParams }: Props) {
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
-  const [analyses, scoringModels, metrics] = await Promise.all([
+  const [analyses, scoringModels, metrics, documents] = await Promise.all([
     listAnalyses(db, ctx, { entityId: id }),
     listScoringModels(db, ctx),
     listCovenantMetrics(db, ctx, id),
+    listDocuments(db, ctx, { entityId: id }),
   ]);
   const covenants = {
     value: "covenants",
@@ -91,6 +102,12 @@ async function SpreadView({ params, searchParams }: Props) {
         }))}
       />
     ),
+  };
+  const documentsTab = {
+    value: "documents",
+    label: "Documents",
+    count: documents.length,
+    content: <Documents documents={documents} analyses={analyses} />,
   };
   const items = spread.layout?.items ?? [];
   const statement =
@@ -121,6 +138,7 @@ async function SpreadView({ params, searchParams }: Props) {
         tab={typeof query.tab === "string" ? query.tab : undefined}
         analyses={analyses}
         covenantsTab={covenants}
+        documentsTab={documentsTab}
         scoringModel={scoringModel}
         scoringModels={scoringModels.map((m) => ({
           id: m.id,
@@ -281,6 +299,7 @@ async function SpreadView({ params, searchParams }: Props) {
               />
             ),
           },
+          documentsTab,
         ]}
       />
     </div>
@@ -297,6 +316,7 @@ async function ConsolidatedView({
   tab,
   analyses,
   covenantsTab,
+  documentsTab,
   scoringModel,
   scoringModels,
 }: {
@@ -308,6 +328,8 @@ async function ConsolidatedView({
   analyses: AnalysisSummary[];
   // The covenants in force, a consolidated client's own.
   covenantsTab: Tab;
+  // Printed from its analyses.
+  documentsTab: Tab;
   scoringModel: { id: string; name: string };
   scoringModels: { id: string; name: string; published: boolean }[];
 }) {
@@ -508,6 +530,7 @@ async function ConsolidatedView({
               />
             ),
           },
+          documentsTab,
         ]}
       />
     </div>
@@ -787,6 +810,46 @@ function Analyses({
         </table>
       </div>
     </Card>
+  );
+}
+
+// Every document printed from the borrower's analyses. They're printed from
+// an analysis, which says the scenario and the figures they show.
+function Documents({
+  documents,
+  analyses,
+}: {
+  documents: DocumentSummary[];
+  analyses: AnalysisSummary[];
+}) {
+  if (!documents.length) {
+    const latest = analyses[0];
+    return (
+      <EmptyState
+        icon={<FileText />}
+        title="No documents printed yet."
+        actions={
+          latest && (
+            <Link
+              href={`/analyses/${latest.id}?tab=documents`}
+              className={button.secondary}
+            >
+              Open {latest.name}
+            </Link>
+          )
+        }
+      >
+        Print an analysis report, a deal summary or a debt summary from an
+        analysis&apos;s Documents tab. Each is kept here as printed.
+      </EmptyState>
+    );
+  }
+  return (
+    <PrintedDocuments
+      documents={documentRows(documents)}
+      description="From all of the borrower's analyses, kept as they were printed. Print more from an analysis's Documents tab."
+      showAnalysis
+    />
   );
 }
 

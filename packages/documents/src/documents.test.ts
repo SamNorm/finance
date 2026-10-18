@@ -231,6 +231,7 @@ describe("documents", () => {
         template: "deal-summary",
         templateName: "Deal summary",
         scenarioId: dealId,
+        scenarioName: "Post-project: new equipment",
       });
       expect(document.pages).toBeGreaterThan(0);
       const { pdf } = await getDocumentPdf(db, ctx, document.id);
@@ -240,6 +241,25 @@ describe("documents", () => {
       expect(
         (await listDocuments(db, ctx, { analysisId })).map((d) => d.id),
       ).toEqual([document.id]);
+      // A borrower's documents say which analysis and scenario they show.
+      const base = await generateDocument(db, ctx, {
+        analysisId,
+        template: "debt-summary",
+      });
+      const { analysis, entity } = await getAnalysis(db, ctx, analysisId);
+      expect(base.analysisName).toBe(analysis.name);
+      expect(
+        await listDocuments(db, ctx, { entityId: entity.id }),
+      ).toMatchObject([
+        { id: base.id, analysisName: analysis.name, scenarioName: null },
+        {
+          id: document.id,
+          analysisId,
+          analysisName: analysis.name,
+          scenarioName: "Post-project: new equipment",
+        },
+      ]);
+      await deleteDocument(db, ctx, base.id);
       // Another organization can't read it.
       await rejects(
         getDocumentPdf(db, { organizationId: randomUUID() }, document.id),

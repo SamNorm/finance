@@ -25,6 +25,7 @@ import { formatDate, formatDay, formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
 import { AnalysisActions } from "../_components/analysis-actions";
 import { AnalysisCharts } from "../_components/analysis-charts";
+import { documentRows } from "../../documents/rows";
 import { AnalysisDocuments } from "../_components/analysis-documents";
 import { AnalysisSettings } from "../_components/analysis-settings";
 import { CovenantResults } from "../_components/covenant-results";
@@ -321,18 +322,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                 templates={BUILT_IN_TEMPLATES.map(
                   ({ key, name, description }) => ({ key, name, description }),
                 )}
-                documents={documents.map((d) => ({
-                  id: d.id,
-                  title: d.title,
-                  templateName: d.templateName,
-                  scenario: d.scenarioId
-                    ? (detail.scenarios.find((s) => s.id === d.scenarioId)
-                        ?.name ?? "A scenario since deleted")
-                    : "Base case",
-                  pages: d.pages,
-                  size: d.size,
-                  createdAt: d.createdAt.toISOString(),
-                }))}
+                documents={documentRows(documents)}
               />
             ),
           },

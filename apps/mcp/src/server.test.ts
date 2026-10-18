@@ -1336,7 +1336,12 @@ describe("MCP server", () => {
         borrowerId: ids.acme,
       });
       expect(listed).toMatchObject([
-        { id: value.id, document: "Debt summary" },
+        {
+          id: value.id,
+          document: "Debt summary",
+          analysisId: ids.analysis,
+          scenario: "Base case",
+        },
       ]);
       await closeBrowser();
     },

@@ -1,38 +1,19 @@
 "use client";
 
-import { Eye, FileDown, FileText, Trash2 } from "lucide-react";
+import { Eye, FileDown, FileText } from "lucide-react";
 import { useState, useTransition } from "react";
 import { Card, EmptyState } from "@/components/page";
-import { button, table } from "@/components/styles";
+import { button } from "@/components/styles";
 import {
-  deleteDocumentAction,
-  generateDocumentAction,
-} from "../../documents/actions";
+  PrintedDocuments,
+  pdfUrl,
+  type DocumentRow,
+} from "../../documents/_components/printed-documents";
+import { generateDocumentAction } from "../../documents/actions";
 
 // The analysis's documents: the built-in ones to preview or print for the
 // scenario open (or the base case), and those printed before, kept as they
 // were for the credit file.
-
-export interface DocumentRow {
-  id: string;
-  title: string;
-  templateName: string;
-  scenario: string;
-  pages: number;
-  size: number;
-  // ISO timestamp.
-  createdAt: string;
-}
-
-const when = new Intl.DateTimeFormat("en-CA", {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-const pdfUrl = (id: string) => `/documents/${id}/pdf`;
 
 export function AnalysisDocuments({
   analysisId,
@@ -50,7 +31,6 @@ export function AnalysisDocuments({
   const [latest, setLatest] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [, startTransition] = useTransition();
-  const [deleting, startDelete] = useTransition();
   const query = (template: string) =>
     `/documents/preview?${new URLSearchParams({
       analysis: analysisId,
@@ -138,77 +118,10 @@ export function AnalysisDocuments({
           from, so it reads the same however the analysis changes after.
         </EmptyState>
       ) : (
-        <Card
-          title="Printed documents"
+        <PrintedDocuments
+          documents={documents}
           description="Kept as they were printed, for the credit file."
-          flush
-        >
-          <div className="overflow-x-auto">
-            <table className={table.table}>
-              <thead>
-                <tr className={table.head}>
-                  <th className={table.th}>Document</th>
-                  <th className={table.th}>Scenario</th>
-                  <th className={`${table.th} text-right`}>Pages</th>
-                  <th className={`${table.th} text-right`}>Printed</th>
-                  <th className={table.th} />
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map((d) => (
-                  <tr
-                    key={d.id}
-                    className="border-b border-line/70 last:border-b-0"
-                  >
-                    <td className={table.td}>
-                      <a
-                        href={pdfUrl(d.id)}
-                        target="_blank"
-                        rel="noopener"
-                        className="font-medium hover:text-accent"
-                      >
-                        {d.title}
-                      </a>
-                      <span className="block text-xs text-muted">
-                        {d.templateName} · {Math.round(d.size / 1024)} KB
-                      </span>
-                    </td>
-                    <td className={`${table.td} text-muted`}>{d.scenario}</td>
-                    <td className={`${table.td} text-right tabular-nums`}>
-                      {d.pages}
-                    </td>
-                    <td
-                      className={`${table.td} text-right whitespace-nowrap text-muted tabular-nums`}
-                    >
-                      {when.format(new Date(d.createdAt))}
-                    </td>
-                    <td className={`${table.td} w-10`}>
-                      <button
-                        type="button"
-                        className={button.icon}
-                        aria-label={`Delete ${d.title}`}
-                        disabled={deleting}
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Delete "${d.title}"? A copy already in a credit file isn't affected.`,
-                            )
-                          )
-                            startDelete(async () => {
-                              const result = await deleteDocumentAction(d.id);
-                              if (!result.ok) setFailure(result.message);
-                            });
-                        }}
-                      >
-                        <Trash2 />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        />
       )}
     </div>
   );

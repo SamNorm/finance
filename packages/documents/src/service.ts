@@ -15,7 +15,7 @@ import { BUILT_IN_TEMPLATES, templateOf, type Template } from "./templates";
 // they read, so a document reads the same however the analysis changes
 // after. Generating again makes a new one.
 
-const { documents, organizations } = schema;
+const { analyses, documents, organizations } = schema;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -23,7 +23,12 @@ export interface DocumentSummary {
   id: string;
   entityId: string;
   analysisId: string | null;
+  // The analysis as it's named now.
+  analysisName: string | null;
   scenarioId: string | null;
+  // The scenario as it was named when printed, kept when it's deleted; null
+  // for the base case.
+  scenarioName: string | null;
   title: string;
   template: string;
   templateName: string;
@@ -39,6 +44,7 @@ const summary = {
   entityId: documents.entityId,
   analysisId: documents.analysisId,
   scenarioId: documents.scenarioId,
+  scenarioName: sql<string | null>`${documents.data}->'scenario'->>'name'`,
   title: documents.title,
   template: documents.template,
   definition: documents.definition,
@@ -125,7 +131,7 @@ export async function generateDocument(
       pages,
     })
     .returning(summary);
-  return toSummary(row!);
+  return toSummary({ ...row!, analysisName: detail.analysis.name });
 }
 
 export async function listDocuments(
@@ -139,8 +145,9 @@ export async function listDocuments(
   )
     return [];
   const rows = await db
-    .select(summary)
+    .select({ ...summary, analysisName: analyses.name })
     .from(documents)
+    .leftJoin(analyses, eq(analyses.id, documents.analysisId))
     .where(
       and(
         eq(documents.organizationId, ctx.organizationId),
