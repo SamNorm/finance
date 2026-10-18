@@ -6,16 +6,20 @@ import type {
   ScoringItem,
   Statement,
 } from "@finance/domain";
-import { Trash2 } from "lucide-react";
+import { ListPlus, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
 import {
   startTransition,
   useActionState,
+  useLayoutEffect,
   useMemo,
+  useOptimistic,
+  useRef,
   useState,
   useTransition,
 } from "react";
 import { IssueList } from "@/components/issue-list";
+import { Popover } from "@/components/menu";
 import { Card } from "@/components/page";
 import { button, input, table } from "@/components/styles";
 import { Field, Icon, keepFields, Modal } from "@/components/ui";
@@ -28,6 +32,7 @@ import {
   deletePeriodAction,
   removeConsolidationMemberAction,
   saveConsolidatedPeriodAction,
+  setItemEliminationsAction,
 } from "../actions";
 import type { ScoringModelOption } from "./new-borrower";
 import type { Checked } from "./period-dialog";
@@ -796,28 +801,43 @@ export function Members({
 }
 
 // One period item by item: each member's figure, what's eliminated, and the
-// consolidated figure.
+// consolidated figure. Eliminations are typed in their column, an item at a
+// time; members' figures are changed on their own spreads.
 export function Worksheet({
+  entityId,
   items,
   periods,
   values,
   computed,
+  checks,
+  checked,
   consolidation,
+  eliminable,
 }: {
+  entityId: string;
   items: ScoringItem[];
   periods: GridPeriod[];
   values: Record<string, Record<string, string>>;
   computed: Record<string, Record<string, string>>;
+  checks: Record<string, Issue[]>;
+  checked: Checked;
   consolidation: Consolidation;
+  eliminable: EliminableItem[];
 }) {
   const [periodId, setPeriodId] = useState(periods.at(-1)?.id ?? null);
   const [statement, setStatement] = useState<Statement>("balance_sheet");
+  const [editing, setEditing] = useState(false);
   const names = useMemo(
     () => new Map(consolidation.members.map((m) => [m.id, m.name])),
     [consolidation.members],
   );
+  const sides = useMemo(
+    () => new Map(eliminable.map((i) => [i.code, i.side])),
+    [eliminable],
+  );
   const detail = periodId ? consolidation.periods[periodId] : undefined;
-  if (!periodId || !detail)
+  const period = periods.find((p) => p.id === periodId);
+  if (!periodId || !detail || !period)
     return (
       <p className="rounded-xl border border-dashed border-line-strong px-6 py-12 text-center text-sm text-muted">
         Add a period to see what it adds up.
@@ -828,6 +848,13 @@ export function Worksheet({
   );
   const total = (code: string) =>
     values[periodId]?.[code] ?? computed[periodId]?.[code];
+  const change = { assets: 0, claims: 0 };
+  for (const e of detail.eliminations) {
+    const side = sides.get(e.item);
+    if (side) change[side] += Number(e.amount);
+  }
+  const balanced = Math.abs(change.assets - change.claims) < 1;
+  const issues = checks[periodId] ?? [];
   return (
     <Card flush>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
@@ -843,6 +870,15 @@ export function Worksheet({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className={button.secondary}
+          onClick={() => setEditing(true)}
+          title="Its end, the members' statements it adds up, and every elimination by name"
+        >
+          <Pencil />
+          Edit period
+        </button>
         <nav className="ml-auto flex overflow-x-auto" aria-label="Statements">
           {STATEMENTS.map(({ value, label }) => (
             <button
@@ -856,6 +892,20 @@ export function Worksheet({
             </button>
           ))}
         </nav>
+      </div>
+      <div className="flex flex-col gap-2 border-b border-line px-4 py-2.5 text-sm">
+        <p className="text-muted">
+          Type an elimination in its column, negative to reduce the item, and
+          the consolidated figure follows.{" "}
+          {change.assets !== 0 || change.claims !== 0 ? (
+            <span className={balanced ? "" : "font-medium text-danger"}>
+              {balanced
+                ? "Balance sheet eliminations balance."
+                : `Balance sheet eliminations change assets by ${formatFigure(String(change.assets), "amount")} but liabilities and equity by ${formatFigure(String(change.claims), "amount")}.`}
+            </span>
+          ) : null}
+        </p>
+        {issues.length > 0 && <IssueList issues={issues} limit={4} />}
       </div>
       <div className="max-h-[min(78vh,64rem)] overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">
@@ -920,11 +970,22 @@ export function Worksheet({
                       {f ? formatFigure(f, item.dataType) : ""}
                     </td>
                   ))}
-                  <td className="border-b border-l border-line/60 px-3 py-1.5 text-right text-muted tabular-nums">
-                    {Math.abs(eliminated) >= 0.005
-                      ? formatFigure(String(eliminated), item.dataType)
-                      : ""}
-                  </td>
+                  {sides.has(item.code) ? (
+                    <EliminationCell
+                      key={`${periodId}:${item.code}`}
+                      periodId={periodId}
+                      item={item}
+                      eliminations={detail.eliminations.filter(
+                        (e) => e.item === item.code,
+                      )}
+                    />
+                  ) : (
+                    <td className="border-b border-l border-line/60 px-3 py-1.5 text-right text-muted tabular-nums">
+                      {Math.abs(eliminated) >= 0.005
+                        ? formatFigure(String(eliminated), item.dataType)
+                        : ""}
+                    </td>
+                  )}
                   <td className="border-b border-l border-line/60 px-3 py-1.5 text-right font-medium tabular-nums">
                     {consolidated === undefined
                       ? ""
@@ -936,6 +997,256 @@ export function Worksheet({
           </tbody>
         </table>
       </div>
+      <Modal
+        open={editing}
+        onClose={() => setEditing(false)}
+        wide
+        title={`Period ending ${formatDate(period.periodEnd)}`}
+      >
+        {editing && (
+          <PeriodForm
+            entityId={entityId}
+            period={period}
+            detail={detail}
+            members={consolidation.members}
+            eliminable={eliminable}
+            checked={checked}
+            checks={issues}
+            onClose={() => setEditing(false)}
+          />
+        )}
+      </Modal>
     </Card>
+  );
+}
+
+type Elimination = Consolidation["periods"][string]["eliminations"][number];
+
+// An item's eliminations in the worksheet. With none or one, the amount is
+// typed in place, as in the spread: Enter moves down, Escape cancels, and a
+// blank removes it. The list opens beside it, for names and for several on
+// one item, such as rent and management fees both out of revenue.
+function EliminationCell({
+  periodId,
+  item,
+  eliminations,
+}: {
+  periodId: string;
+  item: ScoringItem;
+  eliminations: Elimination[];
+}) {
+  const single = eliminations.length <= 1;
+  const current = eliminations[0];
+  const total = eliminations.reduce((sum, e) => sum + Number(e.amount), 0);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [shown, setShown] = useOptimistic(
+    eliminations.length ? String(total) : "",
+  );
+  const [failure, setFailure] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+  const cancelled = useRef(false);
+  const field = useRef<HTMLInputElement>(null);
+  // The raw amount replaces the formatted one on focus, which drops the
+  // selection: select it again once it's in, and keep the mouseup that
+  // follows a click from collapsing it, so typing replaces the amount.
+  const selectOnEdit = useRef(false);
+  const keepSelection = useRef(false);
+  useLayoutEffect(() => {
+    if (draft !== null && selectOnEdit.current) {
+      selectOnEdit.current = false;
+      keepSelection.current = true;
+      field.current?.select();
+    }
+  }, [draft]);
+
+  function save(entries: { id?: string; name?: string; amount: string }[]) {
+    startTransition(async () => {
+      const amount = entries.reduce((sum, e) => sum + typed(e.amount), 0);
+      setShown(entries.some((e) => e.amount.trim()) ? String(amount) : "");
+      const result = await setItemEliminationsAction(
+        periodId,
+        item.code,
+        entries,
+      );
+      setFailure(result.ok ? null : result.message);
+    });
+  }
+
+  function commit() {
+    const raw = (draft ?? "").trim();
+    setDraft(null);
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
+    if (raw === (current?.amount ?? "")) return;
+    save([{ id: current?.id, name: current?.name, amount: raw }]);
+  }
+
+  function move(from: HTMLInputElement, step: number) {
+    const cells = [
+      ...document.querySelectorAll<HTMLInputElement>("input[data-elimination]"),
+    ];
+    cells[cells.indexOf(from) + step]?.focus();
+  }
+
+  return (
+    <td
+      className={`border-b border-l border-line/60 p-0 ${failure ? "ring-2 ring-danger/60 ring-inset" : ""}`}
+    >
+      <div className="group flex items-center">
+        <Popover
+          align="end"
+          width="w-[26rem]"
+          trigger={
+            <button
+              type="button"
+              aria-label={`${item.label}: eliminations by name`}
+              title={
+                eliminations.map((e) => e.name).join(", ") ||
+                "Name it, or add several"
+              }
+              className={`${button.icon} ml-1 shrink-0 ${single ? "opacity-0 group-hover:opacity-100 focus:opacity-100" : ""}`}
+            >
+              <ListPlus />
+            </button>
+          }
+        >
+          <ItemEliminations
+            key={eliminations.map((e) => `${e.id}${e.name}${e.amount}`).join()}
+            item={item}
+            eliminations={eliminations}
+            onSave={save}
+          />
+        </Popover>
+        {single ? (
+          <input
+            data-elimination
+            value={draft ?? (shown === "" ? "" : formatFigure(shown, "amount"))}
+            title={failure ?? current?.name ?? "Type an amount to eliminate"}
+            aria-label={`${item.label}, elimination`}
+            ref={field}
+            onFocus={() => {
+              selectOnEdit.current = true;
+              setDraft(current?.amount ?? "");
+            }}
+            onMouseUp={(e) => {
+              if (keepSelection.current) e.preventDefault();
+              keepSelection.current = false;
+            }}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              keepSelection.current = false;
+              if (e.key === "Enter") {
+                e.preventDefault();
+                move(e.currentTarget, e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                cancelled.current = true;
+                e.currentTarget.blur();
+              }
+            }}
+            className="h-8 w-full min-w-0 bg-transparent px-3 text-right text-muted tabular-nums outline-none focus:bg-accent-soft/60 focus:text-foreground"
+          />
+        ) : (
+          <span
+            title={failure ?? eliminations.map((e) => e.name).join(", ")}
+            className="h-8 w-full px-3 text-right leading-8 text-muted tabular-nums"
+          >
+            {formatFigure(shown, "amount")}
+          </span>
+        )}
+      </div>
+    </td>
+  );
+}
+
+// An item's eliminations by name, saved together.
+function ItemEliminations({
+  item,
+  eliminations,
+  onSave,
+}: {
+  item: ScoringItem;
+  eliminations: Elimination[];
+  onSave: (entries: { id?: string; name: string; amount: string }[]) => void;
+}) {
+  const [rows, setRows] = useState(() =>
+    eliminations.length
+      ? eliminations.map((e) => ({
+          key: e.id,
+          id: e.id as string | undefined,
+          name: e.name,
+          amount: formatFigure(e.amount, "amount"),
+        }))
+      : [{ key: newKey(), id: undefined, name: "", amount: "" }],
+  );
+  const set = (key: string, patch: Partial<(typeof rows)[number]>) =>
+    setRows((list) =>
+      list.map((r) => (r.key === key ? { ...r, ...patch } : r)),
+    );
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <p className="text-sm font-medium">{item.label}</p>
+        <p className="text-xs text-muted">
+          Eliminations on this line, negative to reduce it. A blank amount
+          removes one.
+        </p>
+      </div>
+      {rows.map((row) => (
+        <div key={row.key} className="flex items-center gap-2">
+          <input
+            aria-label="Name"
+            placeholder={`Intercompany ${item.label.toLowerCase()}`}
+            value={row.name}
+            onChange={(e) => set(row.key, { name: e.target.value })}
+            className={`${input} min-w-0 flex-1`}
+          />
+          <input
+            aria-label="Amount"
+            placeholder="(120,000)"
+            inputMode="decimal"
+            value={row.amount}
+            onChange={(e) => set(row.key, { amount: e.target.value })}
+            className={`${input} w-32 shrink-0 text-right tabular-nums`}
+          />
+          <button
+            type="button"
+            className={button.icon}
+            aria-label={`Remove ${row.name || "the elimination"}`}
+            onClick={() =>
+              setRows((list) => list.filter((r) => r.key !== row.key))
+            }
+          >
+            <Trash2 />
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={button.ghost}
+          onClick={() =>
+            setRows((list) => [
+              ...list,
+              { key: newKey(), id: undefined, name: "", amount: "" },
+            ])
+          }
+        >
+          <Icon name="plus" />
+          Elimination
+        </button>
+        <button
+          type="button"
+          className={`${button.primary} ml-auto`}
+          onClick={() =>
+            onSave(rows.map(({ id, name, amount }) => ({ id, name, amount })))
+          }
+        >
+          Save
+        </button>
+      </div>
+    </div>
   );
 }

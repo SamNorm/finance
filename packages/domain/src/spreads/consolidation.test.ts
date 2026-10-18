@@ -35,6 +35,7 @@ import {
   removeElimination,
   setConsolidatedStatements,
   setEliminations,
+  setItemEliminations,
   updateElimination,
 } from "./consolidation";
 import {
@@ -247,6 +248,54 @@ describe("consolidated clients", () => {
       setEliminations(db, ctx, period.id, [{ name: "Zero", item: "CASH" }]),
       "invalid",
     );
+
+    // A worksheet cell at a time: an item's eliminations change in place,
+    // the others stay, and a new one is named after its item.
+    let edited = await setItemEliminations(db, ctx, period.id, "REVENUE", [
+      { amount: "(100)" },
+      { name: "Management fees", amount: "-20" },
+    ]);
+    expect(edited.eliminations.map((e) => [e.name, e.item, e.amount])).toEqual([
+      ["Advance", "DUE_FROM_RELATED_CURRENT", "-50"],
+      ["Advance", "DUE_TO_RELATED_CURRENT", "-50"],
+      ["Intercompany revenue", "REVENUE", "-100"],
+      ["Management fees", "REVENUE", "-20"],
+      ["Rent", "RENT_EXPENSE", "-120"],
+    ]);
+    const fees = edited.eliminations[3]!;
+    edited = await setItemEliminations(db, ctx, period.id, "REVENUE", [
+      { ...fees, amount: "-25" },
+      { name: "Intercompany revenue", amount: "0" },
+    ]);
+    expect(edited.eliminations.filter((e) => e.item === "REVENUE")).toEqual([
+      { ...fees, amount: "-25" },
+    ]);
+    edited = await setItemEliminations(db, ctx, period.id, "OTHER_INCOME", [
+      { amount: "-5" },
+    ]);
+    expect(edited.eliminations.at(-1)).toMatchObject({
+      name: "Intercompany other income (expense)",
+      item: "OTHER_INCOME",
+    });
+    edited = await setItemEliminations(db, ctx, period.id, "OTHER_INCOME", [
+      { amount: "" },
+    ]);
+    expect(edited.eliminations.map((e) => e.item)).not.toContain(
+      "OTHER_INCOME",
+    );
+    await rejects(
+      setItemEliminations(db, ctx, period.id, "TOTAL_ASSETS", [
+        { amount: "1" },
+      ]),
+      "invalid",
+    );
+    await rejects(
+      setItemEliminations(db, ctx, period.id, "CASH", [{ amount: "lots" }]),
+      "invalid",
+    );
+    await setItemEliminations(db, ctx, period.id, "REVENUE", [
+      { name: "Rent", amount: "-120" },
+    ]);
 
     // A member's figures change, and so does the group's.
     await setValues(db, ctx, opco.period.id, {

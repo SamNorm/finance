@@ -300,6 +300,20 @@ async function ConsolidatedView({
   );
   const items = layout?.items ?? [];
   const sides = balanceSheetSides(items);
+  // What eliminations can change, and on which side of the balance sheet.
+  const eliminableItems = eliminable(items).map((item) => ({
+    code: item.code,
+    label: item.label,
+    statement: item.statement,
+    side: sides.get(item.code) ?? null,
+  }));
+  // There's no net income as printed: each member is checked on its own.
+  const checked = {
+    netIncome: false,
+    retainedEarnings: Boolean(
+      spread.checkItems.netIncome && spread.checkItems.retainedEarnings,
+    ),
+  };
   const issues = Object.values(spread.checks).flat();
   const errors = issues.filter((i) => i.severity === "error").length;
   const schedules = members.map((m) => m.debtSchedule);
@@ -408,21 +422,10 @@ async function ConsolidatedView({
                   values={spread.values}
                   computed={spread.computed}
                   checks={spread.checks}
-                  checked={{
-                    netIncome: false,
-                    retainedEarnings: Boolean(
-                      spread.checkItems.netIncome &&
-                      spread.checkItems.retainedEarnings,
-                    ),
-                  }}
+                  checked={checked}
                   statement={statement}
                   consolidation={consolidation}
-                  eliminable={eliminable(items).map((item) => ({
-                    code: item.code,
-                    label: item.label,
-                    statement: item.statement,
-                    side: sides.get(item.code) ?? null,
-                  }))}
+                  eliminable={eliminableItems}
                 />
               </div>
             ),
@@ -430,13 +433,18 @@ async function ConsolidatedView({
           {
             value: "worksheet",
             label: "Worksheet",
+            alert: errors ? "error" : undefined,
             content: (
               <Worksheet
+                entityId={entity.id}
                 items={items}
                 periods={periods}
                 values={spread.values}
                 computed={spread.computed}
+                checks={spread.checks}
+                checked={checked}
                 consolidation={consolidation}
+                eliminable={eliminableItems}
               />
             ),
           },

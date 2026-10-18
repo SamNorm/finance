@@ -827,6 +827,49 @@ export async function setEliminations(
   return updated!;
 }
 
+// Replaces the eliminations on one item, keeping the period's others, as the
+// worksheet edits them a cell at a time. An entry with no amount, or zero,
+// is dropped; one with no name is named after its item.
+export async function setItemEliminations(
+  db: Db,
+  ctx: Context,
+  periodId: string,
+  item: string,
+  entries: readonly Omit<EliminationInput, "item">[],
+): Promise<StatementPeriod> {
+  const { period } = await findConsolidatedPeriod(db, ctx, periodId);
+  const items = await listItems(db, ctx, period.scoringModelVersionId);
+  const target = eliminable(items).find((i) => i.code === item);
+  if (!target)
+    throw invalid(
+      "Eliminations change an input amount of the scoring model, not a total.",
+    );
+  const given = entries
+    .filter((e) => {
+      const parsed = parseValue(String(e.amount ?? ""), "amount");
+      return (
+        "error" in parsed ||
+        (parsed.value !== null && !new Dec(parsed.value).isZero())
+      );
+    })
+    .map((e) => ({
+      ...e,
+      item,
+      name:
+        String(e.name ?? "").trim() ||
+        `Intercompany ${target.label.toLowerCase()}`,
+    }));
+  // In place of the item's first, so the list keeps its order.
+  const first = period.eliminations.findIndex((e) => e.item === item);
+  const others = period.eliminations.filter((e) => e.item !== item);
+  const at = first === -1 ? others.length : first;
+  return setEliminations(db, ctx, periodId, [
+    ...others.slice(0, at),
+    ...given,
+    ...others.slice(at),
+  ]);
+}
+
 const noElimination = () =>
   new DomainError("not_found", "The period has no such elimination.");
 

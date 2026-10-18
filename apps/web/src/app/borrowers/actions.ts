@@ -16,6 +16,7 @@ import {
   setDebtSchedule,
   setEliminations,
   setExistingLoanAdjustments,
+  setItemEliminations,
   setPeriodControls,
   setValue,
   STATEMENT_QUALITIES,
@@ -320,6 +321,29 @@ export async function saveConsolidatedPeriodAction(
       await setEliminations(tx, ctx, id, eliminations);
       await setPeriodControls(tx, ctx, id, { reconciliation });
     });
+  });
+}
+
+// Replaces the eliminations on one item of a consolidated period, as the
+// worksheet edits them; the period's others stay.
+export async function setItemEliminationsAction(
+  periodId: string,
+  item: string,
+  entries: { id?: string; name?: string; amount: string }[],
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (!Array.isArray(entries)) throw invalid("Eliminations must be a list.");
+    return setItemEliminations(
+      db,
+      ctx,
+      String(periodId),
+      String(item),
+      entries.map((e) => ({
+        id: e?.id,
+        name: String(e?.name ?? ""),
+        amount: String(e?.amount ?? ""),
+      })),
+    );
   });
 }
 
