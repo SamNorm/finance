@@ -5,8 +5,10 @@ import { assumption, calc, complete, header, type Line } from "./lines";
 
 // The demo financial model: an annual review of debt service, leverage and
 // liquidity, with covenant tests, simple projections and post-project
-// financing read through the PROFORMA_ inputs. Codes refer to the fictional
-// commercial banking template.
+// financing read through the PROFORMA_ inputs. Coverage comes three ways:
+// on cash flow available for debt service, and on free cash flow after
+// distributions, with and without the capex plan's purchases paid from
+// cash. Codes refer to the fictional commercial banking template.
 
 const LINES: Line[] = [
   header("SEC_ASSUMPTIONS", "Projection assumptions"),
@@ -30,6 +32,20 @@ const LINES: Line[] = [
     "percent",
     "0.265",
     "On projected taxable income.",
+  ),
+  assumption(
+    "ASSUMED_DIVIDENDS",
+    "Dividends assumed",
+    "amount",
+    null,
+    "Dividends a scenario assumes, year by year. Blank keeps those paid, and projected, last year's.",
+  ),
+  assumption(
+    "ASSUMED_ADVANCES",
+    "Advances to shareholders assumed",
+    "amount",
+    null,
+    "Advances to shareholders a scenario assumes, year by year. Blank keeps the statements', and none projected.",
   ),
 
   header("SEC_PROFITABILITY", "Profitability"),
@@ -121,6 +137,54 @@ const LINES: Line[] = [
   calc("DEBT_SERVICE", "Debt service", "amount", "INTEREST + PRINCIPAL"),
   calc("DSCR", "Debt service coverage", "ratio", "CFADS / DEBT_SERVICE"),
 
+  header("SEC_FREE_CASH_FLOW", "Free cash flow coverage"),
+  calc(
+    "DIVIDENDS",
+    "Dividends",
+    "amount",
+    "IF(ISBLANK(ASSUMED_DIVIDENDS), CF_DIVIDENDS, ASSUMED_DIVIDENDS)",
+    "IF(ISBLANK(ASSUMED_DIVIDENDS), PREV(DIVIDENDS), ASSUMED_DIVIDENDS)",
+    "Paid, from the cash flow statement, unless the scenario assumes an amount for the year; projected, last year's.",
+  ),
+  calc(
+    "ADVANCES",
+    "Advances to shareholders",
+    "amount",
+    "IF(ISBLANK(ASSUMED_ADVANCES), MAX(0, -CF_SHAREHOLDER_ADVANCES), ASSUMED_ADVANCES)",
+    null,
+    "Net advances to shareholders from the cash flow statement, unless the scenario assumes an amount for the year.",
+  ),
+  calc(
+    "CAPEX_FROM_CASH",
+    "Capex paid from cash",
+    "amount",
+    "CAPEX_SPENT - CAPEX_FINANCED",
+    null,
+    "The capex plan's purchases its loans don't finance, on top of maintenance capex.",
+  ),
+  calc(
+    "FREE_CASH_FLOW",
+    "Free cash flow",
+    "amount",
+    "CFADS - DIVIDENDS - ADVANCES - CAPEX_FROM_CASH",
+    null,
+    "Cash flow available for debt service, less distributions to shareholders and capex paid from cash.",
+  ),
+  calc(
+    "FCF_COVERAGE",
+    "Free cash flow coverage",
+    "ratio",
+    "FREE_CASH_FLOW / DEBT_SERVICE",
+  ),
+  calc(
+    "FCF_COVERAGE_BEFORE_CAPEX",
+    "Free cash flow coverage before capex",
+    "ratio",
+    "(FREE_CASH_FLOW + CAPEX_FROM_CASH) / DEBT_SERVICE",
+    null,
+    "After distributions, without penalizing capex paid from cash.",
+  ),
+
   header("SEC_LEVERAGE", "Leverage and liquidity"),
   calc(
     "FUNDED_DEBT",
@@ -156,12 +220,21 @@ const LINES: Line[] = [
 export const DEMO_MODEL = {
   name: "Annual review: debt service",
   description:
-    "Debt service coverage, leverage and liquidity, the ratios borrowers' covenants test, with a two-year projection and post-project financing.",
+    "Debt service coverage, before and after distributions, leverage and liquidity, the ratios borrowers' covenants test, with a two-year projection and post-project financing.",
   charts: [
     {
       id: "dscr",
       title: "Debt service coverage",
       series: [{ code: "DSCR", mark: "line" }],
+      threshold: null,
+    },
+    {
+      id: "free-cash-flow",
+      title: "Coverage before and after distributions",
+      series: [
+        { code: "DSCR", mark: "line" },
+        { code: "FCF_COVERAGE", mark: "line" },
+      ],
       threshold: null,
     },
     {
@@ -233,13 +306,29 @@ export const DEMO_CAPEX_SCENARIO: ScenarioInput = {
 // financed by a term loan and an equity injection, with a larger operating
 // line and the shareholders' loans postponed in favour of the lender. The
 // deal proposes covenants of its own: coverage eased, and leverage given
-// room until the new line pays off.
-export function demoScenarios(shareholderLoans: string): ScenarioInput[] {
+// room until the new line pays off. It also assumes dividends held to half
+// of the last year's (`dividends`) until 2026, then three quarters.
+export function demoScenarios(
+  shareholderLoans: string,
+  dividends = "0",
+): ScenarioInput[] {
+  const share = (rate: number) => String(Math.round(Number(dividends) * rate));
   return [
     { name: "Revenue −15%", overrides: { REVENUE_GROWTH: "-0.15" } },
     { name: "Margin squeeze", overrides: { MARGIN_SHIFT: "-0.02" } },
     {
       name: "Post-project: new equipment",
+      ...(Number(dividends) > 0
+        ? {
+            periodOverrides: {
+              ASSUMED_DIVIDENDS: {
+                "2024-12-31": share(0.5),
+                "2025-12-31": share(0.5),
+                "2026-12-31": share(0.75),
+              },
+            },
+          }
+        : {}),
       project: {
         closing: "2025-01-31",
         sources: [

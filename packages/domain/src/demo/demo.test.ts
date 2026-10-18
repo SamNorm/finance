@@ -87,6 +87,7 @@ function run(
   options: {
     projectionYears?: number;
     overrides?: Record<string, string>;
+    periodOverrides?: Record<string, Record<string, string>>;
     project?: ProjectInput | null;
     debtSchedule?: DebtSchedule;
     modelInputs?: Record<string, string>[];
@@ -116,6 +117,7 @@ function run(
     projectionYears: options.projectionYears ?? 0,
     lines,
     overrides: options.overrides ?? {},
+    periodOverrides: options.periodOverrides,
     project,
     capex: options.capex,
     debtSchedules: options.debtSchedule ? [options.debtSchedule] : [],
@@ -465,6 +467,77 @@ describe("demo data", () => {
       Number(posted[2]!.entered.TOTAL_ASSETS) -
         Number(pasted[2]!.entered.TOTAL_ASSETS),
     ).toBe(1_950_000);
+  });
+
+  it("free cash flow coverage counts distributions and capex paid from cash", () => {
+    const northwind = companies[0]!;
+    const last = northwind.periods.findLast((p) => p.months === 12)!;
+    const paid = Number(last.values.CF_DIVIDENDS);
+    const options = {
+      projectionYears: 2,
+      debtSchedule: northwind.debtSchedule,
+    };
+    const base = run(commercial, northwind.periods, DEMO_MODEL.lines, options);
+    expectNoErrors(base, "free cash flow");
+    // Dividends paid, then last year's; distributions only lower coverage.
+    expect(values(base, "DIVIDENDS").slice(2)).toEqual([paid, paid, paid]);
+    const dscr = values(base, "DSCR");
+    values(base, "FCF_COVERAGE").forEach((v, i) =>
+      expect(v, String(i)).toBeLessThan(dscr[i]!),
+    );
+    expect(values(base, "FCF_COVERAGE_BEFORE_CAPEX")).toEqual(
+      values(base, "FCF_COVERAGE"),
+    );
+
+    // The capex plan pays the racking, then a quarter of the line, from
+    // cash; only the coverage that counts capex feels it.
+    const planned = run(commercial, northwind.periods, DEMO_MODEL.lines, {
+      ...options,
+      capex: normalizeCapex(DEMO_CAPEX_SCENARIO.capex),
+    });
+    expect(values(planned, "CAPEX_FROM_CASH")).toEqual([
+      0, 0, 0, 150_000, 450_000,
+    ]);
+    expect(values(planned, "FCF_COVERAGE")[3]).toBeLessThan(
+      values(planned, "FCF_COVERAGE_BEFORE_CAPEX")[3]!,
+    );
+
+    // The deal holds dividends to half of 2024's, post-project and in 2025,
+    // then three quarters; the scenario as is, without its project, keeps
+    // 2024's paid.
+    const deal = demoScenarios(
+      last.values.SHAREHOLDER_LOANS!,
+      last.values.CF_DIVIDENDS,
+    ).find((s) => s.project)!;
+    const periodOverrides = deal.periodOverrides as Record<
+      string,
+      Record<string, string>
+    >;
+    const asIs = run(commercial, northwind.periods, DEMO_MODEL.lines, {
+      ...options,
+      periodOverrides,
+    });
+    expect(values(asIs, "DIVIDENDS").slice(2)).toEqual([
+      paid,
+      paid / 2,
+      paid * 0.75,
+    ]);
+    const after = run(commercial, northwind.periods, DEMO_MODEL.lines, {
+      ...options,
+      project: deal.project,
+      periodOverrides,
+    });
+    expectNoErrors(after, "post-project");
+    expect(values(after, "DIVIDENDS").slice(2)).toEqual([
+      paid / 2,
+      paid / 2,
+      paid * 0.75,
+    ]);
+    // Holding dividends back more than pays the new debt service.
+    const before = values(base, "FCF_COVERAGE");
+    values(after, "FCF_COVERAGE")
+      .slice(2)
+      .forEach((v, i) => expect(v, String(i)).toBeGreaterThan(before[i + 2]!));
   });
 
   it("the borrowing base margins inventory by type", () => {

@@ -82,19 +82,11 @@ export function validateLines(
         );
       }
     }
-    if (line.kind === "assumption") {
-      if (line.defaultValue === null) {
-        issues.push({
-          severity: "warning",
-          code: "assumption_blank",
-          itemCode: line.code,
-          message: `Assumption "${line.label}" has no value, so it counts as blank unless a scenario gives it one.`,
-        });
-      } else {
-        const parsed = normalizeAssumption(line.defaultValue, line.format);
-        if ("error" in parsed)
-          error("assumption_value", line.code, parsed.error);
-      }
+    // A blank assumption is allowed: a scenario can give it a value, year by
+    // year, and formulas fall back with ISBLANK where none is given.
+    if (line.kind === "assumption" && line.defaultValue !== null) {
+      const parsed = normalizeAssumption(line.defaultValue, line.format);
+      if ("error" in parsed) error("assumption_value", line.code, parsed.error);
     }
   }
 

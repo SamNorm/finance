@@ -15,7 +15,8 @@ export const assumption = (
   code: string,
   label: string,
   format: ModelLine["format"],
-  defaultValue: string,
+  // Null leaves it blank unless a scenario gives it a value.
+  defaultValue: string | null,
   description: string,
 ): Line => ({
   code,

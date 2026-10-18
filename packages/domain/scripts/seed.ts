@@ -13,7 +13,7 @@
 // first.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { eq, schema } from "@finance/db";
+import { eq, inArray, schema } from "@finance/db";
 import {
   addConsolidatedPeriod,
   addScenario,
@@ -247,7 +247,10 @@ async function seed() {
     const { entity } = borrowers[i]!;
     const actual = company.periods.filter((p) => p.quality !== "projected");
     const scenarios = [
-      ...demoScenarios(actual.at(-1)!.values.SHAREHOLDER_LOANS ?? "0"),
+      ...demoScenarios(
+        actual.at(-1)!.values.SHAREHOLDER_LOANS ?? "0",
+        actual.findLast((p) => p.months === 12)!.values.CF_DIVIDENDS,
+      ),
       // Northwind plans a second line.
       ...(i === 0 ? [DEMO_CAPEX_SCENARIO] : []),
     ];
@@ -306,6 +309,13 @@ async function seed() {
   const groupLoans = [companies[1]!, properties]
     .map((c) => Number(c.periods.at(-1)!.values.SHAREHOLDER_LOANS ?? 0))
     .reduce((sum, n) => sum + n, 0);
+  const groupDividends = [companies[1]!, properties]
+    .map((c) =>
+      Number(
+        c.periods.findLast((p) => p.months === 12)!.values.CF_DIVIDENDS ?? 0,
+      ),
+    )
+    .reduce((sum, n) => sum + n, 0);
   await analysis(
     {
       entityId: group.id,
@@ -313,7 +323,7 @@ async function seed() {
       name: "Group review 2024",
       projectionYears: 2,
     },
-    demoScenarios(String(groupLoans)),
+    demoScenarios(String(groupLoans), String(groupDividends)),
   );
   console.log(
     "Consolidated: Laurentian Foods and its landlord, with a group review.",
@@ -376,9 +386,23 @@ async function seed() {
 
 try {
   if (args.reset) {
-    await db
-      .delete(schema.organizations)
-      .where(eq(schema.organizations.id, ctx.organizationId));
+    // A consolidated client's members and statements keep the member
+    // borrowers and their periods from being deleted, so they go first.
+    await db.transaction(async (tx) => {
+      const entities = tx
+        .select({ id: schema.entities.id })
+        .from(schema.entities)
+        .where(eq(schema.entities.organizationId, ctx.organizationId));
+      await tx
+        .delete(schema.consolidatedStatements)
+        .where(inArray(schema.consolidatedStatements.memberId, entities));
+      await tx
+        .delete(schema.consolidationMembers)
+        .where(inArray(schema.consolidationMembers.memberId, entities));
+      await tx
+        .delete(schema.organizations)
+        .where(eq(schema.organizations.id, ctx.organizationId));
+    });
     console.log("Deleted the dev organization and its data.");
   }
   await ensureDevOrganization(db);

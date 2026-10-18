@@ -88,7 +88,6 @@ describe("validateLines", () => {
       ["code_duplicate", "a", "error"],
       ["label_missing", "B", "error"],
       ["assumption_value", "RATE", "error"],
-      ["assumption_blank", "BLANK", "warning"],
       ["formula", "REVENUE", "error"],
       ["formula", "bad code", "error"],
       ["formula", "C", "error"],
