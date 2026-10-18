@@ -40,7 +40,8 @@ export interface ModelRun {
   // In date order: PREV and friends step back through this list.
   periods: Period[];
   calculations: Calculation[];
-  assumptions: Record<string, Value>;
+  // One value for every period, or one per period.
+  assumptions: Record<string, Value | readonly Value[]>;
   inputCodes: readonly string[];
   // Entered values, by input code and period index.
   input: (code: string, period: number) => Value;
@@ -67,7 +68,7 @@ export interface Evaluation {
 }
 
 type Source =
-  | { kind: "assumption"; code: string; value: Value }
+  | { kind: "assumption"; code: string; value: Value | readonly Value[] }
   | {
       kind: "input" | "calculation";
       code: string;
@@ -122,8 +123,14 @@ export function evaluateModel(run: ModelRun): Evaluation {
   const active = new Set<string>();
 
   function cellOf(source: Source, p: number): Cell {
-    if (source.kind === "assumption")
-      return { value: source.value, formula: null, refs: [] };
+    if (source.kind === "assumption") {
+      const { value } = source;
+      return {
+        value: Array.isArray(value) ? (value[p] ?? null) : (value as Value),
+        formula: null,
+        refs: [],
+      };
+    }
     const compiled =
       run.periods[p]?.projection === "assumptions" && source.projection
         ? source.projection

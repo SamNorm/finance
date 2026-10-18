@@ -23,7 +23,7 @@ function model({
 }: {
   lines?: Record<string, string | [string, string]>;
   inputs?: Record<string, Raw[]>;
-  assumptions?: Record<string, Raw>;
+  assumptions?: Record<string, Raw | Raw[]>;
   periods?: Period[];
 }) {
   const calculations: Calculation[] = Object.entries(lines).map(([code, f]) =>
@@ -37,7 +37,10 @@ function model({
     periods,
     calculations,
     assumptions: Object.fromEntries(
-      Object.entries(assumptions).map(([k, v]) => [k, toValue(v)]),
+      Object.entries(assumptions).map(([k, v]) => [
+        k,
+        Array.isArray(v) ? v.map(toValue) : toValue(v),
+      ]),
     ),
     inputCodes: Object.keys(inputs),
     input: (code, p) => toValue(inputs[code]?.[p]),
@@ -197,6 +200,29 @@ describe("evaluateModel", () => {
     expect(evaluation.cell("REV", 3).formula).toBe(
       "PREV(REV) * (1 + GROWTH_RATE)",
     );
+  });
+
+  it("reads an assumption's value in each period, when it has one per period", () => {
+    const evaluation = model({
+      periods: [
+        annual(2024),
+        annual(2025, { projection: "assumptions" }),
+        annual(2026, { projection: "assumptions" }),
+      ],
+      inputs: { DIVIDENDS: [500] },
+      assumptions: { ASSUMED: [null, 200, 250] },
+      lines: {
+        PAID: [
+          "IF(ISBLANK(ASSUMED), DIVIDENDS, ASSUMED)",
+          "IF(ISBLANK(ASSUMED), PREV(PAID), ASSUMED)",
+        ],
+        RISE: "ASSUMED - PREV(ASSUMED)",
+      },
+    });
+    expect(
+      [0, 1, 2].map((p) => show(evaluation.cell("PAID", p).value)),
+    ).toEqual(["500", "200", "250"]);
+    expect(show(evaluation.cell("RISE", 2).value)).toBe("50");
   });
 
   it("projects inputs that have a projection formula", () => {

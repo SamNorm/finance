@@ -23,6 +23,7 @@ import {
   type CapexItem,
   type CapexYear,
 } from "../financing/capex";
+import { parseDate } from "../financing/common";
 import {
   balanceSheetSides,
   imbalance,
@@ -486,9 +487,45 @@ function normalizeOverrides(
   return result;
 }
 
+// Values entered year by year keep only the model's assumptions, by period
+// end, in canonical form; blanks are dropped.
+function normalizePeriodOverrides(
+  lines: readonly ModelLine[],
+  input: Record<string, Record<string, string | null>>,
+) {
+  const result: Record<string, Record<string, string>> = {};
+  for (const [code, values] of Object.entries(input)) {
+    const line = lines.find((l) => l.code === code && l.kind === "assumption");
+    if (!line)
+      throw new DomainError(
+        "invalid",
+        `"${code}" isn't an assumption of this model.`,
+      );
+    if (typeof values !== "object" || values === null)
+      throw new DomainError(
+        "invalid",
+        `${line.label}: give its values by period end, e.g. {"2026-12-31": "200000"}.`,
+      );
+    for (const [end, raw] of Object.entries(values)) {
+      parseDate(end, line.label, "period end");
+      const parsed = normalizeAssumption(String(raw ?? ""), line.format);
+      if ("error" in parsed)
+        throw new DomainError(
+          "invalid",
+          `${line.label}, ${end}: ${parsed.error}`,
+        );
+      if (parsed.value !== null) (result[code] ??= {})[end] = parsed.value;
+    }
+  }
+  return result;
+}
+
 export interface ScenarioInput {
   name: string;
   overrides?: Record<string, string>;
+  // Assumption code → period end → value, for values that change year by
+  // year; they apply in projected periods and post-project columns.
+  periodOverrides?: Record<string, Record<string, string | null>>;
   // The project it finances; null or empty for a stress alone.
   project?: ProjectInput | null;
   // Purchases planned in projected years, as typed or as saved.
@@ -597,6 +634,10 @@ export async function addScenario(
       name: input.name.trim(),
       position: detail.scenarios.length,
       overrides: normalizeOverrides(detail.lines, input.overrides ?? {}),
+      periodOverrides: normalizePeriodOverrides(
+        detail.lines,
+        input.periodOverrides ?? {},
+      ),
       project: await checkProject(db, ctx, detail, input.project),
       capex: normalizeCapex(input.capex),
       covenants: input.covenants ? normalizeCovenants(input.covenants) : null,
@@ -644,6 +685,9 @@ export async function updateScenario(
       name: patch.name?.trim(),
       overrides:
         patch.overrides && normalizeOverrides(detail.lines, patch.overrides),
+      periodOverrides:
+        patch.periodOverrides &&
+        normalizePeriodOverrides(detail.lines, patch.periodOverrides),
       project:
         patch.project === undefined
           ? undefined
@@ -693,6 +737,7 @@ export async function duplicateScenario(
   return addScenario(db, ctx, source.analysisId, {
     name: name?.trim() || `${source.name} (copy)`,
     overrides: source.overrides,
+    periodOverrides: source.periodOverrides,
     project: source.project,
     capex: source.capex,
     covenants: source.covenants,
@@ -773,7 +818,7 @@ export async function runAnalysis(
     await addMemberInputs(db, spread.consolidation, detail.lines, inputs);
   for (const period of periods) period.modelInputs = inputs[period.key] ?? {};
   const run = (
-    overrides: Record<string, string>,
+    scenario: Pick<Scenario, "overrides" | "periodOverrides"> | null,
     project: Project | null,
     capex: readonly CapexItem[] = [],
   ) =>
@@ -783,7 +828,8 @@ export async function runAnalysis(
         : periods,
       projectionYears: client ? 0 : projectionYears,
       lines: detail.lines,
-      overrides,
+      overrides: scenario?.overrides ?? {},
+      periodOverrides: scenario?.periodOverrides,
       project,
       capex,
       debtSchedules: debt.map((d) => d.schedule),
@@ -797,16 +843,14 @@ export async function runAnalysis(
     });
   // The base case is the borrower as is; a scenario's project shows in
   // post-project columns next to the scenario as is.
-  const base = run({}, null);
+  const base = run(null, null);
   const keys = new Set(base.periods.map((p) => p.key));
   const lastYear = base.periods.findLast(
     (p) => p.projection === null && p.months === 12,
   );
-  const scenarioRun = scenario
-    ? run(scenario.overrides, null, scenario.capex)
-    : null;
+  const scenarioRun = scenario ? run(scenario, null, scenario.capex) : null;
   const projectRun = scenario?.project
-    ? run(scenario.overrides, scenario.project, scenario.capex)
+    ? run(scenario, scenario.project, scenario.capex)
     : null;
   const covenants = scenario?.covenants ?? spread.entity.covenants;
   return {
@@ -1007,6 +1051,11 @@ export async function repinAnalysis(
         position: scenario.position,
         overrides: Object.fromEntries(
           Object.entries(scenario.overrides).filter(([code]) =>
+            assumptions.has(code),
+          ),
+        ),
+        periodOverrides: Object.fromEntries(
+          Object.entries(scenario.periodOverrides).filter(([code]) =>
             assumptions.has(code),
           ),
         ),

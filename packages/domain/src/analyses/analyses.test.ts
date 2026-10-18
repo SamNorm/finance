@@ -139,7 +139,7 @@ describe("runModel", () => {
     ]);
     expect(run.cells.SECTION).toBeUndefined();
     expect(run.assumptions).toEqual({
-      GROWTH: { base: "0.1", value: "0.1", overridden: false },
+      GROWTH: { base: "0.1", value: "0.1", overridden: false, byPeriod: [] },
     });
   });
 
@@ -182,7 +182,52 @@ describe("runModel", () => {
       base: "0.1",
       value: "-0.15",
       overridden: true,
+      byPeriod: [],
     });
+  });
+
+  it("takes values year by year in projected and post-project periods only", () => {
+    const periodOverrides = {
+      GROWTH: { "2024-12-31": "0.5", "2026-12-31": "0.2" },
+    };
+    const asIs = runModel({ ...input, periodOverrides });
+    expect(asIs.cells.GROWTH!.map((c) => c.value)).toEqual([
+      "0.1",
+      "0.1",
+      "0.1",
+      "0.2",
+    ]);
+    expect(asIs.cells.REVENUE!.map((c) => c.value)).toEqual([
+      "100",
+      "120",
+      "132",
+      "158.4",
+    ]);
+    expect(asIs.assumptions.GROWTH).toEqual({
+      base: "0.1",
+      value: "0.1",
+      overridden: true,
+      byPeriod: ["projected-2"],
+    });
+    // Post-project, the last fiscal year takes its value too.
+    const post = runModel({
+      ...input,
+      periodOverrides,
+      project: {
+        closing: "2025-01-31",
+        sources: [],
+        uses: [],
+        lines: [],
+        subordinations: [],
+      },
+    });
+    expect(post.cells.GROWTH!.map((c) => c.value)).toEqual([
+      "0.1",
+      "0.5",
+      "0.1",
+      "0.2",
+    ]);
+    expect(post.assumptions.GROWTH!.byPeriod).toEqual(["b", "projected-2"]);
   });
 
   it("reads model inputs and reconciles breakdowns with their item", () => {
@@ -500,7 +545,82 @@ describe("analysis service", () => {
       base: "0.05",
       value: "-0.15",
       overridden: true,
+      byPeriod: [],
     });
+  });
+
+  it("takes a scenario's assumptions year by year", async () => {
+    const { entity, v1, periods } = setup;
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "A",
+      projectionYears: 2,
+    });
+    const scenario = await addScenario(db, ctx, analysis.id, {
+      name: "Growth by year",
+      overrides: { GROWTH: "10%" },
+      periodOverrides: {
+        GROWTH: { "2024-12-31": "50%", "2025-12-31": "", "2026-12-31": "20%" },
+        MARGIN: { "2025-12-31": null },
+      },
+      project: {
+        closing: "2025-01-31",
+        adjustments: [{ name: "Fees", item: "REVENUE", amount: "100" }],
+      },
+    });
+    expect(scenario.periodOverrides).toEqual({
+      GROWTH: { "2024-12-31": "0.5", "2026-12-31": "0.2" },
+    });
+
+    const results = await runAnalysis(db, ctx, analysis.id, scenario.id);
+    expect(results.base.cells.GROWTH!.map((c) => c.value)).toEqual([
+      "0.05",
+      "0.05",
+      "0.05",
+      "0.05",
+    ]);
+    // As is, actual years keep the scenario's value; projected years take
+    // their own.
+    expect(results.scenario!.cells.SALES!.map((c) => c.value)).toEqual([
+      "5000",
+      "5500",
+      "6050",
+      "7260",
+    ]);
+    expect(results.scenario!.assumptions.GROWTH!.byPeriod).toEqual([
+      "projected-2",
+    ]);
+    // Post-project, from the last fiscal year on.
+    expect(results.project!.cells.GROWTH!.map((c) => c.value)).toEqual([
+      "0.1",
+      "0.5",
+      "0.1",
+      "0.2",
+    ]);
+    expect(results.project!.assumptions.GROWTH!.byPeriod).toEqual([
+      periods[1]!.id,
+      "projected-2",
+    ]);
+
+    for (const periodOverrides of [
+      { GROWTH: { "2026": "1%" } } as Record<string, Record<string, string>>,
+      { GROWTH: { "2026-12-31": "lots" } },
+      { DSCR: { "2026-12-31": "1" } },
+    ])
+      await rejects(
+        updateScenario(db, ctx, scenario.id, { periodOverrides }),
+        "invalid",
+      );
+    const updated = await updateScenario(db, ctx, scenario.id, {
+      periodOverrides: { MARGIN: { "2026-12-31": "9%" } },
+    });
+    expect(updated.periodOverrides).toEqual({
+      MARGIN: { "2026-12-31": "0.09" },
+    });
+    expect(
+      (await duplicateScenario(db, ctx, scenario.id)).periodOverrides,
+    ).toEqual(updated.periodOverrides);
   });
 
   it("refuses drafts, keeps periods to the borrower and restricts the period set", async () => {
@@ -1222,6 +1342,10 @@ describe("analysis service", () => {
     await addScenario(db, ctx, analysis.id, {
       name: "Stress",
       overrides: { GROWTH: "-0.1", MARGIN: "0.08" },
+      periodOverrides: {
+        GROWTH: { "2025-12-31": "0.02" },
+        MARGIN: { "2025-12-31": "0.09" },
+      },
     });
     const v2 = await createFinancialModelDraft(db, ctx, model.id);
     await updateLine(db, ctx, v2.id, "DSCR", {
@@ -1245,8 +1369,11 @@ describe("analysis service", () => {
       (await getAnalysis(db, ctx, copy.id)).scenarios.map((s) => [
         s.name,
         s.overrides,
+        s.periodOverrides,
       ]),
-    ).toEqual([["Stress", { GROWTH: "-0.1" }]]);
+    ).toEqual([
+      ["Stress", { GROWTH: "-0.1" }, { GROWTH: { "2025-12-31": "0.02" } }],
+    ]);
     await rejects(repinAnalysis(db, ctx, copy.id), "conflict");
     expect(
       (await listAnalyses(db, ctx, { entityId: entity.id })).map((a) => [

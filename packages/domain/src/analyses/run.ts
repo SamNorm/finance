@@ -82,8 +82,12 @@ export interface ResultCell extends ResultValue {
 
 export interface AssumptionValue {
   base: string | null;
+  // The scenario's value for every period, or else the base.
   value: string | null;
+  // Whether the scenario changes it, for every period or year by year.
   overridden: boolean;
+  // Keys of the periods where the scenario's value for that period applies.
+  byPeriod: string[];
 }
 
 // Input lines that break down a scoring model item, such as inventory by
@@ -128,6 +132,10 @@ export interface RunInput {
   projectionYears: number;
   lines: readonly ModelLine[];
   overrides: Record<string, string>;
+  // Values entered year by year, by assumption code then period end. They
+  // apply in projected periods and, post-project, from the last fiscal year
+  // on; never to actual periods as they stand.
+  periodOverrides?: Record<string, Record<string, string>>;
   // The scenario's project: given, the run is post-project. Its effect on
   // balance sheet items comes in the periods' figures.
   project?: Project | null;
@@ -217,17 +225,29 @@ export function runModel(input: RunInput): AnalysisRun {
     FINANCING_INPUTS.map((f) => [f.code, f.label]),
   );
   const assumptions: Record<string, AssumptionValue> = {};
-  const assumptionValues: Record<string, Value> = {};
+  const assumptionValues: Record<string, Value | Value[]> = {};
   for (const line of input.lines) {
     if (line.kind !== "assumption") continue;
     const override = input.overrides[line.code];
     const value = override ?? line.defaultValue;
+    const entered = input.periodOverrides?.[line.code] ?? {};
+    const byPeriod = periods.flatMap((p, i) =>
+      modes[i] !== "actual" && entered[p.end] !== undefined ? [p.key] : [],
+    );
     assumptions[line.code] = {
       base: line.defaultValue,
       value,
-      overridden: override !== undefined,
+      overridden: override !== undefined || byPeriod.length > 0,
+      byPeriod,
     };
-    assumptionValues[line.code] = assumptionValue(value, line.format);
+    assumptionValues[line.code] = byPeriod.length
+      ? periods.map((p, i) =>
+          assumptionValue(
+            modes[i] !== "actual" ? (entered[p.end] ?? value) : value,
+            line.format,
+          ),
+        )
+      : assumptionValue(value, line.format);
   }
 
   const evaluation = evaluateModel({

@@ -88,7 +88,7 @@ export function validateLines(
           severity: "warning",
           code: "assumption_blank",
           itemCode: line.code,
-          message: `Assumption "${line.label}" has no value, so it counts as blank.`,
+          message: `Assumption "${line.label}" has no value, so it counts as blank unless a scenario gives it one.`,
         });
       } else {
         const parsed = normalizeAssumption(line.defaultValue, line.format);

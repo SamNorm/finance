@@ -1,0 +1,1 @@
+ALTER TABLE "analysis_scenarios" ADD COLUMN "period_overrides" jsonb DEFAULT '{}'::jsonb NOT NULL;

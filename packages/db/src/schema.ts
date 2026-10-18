@@ -784,6 +784,12 @@ export const analysisScenarios = pgTable(
     position: integer().notNull().default(0),
     // Assumption code → value, canonical as in financial model lines.
     overrides: jsonb().$type<Record<string, string>>().notNull().default({}),
+    // Assumption code → period end → value, entered year by year: they apply
+    // in projected periods and, post-project, from the last fiscal year on.
+    periodOverrides: jsonb()
+      .$type<Record<string, Record<string, string>>>()
+      .notNull()
+      .default({}),
     // The project the scenario finances; none for a stress alone.
     project: jsonb().$type<Project>(),
     // Purchases planned in projected years, and their financing.
