@@ -2,6 +2,7 @@ import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 import { DomainError } from "../errors";
 import type { ScoringItem } from "../scoring-models/types";
+import { parseValue } from "../spreads/values";
 import { amortize, monthIndex } from "./amortization";
 import {
   entryId,
@@ -27,6 +28,7 @@ export type ProjectSource = Project["sources"][number];
 export type ProjectLoan = Extract<ProjectSource, { kind: "loan" }>;
 export type ProjectFunds = Extract<ProjectSource, { kind: "funds" }>;
 export type ProjectUse = Project["uses"][number];
+export type ProjectAdjustment = NonNullable<Project["adjustments"]>[number];
 export type FinancingItems = schema.FinancingItems;
 
 // The built-in inputs every formula can read. Project inputs are zero
@@ -157,6 +159,7 @@ export interface ProjectInput {
   uses?: readonly Record<string, unknown>[];
   lines?: readonly Record<string, unknown>[];
   subordinations?: readonly Record<string, unknown>[];
+  adjustments?: readonly Record<string, unknown>[];
 }
 
 const invalid = (message: string) => new DomainError("invalid", message);
@@ -168,10 +171,15 @@ const named = (raw: unknown, fallback: string) => {
 
 // Checks and makes canonical a scenario's project; null when it has nothing.
 // Items must be balance sheet items of the scoring model, and loans need it
-// to say where new debt and repayments post.
+// to say where new debt and repayments post. Adjustments may also change
+// numeric input items of other statements, when `adjustable` lists them.
 export function normalizeProject(
   input: ProjectInput | null | undefined,
-  context: { sides: ReadonlyMap<string, Side>; items: FinancingItems },
+  context: {
+    sides: ReadonlyMap<string, Side>;
+    items: FinancingItems;
+    adjustable?: ReadonlySet<string>;
+  },
 ): Project | null {
   if (!input) return null;
   const list = (value: unknown) => {
@@ -184,11 +192,13 @@ export function normalizeProject(
   const uses = list(input.uses);
   const lines = list(input.lines);
   const subordinations = list(input.subordinations);
+  const adjustments = list(input.adjustments);
   if (
     !sources.length &&
     !uses.length &&
     !lines.length &&
-    !subordinations.length
+    !subordinations.length &&
+    !adjustments.length
   )
     return null;
   const closing = parseDate(input.closing, "Project", "closing date");
@@ -261,6 +271,29 @@ export function normalizeProject(
         principalSaved: parseAmount(s.principalSaved, name, "principal saved"),
       };
     }),
+    ...(adjustments.length
+      ? {
+          adjustments: adjustments.map((a, i): ProjectAdjustment => {
+            const name = named(a.name, `Adjustment ${i + 1}`);
+            const code = String(a.item ?? "");
+            if (!context.sides.has(code) && !context.adjustable?.has(code))
+              throw invalid(
+                `${name}: choose the item it changes, an input amount of the scoring model.`,
+              );
+            const parsed = parseValue(String(a.amount ?? ""), "amount");
+            if ("error" in parsed) throw invalid(`${name}: ${parsed.error}`);
+            if (parsed.value === null || new Dec(parsed.value).isZero())
+              throw invalid(`${name}: enter the amount, negative to reduce.`);
+            return {
+              id: entryId(a.id),
+              name,
+              item: code,
+              amount: parsed.value,
+              side: context.sides.get(code) ?? null,
+            };
+          }),
+        }
+      : {}),
   };
   if (project.sources.some((s) => s.kind === "loan")) {
     const { longTermDebt, currentDebt, cash } = context.items;
@@ -288,18 +321,34 @@ export function projectTotals(project: Project) {
 // Sources and uses balance to the dollar; less is rounding.
 export const BALANCE_TOLERANCE = 1;
 
-// Whether the post-project balance sheet balances: sources equal uses.
-export const isBalanced = (project: Project) =>
-  projectTotals(project).difference.abs().lt(BALANCE_TOLERANCE);
-
 const dollars = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
+const show = (value: Amount) => dollars.format(Number(value.toFixed(2)));
 
-// "Sources exceed uses by 500,000", or null when they balance.
+// How a project leaves the post-project balance sheet out of balance:
+// sources that don't equal uses, or balance sheet adjustments that change
+// assets and claims by different amounts. "Sources exceed uses by 500,000",
+// or null when it balances.
 export function imbalance(project: Project): string | null {
-  if (isBalanced(project)) return null;
+  const problems: string[] = [];
   const { difference } = projectTotals(project);
-  return `Sources ${difference.isPositive() ? "exceed" : "fall short of"} uses by ${dollars.format(Number(difference.abs().toFixed(2)))}`;
+  if (difference.abs().gte(BALANCE_TOLERANCE))
+    problems.push(
+      `sources ${difference.isPositive() ? "exceed" : "fall short of"} uses by ${show(difference.abs())}`,
+    );
+  const changes = { assets: new Dec(0), claims: new Dec(0) };
+  for (const a of project.adjustments ?? [])
+    if (a.side) changes[a.side] = changes[a.side].plus(a.amount);
+  if (changes.assets.minus(changes.claims).abs().gte(BALANCE_TOLERANCE))
+    problems.push(
+      `balance sheet adjustments change assets by ${show(changes.assets)} but liabilities and equity by ${show(changes.claims)}`,
+    );
+  if (!problems.length) return null;
+  const text = problems.join("; ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+// Whether the post-project balance sheet balances.
+export const isBalanced = (project: Project) => imbalance(project) === null;
 
 interface Window {
   // Payments counted: months after `from`, up to and including `to`.
@@ -473,6 +522,16 @@ export function projectItemAdjustments(
         use.item,
         use,
         sides.get(use.item) === "assets" ? amount : amount.neg(),
+      );
+    }
+    // Adjustments move no funds: on the balance sheet they change items from
+    // closing on; elsewhere they're yearly, prorated to the period.
+    for (const adjustment of project.adjustments ?? []) {
+      const amount = new Dec(adjustment.amount);
+      post(
+        adjustment.item,
+        adjustment,
+        adjustment.side ? amount : amount.times(period.months).div(12),
       );
     }
     for (const { loan, schedule } of loans) {

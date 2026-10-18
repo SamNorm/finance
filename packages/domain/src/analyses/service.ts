@@ -25,6 +25,7 @@ import {
   getVersion as getScoringVersion,
   listItems,
 } from "../scoring-models/service";
+import type { ScoringItem } from "../scoring-models/types";
 import { isNumeric } from "../spreads/checks";
 import {
   getEntity,
@@ -495,12 +496,15 @@ async function projectContext(db: Db, ctx: Context, detail: AnalysisDetail) {
     items,
     sides: balanceSheetSides(items),
     mapping: model.financingItems,
+    // What adjustments can change: any statement's numeric inputs.
+    adjustable: items.filter((i) => i.kind === "input" && isNumeric(i)),
   };
 }
 
 // What a project in the analysis can post to: the balance sheet items of
 // its pinned version's scoring model, each on its side, and the items new
-// loans post to, when the scoring model says.
+// loans post to, when the scoring model says. Adjustments can also change
+// other statements' numeric inputs.
 export async function getProjectSetup(
   db: Db,
   ctx: Context,
@@ -508,15 +512,31 @@ export async function getProjectSetup(
 ): Promise<{
   items: { code: string; label: string; side: Side }[];
   loansPostTo: FinancingItems;
+  adjustable: {
+    code: string;
+    label: string;
+    statement: ScoringItem["statement"];
+    side: Side | null;
+  }[];
 }> {
   const detail = await getAnalysis(db, ctx, analysisId);
-  const { items, sides, mapping } = await projectContext(db, ctx, detail);
+  const { items, sides, mapping, adjustable } = await projectContext(
+    db,
+    ctx,
+    detail,
+  );
   return {
     items: items.flatMap((item) => {
       const side = sides.get(item.code);
       return side ? [{ code: item.code, label: item.label, side }] : [];
     }),
     loansPostTo: mapping,
+    adjustable: adjustable.map((item) => ({
+      code: item.code,
+      label: item.label,
+      statement: item.statement,
+      side: sides.get(item.code) ?? null,
+    })),
   };
 }
 
@@ -527,8 +547,12 @@ async function checkProject(
   input: ProjectInput | null | undefined,
 ) {
   if (!input) return null;
-  const { sides, mapping } = await projectContext(db, ctx, detail);
-  return normalizeProject(input, { sides, items: mapping });
+  const { sides, mapping, adjustable } = await projectContext(db, ctx, detail);
+  return normalizeProject(input, {
+    sides,
+    items: mapping,
+    adjustable: new Set(adjustable.map((i) => i.code)),
+  });
 }
 
 export async function addScenario(

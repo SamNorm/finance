@@ -623,6 +623,18 @@ export interface Project {
     interestSaved: string;
     principalSaved: string;
   }[];
+  // Changes to items that move no funds at closing, such as a replaced
+  // asset written off against retained earnings: each adds its amount,
+  // negative to reduce, to an input item in post-project columns. Those on
+  // the balance sheet (with a side) must balance among themselves; those on
+  // other statements are yearly amounts. Absent in projects saved before.
+  adjustments?: {
+    id: string;
+    name: string;
+    item: string;
+    amount: string;
+    side: "assets" | "claims" | null;
+  }[];
 }
 
 export const analysisScenarios = pgTable(

@@ -809,6 +809,21 @@ describe("analysis service", () => {
       "not_found",
     );
 
+    // Adjustments are entries too, checked as the project is.
+    const { entry: writeOff } = await addProjectEntry(
+      db,
+      ctx,
+      id,
+      "adjustments",
+      { name: "Write off old press", item: "MACHINERY", amount: "-300" },
+    );
+    expect(writeOff).toMatchObject({ amount: "-300", side: "assets" });
+    await rejects(
+      updateProjectEntry(db, ctx, id, writeOff.id, { item: "TOTAL_ASSETS" }),
+      "invalid",
+    );
+    await removeProjectEntry(db, ctx, id, writeOff.id);
+
     const moved = await setProjectClosing(db, ctx, id, "2025-03-31");
     expect(moved.project!.closing).toBe("2025-03-31");
     let scenario = await removeProjectEntry(db, ctx, id, equity.id);

@@ -11,6 +11,7 @@ import {
   projectItemAdjustments,
   projectTotals,
   projectValues,
+  imbalance,
   type FinancingItems,
   type ProjectInput,
 } from "./financing";
@@ -259,5 +260,93 @@ describe("projectItemAdjustments", () => {
         checkPeriod(items, entered).filter((i) => i.code === "balance"),
       ).toEqual([]);
     }
+  });
+});
+
+describe("project adjustments", () => {
+  // The old press the new equipment replaces, written off; shareholder loans
+  // converted to shares; one-time legal fees added back.
+  const adjustable = new Set(
+    items.filter((i) => i.kind === "input").map((i) => i.code),
+  );
+  const context = { sides, items: mapping, adjustable };
+  const adjusted = normalizeProject(
+    {
+      closing: "2024-12-31",
+      adjustments: [
+        { name: "Write off old press", item: "MACHINERY", amount: "(300,000)" },
+        {
+          name: "Loss on disposal",
+          item: "RETAINED_EARNINGS",
+          amount: "-300000",
+        },
+        {
+          name: "Loans converted",
+          item: "SHAREHOLDER_LOANS",
+          amount: "-250000",
+        },
+        { name: "Shares issued", item: "SHARE_CAPITAL", amount: "250000" },
+        {
+          name: "Legal fees, one-time",
+          item: "GENERAL_ADMIN_EXPENSES",
+          amount: "-80000",
+        },
+      ],
+    },
+    context,
+  )!;
+
+  it("changes any input item, balance sheet ones on their side", () => {
+    expect(
+      adjusted.adjustments!.map((a) => [a.item, a.amount, a.side]),
+    ).toEqual([
+      ["MACHINERY", "-300000", "assets"],
+      ["RETAINED_EARNINGS", "-300000", "claims"],
+      ["SHAREHOLDER_LOANS", "-250000", "claims"],
+      ["SHARE_CAPITAL", "250000", "claims"],
+      ["GENERAL_ADMIN_EXPENSES", "-80000", null],
+    ]);
+    expect(imbalance(adjusted)).toBeNull();
+    for (const bad of [
+      { name: "Subtotal", item: "TOTAL_ASSETS", amount: "1" },
+      { name: "Nothing", item: "MACHINERY", amount: "0" },
+      { name: "", item: "MACHINERY", amount: "1" },
+    ])
+      expect(() =>
+        normalizeProject(
+          { closing: "2024-12-31", adjustments: [bad] },
+          context,
+        ),
+      ).toThrow();
+  });
+
+  it("posts from closing on, income statement ones prorated", () => {
+    const changes = projectItemAdjustments(adjusted, periods, sides, mapping);
+    const delta = (p: number, code: string) =>
+      changes[p]!.get(code)?.delta.toFixed() ?? null;
+    expect(delta(0, "MACHINERY")).toBe("-300000");
+    expect(delta(3, "MACHINERY")).toBe("-300000");
+    expect(delta(0, "GENERAL_ADMIN_EXPENSES")).toBe("-80000");
+    // Nine months of a yearly add-back.
+    expect(delta(1, "GENERAL_ADMIN_EXPENSES")).toBe("-60000");
+    expect(changes[0]!.get("MACHINERY")!.parts).toMatchObject([
+      { name: "Write off old press", value: "-300000" },
+    ]);
+  });
+
+  it("must balance on the balance sheet, like sources and uses", () => {
+    const halfway = normalizeProject(
+      {
+        closing: "2024-12-31",
+        uses: [{ name: "New press", amount: "100", item: "MACHINERY" }],
+        adjustments: [
+          { name: "Write off old press", item: "MACHINERY", amount: "-300000" },
+        ],
+      },
+      context,
+    )!;
+    expect(imbalance(halfway)).toBe(
+      "Sources fall short of uses by 100; balance sheet adjustments change assets by -300,000 but liabilities and equity by 0",
+    );
   });
 });

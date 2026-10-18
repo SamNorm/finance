@@ -5,6 +5,7 @@ import { DomainError } from "../errors";
 import type { LoanTermsInput } from "../financing/common";
 import type {
   Project,
+  ProjectAdjustment,
   ProjectInput,
   ProjectLoan,
   ProjectSource,
@@ -17,13 +18,15 @@ import { getScenario, updateScenario, type Scenario } from "./service";
 // whole project again, so the rules are the editor's. Sources and uses may
 // differ in between; completing the analysis needs them to match.
 
-export type ProjectList = "sources" | "uses" | "lines" | "subordinations";
+export type ProjectList =
+  "sources" | "uses" | "lines" | "subordinations" | "adjustments";
 
 export type ProjectEntry =
   | ProjectSource
   | ProjectUse
   | Project["lines"][number]
-  | Project["subordinations"][number];
+  | Project["subordinations"][number]
+  | ProjectAdjustment;
 
 // An entry's fields as typed, as in ProjectInput.
 export type ProjectEntryInput = Record<string, unknown>;
@@ -37,7 +40,13 @@ export interface ProjectLoanInput extends LoanTermsInput {
   closing?: unknown;
 }
 
-const LISTS: ProjectList[] = ["sources", "uses", "lines", "subordinations"];
+const LISTS: ProjectList[] = [
+  "sources",
+  "uses",
+  "lines",
+  "subordinations",
+  "adjustments",
+];
 
 const noEntry = () =>
   new DomainError("not_found", "The project has no such entry.");
@@ -49,6 +58,7 @@ const asInput = (project: Project | null): ProjectInput => ({
   uses: project?.uses ?? [],
   lines: project?.lines ?? [],
   subordinations: project?.subordinations ?? [],
+  adjustments: project?.adjustments ?? [],
 });
 
 const save = (
@@ -60,7 +70,7 @@ const save = (
 
 function find(project: Project | null, entryId: string) {
   for (const list of LISTS) {
-    const entry = project?.[list].find((e) => e.id === entryId);
+    const entry = (project?.[list] ?? []).find((e) => e.id === entryId);
     if (entry) return { list, entry: entry as ProjectEntry };
   }
   throw noEntry();
@@ -70,8 +80,8 @@ const saved = (scenario: Scenario, entryId: string) =>
   find(scenario.project, entryId).entry;
 
 // Adds an entry to one of the project's lists: a source (a loan, or other
-// funds such as equity), a use, a line of credit increase or a
-// subordination. A scenario without a project starts one, closing on the date
+// funds such as equity), a use, a line of credit increase, a subordination
+// or an adjustment. A scenario without a project starts one, closing on the date
 // given; one with a project keeps its closing date.
 export async function addProjectEntry(
   db: Db,
