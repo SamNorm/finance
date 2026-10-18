@@ -28,13 +28,16 @@ import {
   publishVersion,
   replaceItems,
   replaceLines,
+  setCheckItems,
   setDebtSchedule,
   setFinancialModelCharts,
   setFinancingItems,
+  setPeriodControls,
   setModelInput,
   updateAnalysis,
   type ChartDefinition,
   type DebtSchedule,
+  type CheckItems,
   type FinancingItems,
   type ModelLine,
   type ScenarioInput,
@@ -44,7 +47,7 @@ import {
   BORROWING_BASE_MODEL,
   inventoryByType,
 } from "../src/demo/borrowing-base";
-import { demoCompanies } from "../src/demo/companies";
+import { demoCompanies, demoReconciliation } from "../src/demo/companies";
 import { DEMO_MODEL, demoScenarios } from "../src/demo/model";
 import {
   demoProperty,
@@ -63,6 +66,7 @@ async function scoringModel(
   file: string,
   input: Parameters<typeof createScoringModel>[2],
   financingItems: FinancingItems,
+  checkItems?: CheckItems,
 ) {
   const csv = readFileSync(
     new URL(`../fixtures/${file}`, import.meta.url),
@@ -77,6 +81,7 @@ async function scoringModel(
   await replaceItems(db, ctx, draft.id, items);
   await publishVersion(db, ctx, draft.id, "Initial import");
   await setFinancingItems(db, ctx, model.id, financingItems);
+  if (checkItems) await setCheckItems(db, ctx, model.id, checkItems);
   console.log(`Scoring model ${input.name}: ${items.length} items.`);
   return model;
 }
@@ -141,9 +146,22 @@ async function borrower(
   console.log(
     `Borrower ${data.name}: ${data.periods.length} periods, ${figures} figures.`,
   );
-  // Oldest first, as pasted.
-  const { periods } = await getSpread(db, ctx, entity.id);
-  return { entity, periods };
+  // Oldest first, as pasted. Each period gets what its statements say beyond
+  // the figures: net income as printed, unless it's a projection, and the
+  // dividends declared, which retained earnings roll forward with.
+  const spread = await getSpread(db, ctx, entity.id);
+  for (const period of spread.periods) {
+    const source = data.periods.find(
+      (p) => p.end === period.periodEnd && p.months === period.months,
+    )!;
+    const printed = spread.computed[period.id]?.NET_INCOME;
+    await setPeriodControls(db, ctx, period.id, {
+      reportedNetIncome:
+        period.quality === "projected" ? null : (printed ?? null),
+      reconciliation: demoReconciliation(source),
+    });
+  }
+  return { entity, periods: spread.periods };
 }
 
 async function financialModel(
@@ -195,6 +213,7 @@ async function seed() {
         "A generic commercial banking template for demos and tests. Not any real institution's model.",
     },
     { longTermDebt: "LONG_TERM_DEBT", currentDebt: "CPLTD", cash: "CASH" },
+    { netIncome: "NET_INCOME", retainedEarnings: "RETAINED_EARNINGS" },
   );
   const companies = demoCompanies();
   const borrowers = [];

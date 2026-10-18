@@ -18,6 +18,19 @@ export interface DemoPeriod {
   values: Record<string, string>;
 }
 
+// How a period's retained earnings changed other than by net income, as the
+// analyst reconciles them from the statements: the dividends declared, taken
+// here as those the cash flow statement says were paid.
+export const demoReconciliation = (period: Pick<DemoPeriod, "values">) =>
+  period.values.CF_DIVIDENDS
+    ? [
+        {
+          label: "Dividends declared",
+          amount: `-${period.values.CF_DIVIDENDS}`,
+        },
+      ]
+    : [];
+
 export interface DemoCompany {
   name: string;
   industry: string;

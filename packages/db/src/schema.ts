@@ -95,6 +95,14 @@ export interface FinancingItems {
   cash: string | null;
 }
 
+// The items the spread's statement checks read, as item codes of the model:
+// net income, compared with the figure printed on the statements, and
+// retained earnings, rolled forward from one period to the next.
+export interface CheckItems {
+  netIncome: string | null;
+  retainedEarnings: string | null;
+}
+
 export const scoringModels = pgTable(
   "scoring_models",
   {
@@ -111,6 +119,10 @@ export const scoringModels = pgTable(
       .$type<FinancingItems>()
       .notNull()
       .default({ longTermDebt: null, currentDebt: null, cash: null }),
+    checkItems: jsonb()
+      .$type<CheckItems>()
+      .notNull()
+      .default({ netIncome: null, retainedEarnings: null }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -286,6 +298,18 @@ export const statementQuality = pgEnum("statement_quality", [
   "projected",
 ]);
 
+// A line explaining how retained earnings changed from the period before,
+// other than by net income: dividends declared, a prior-period adjustment,
+// or the difference forced to make them roll forward. The amount is a
+// canonical decimal, negative when it reduces retained earnings.
+export interface ReconciliationLine {
+  id: string;
+  label: string;
+  amount: string;
+  // Set by forcing retained earnings to roll forward, rather than entered.
+  forced?: boolean;
+}
+
 export const statementPeriods = pgTable(
   "statement_periods",
   {
@@ -302,6 +326,12 @@ export const statementPeriods = pgTable(
     scoringModelVersionId: uuid()
       .notNull()
       .references(() => scoringModelVersions.id),
+    // Net income as printed on the statements, which the spread's must match.
+    reportedNetIncome: numeric(),
+    reconciliation: jsonb()
+      .$type<ReconciliationLine[]>()
+      .notNull()
+      .default([]),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -1,4 +1,13 @@
-export { checkPeriod, effectiveAmounts, isNumeric } from "./checks";
+export {
+  checkControls,
+  checkPeriod,
+  effectiveAmounts,
+  isNumeric,
+  previousPeriod,
+  type CheckItems,
+  type ReconciliationLine,
+  type StatementControls,
+} from "./checks";
 export {
   parseSpreadPaste,
   type PasteColumn,

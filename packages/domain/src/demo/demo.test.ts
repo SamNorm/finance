@@ -15,9 +15,19 @@ import {
 import { parseItemTable } from "../scoring-models/parse";
 import { fixture } from "../scoring-models/test-helpers";
 import type { ScoringItem } from "../scoring-models/types";
-import { checkPeriod, effectiveAmounts, isNumeric } from "../spreads/checks";
+import {
+  checkControls,
+  checkPeriod,
+  effectiveAmounts,
+  isNumeric,
+  previousPeriod,
+} from "../spreads/checks";
 import { BORROWING_BASE_MODEL, inventoryByType } from "./borrowing-base";
-import { demoCompanies, type DemoPeriod } from "./companies";
+import {
+  demoCompanies,
+  demoReconciliation,
+  type DemoPeriod,
+} from "./companies";
 import { DEMO_MODEL, demoScenarios } from "./model";
 import {
   demoProperty,
@@ -29,6 +39,13 @@ const commercial = parseItemTable(fixture("commercial-banking.csv")).items;
 const realEstate = parseItemTable(fixture("real-estate.csv")).items;
 const companies = demoCompanies();
 const property = demoProperty();
+
+// The commercial template's net income and retained earnings, as the seed
+// sets them for the statement checks.
+const CHECKED = {
+  netIncome: "NET_INCOME",
+  retainedEarnings: "RETAINED_EARNINGS",
+};
 
 // Where each template's new loans post, as the seed sets them.
 const POSTING = new Map<ScoringItem[], FinancingItems>([
@@ -120,6 +137,29 @@ describe("demo data", () => {
         expect(
           checkPeriod(commercial, entered),
           `${company.name} ${period.year}`,
+        ).toEqual([]);
+        // Retained earnings roll forward once dividends are reconciled.
+        const previous = previousPeriod(
+          { periodEnd: period.end, months: period.months },
+          company.periods.map((p) => ({ periodEnd: p.end, months: p.months })),
+        );
+        const before = company.periods.find(
+          (p) => p.end === previous?.periodEnd && p.months === previous.months,
+        );
+        expect(
+          checkControls(commercial, entered, {
+            items: CHECKED,
+            reportedNetIncome: null,
+            reconciliation: demoReconciliation(period),
+            previous: before
+              ? {
+                  end: before.end,
+                  items: commercial,
+                  entered: new Map(Object.entries(before.values)),
+                }
+              : null,
+          }),
+          `${company.name} ${period.end}`,
         ).toEqual([]);
       }
     }

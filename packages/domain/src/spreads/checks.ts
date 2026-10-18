@@ -1,10 +1,17 @@
+import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Issue } from "../errors";
+import { monthIndex } from "../financing/amortization";
 import type { ScoringItem } from "../scoring-models/types";
 
 // Statement checks (§5.6): subtotals reconcile with their lines, the balance
-// sheet balances, and figures carry the sign the scoring model expects. They
-// flag problems; they never block entry.
+// sheet balances, and figures carry the sign the scoring model expects; net
+// income matches the statements', and retained earnings roll forward. They
+// never block entry. Errors are critical: a period with one can't be
+// analyzed (see analyses/service.ts); warnings only flag.
+
+export type CheckItems = schema.CheckItems;
+export type ReconciliationLine = schema.ReconciliationLine;
 
 type Amount = InstanceType<typeof Dec>;
 
@@ -135,6 +142,90 @@ export function checkPeriod(
         itemCode: code,
         message: `"${code}" isn't in this period's scoring model version.`,
       });
+    }
+  }
+  return issues;
+}
+
+// What the statements themselves say about a period, beyond its figures.
+export interface StatementControls {
+  // The scoring model's net income and retained earnings items.
+  items: CheckItems;
+  // Net income as printed on the statements, when entered.
+  reportedNetIncome: string | null;
+  // How retained earnings changed other than by net income.
+  reconciliation: readonly Pick<ReconciliationLine, "amount">[];
+  // The period it rolls forward from, with its figures, when there's one.
+  previous: {
+    end: string;
+    items: readonly ScoringItem[];
+    entered: ReadonlyMap<string, string>;
+  } | null;
+}
+
+// The period another rolls forward from: the one ending in the month it
+// starts, a fiscal year when several do. A year to date to June 2025 rolls
+// forward from the fiscal year to December 2024.
+export function previousPeriod<P extends { periodEnd: string; months: number }>(
+  period: P,
+  periods: readonly P[],
+): P | null {
+  const start = monthIndex(period.periodEnd) - period.months;
+  const before = periods.filter(
+    (p) => p !== period && monthIndex(p.periodEnd) === start,
+  );
+  return before.find((p) => p.months === 12) ?? before[0] ?? null;
+}
+
+// Checks against the statements: net income as printed, an error when the
+// spread's differs, since a figure is wrong; and retained earnings rolled
+// forward from the period before with net income and the reconciliation's
+// lines, a warning when they don't, as scoring systems' often need a plug.
+export function checkControls(
+  items: readonly ScoringItem[],
+  entered: ReadonlyMap<string, string>,
+  controls: StatementControls,
+): Issue[] {
+  const issues: Issue[] = [];
+  const { amounts } = effectiveAmounts(items, entered);
+  const find = (code: string | null) =>
+    code ? items.find((i) => i.code === code && isNumeric(i)) : undefined;
+  const netIncome = find(controls.items.netIncome);
+  const income = netIncome && amounts.get(netIncome.code);
+
+  if (netIncome && controls.reportedNetIncome !== null) {
+    const spread = income ?? new Dec(0);
+    const printed = new Dec(controls.reportedNetIncome);
+    if (spread.minus(printed).abs().gt(TOLERANCE))
+      issues.push({
+        severity: "error",
+        code: "net_income",
+        itemCode: netIncome.code,
+        message: `${netIncome.label} is ${format(spread)} in the spread but ${format(printed)} on the statements (difference ${format(spread.minus(printed))}).`,
+      });
+  }
+
+  const retained = find(controls.items.retainedEarnings);
+  const { previous } = controls;
+  if (retained && netIncome && previous) {
+    const end = amounts.get(retained.code);
+    const start = effectiveAmounts(
+      previous.items,
+      previous.entered,
+    ).amounts.get(retained.code);
+    if (end && start) {
+      const adjusted = controls.reconciliation.reduce(
+        (total, line) => total.plus(line.amount),
+        new Dec(0),
+      );
+      const expected = start.plus(income ?? 0).plus(adjusted);
+      if (end.minus(expected).abs().gt(TOLERANCE))
+        issues.push({
+          severity: "warning",
+          code: "retained_earnings",
+          itemCode: retained.code,
+          message: `${retained.label} doesn't roll forward from ${previous.end}: ${format(start)} + net income ${format(income ?? new Dec(0))}${adjusted.isZero() ? "" : ` + adjustments ${format(adjusted)}`} = ${format(expected)}, vs ${format(end)} on the balance sheet (difference ${format(end.minus(expected))}).`,
+        });
     }
   }
   return issues;

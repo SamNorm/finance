@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
 import { balanceSheetSides, type FinancingItems } from "../financing/financing";
+import type { CheckItems } from "../spreads/checks";
 import * as edit from "./edit";
 import type { ScoringItem, ScoringModel, ScoringModelVersion } from "./types";
 import { isStructural, validateItems } from "./validate";
@@ -208,6 +209,54 @@ export async function setFinancingItems(
         longTermDebt: pick(input.longTermDebt, "claims", "Long-term debt"),
         currentDebt: pick(input.currentDebt, "claims", "The current portion"),
         cash: pick(input.cash, "assets", "Cash"),
+      },
+    })
+    .where(eq(scoringModels.id, modelId))
+    .returning();
+  return model!;
+}
+
+// The items the spread's statement checks read: net income, an amount on the
+// income statement, and retained earnings, one on the balance sheet. Checked
+// against the latest published version; a blank turns that check off.
+export async function setCheckItems(
+  db: Db,
+  ctx: Context,
+  modelId: string,
+  input: Partial<Record<keyof CheckItems, string | null>>,
+): Promise<ScoringModel> {
+  await findModel(db, ctx, modelId);
+  const version = await getLatestPublishedVersion(db, ctx, modelId);
+  if (!version)
+    throw new DomainError("conflict", "Publish the scoring model first.");
+  const items = await listItems(db, ctx, version.id);
+  const pick = (
+    raw: string | null | undefined,
+    statement: ScoringItem["statement"],
+    what: string,
+  ) => {
+    const code = raw?.trim() || null;
+    const item = code && items.find((i) => i.code === code);
+    if (
+      code &&
+      (!item || item.statement !== statement || item.dataType !== "amount")
+    )
+      throw new DomainError(
+        "invalid",
+        `${what} must be an amount on the ${statement === "income_statement" ? "income statement" : "balance sheet"}.`,
+      );
+    return code;
+  };
+  const [model] = await db
+    .update(scoringModels)
+    .set({
+      checkItems: {
+        netIncome: pick(input.netIncome, "income_statement", "Net income"),
+        retainedEarnings: pick(
+          input.retainedEarnings,
+          "balance_sheet",
+          "Retained earnings",
+        ),
       },
     })
     .where(eq(scoringModels.id, modelId))

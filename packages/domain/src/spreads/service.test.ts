@@ -8,6 +8,7 @@ import {
   createScoringModel,
   publishVersion,
   replaceItems,
+  setCheckItems,
 } from "../scoring-models/service";
 import { fixture } from "../scoring-models/test-helpers";
 import {
@@ -21,10 +22,12 @@ import {
   createEntity,
   deleteEntity,
   deletePeriod,
+  forceRetainedEarnings,
   getSpread,
   listEntities,
   pasteSpread,
   previewPaste,
+  setPeriodControls,
   setValue,
   setValues,
   updateEntity,
@@ -148,6 +151,107 @@ describe("borrowers and spreads", () => {
       CASH: "1000",
       REVENUE: "-20",
     });
+  });
+
+  it("checks net income against the statements and rolls retained earnings forward", async () => {
+    await rejects(
+      setCheckItems(db, ctx, ctx.modelId, { netIncome: "CASH" }),
+      "invalid",
+    );
+    await setCheckItems(db, ctx, ctx.modelId, {
+      netIncome: "NET_INCOME",
+      retainedEarnings: "RETAINED_EARNINGS",
+    });
+    const entity = await createEntity(db, ctx, {
+      name: "Acme",
+      scoringModelId: ctx.modelId,
+    });
+    // Each balance sheet balances: cash against retained earnings.
+    const period = async (
+      end: string,
+      months: number,
+      figures: Record<string, string>,
+    ) => {
+      const p = await addPeriod(db, ctx, entity.id, {
+        periodEnd: end,
+        months,
+        quality: "audited",
+      });
+      await setValues(db, ctx, p.id, figures);
+      return p;
+    };
+    await period("2023-12-31", 12, { CASH: "1000", RETAINED_EARNINGS: "1000" });
+    const fy2024 = await period("2024-12-31", 12, {
+      REVENUE: "300",
+      CASH: "1250",
+      RETAINED_EARNINGS: "1250",
+    });
+    const ytd = await period("2025-06-30", 6, {
+      REVENUE: "100",
+      CASH: "1350",
+      RETAINED_EARNINGS: "1350",
+    });
+    const checks = async (id: string) =>
+      (await getSpread(db, ctx, entity.id)).checks[id]!.map((i) => [
+        i.severity,
+        i.code,
+        i.message,
+      ]);
+
+    // 1,000 + 300 isn't 1,250: something left retained earnings.
+    expect(await checks(fy2024.id)).toEqual([
+      [
+        "warning",
+        "retained_earnings",
+        "Retained earnings (deficit) doesn't roll forward from 2023-12-31: 1,000 + net income 300 = 1,300, vs 1,250 on the balance sheet (difference -50).",
+      ],
+    ]);
+    // A year to date rolls forward from the fiscal year before it.
+    expect(await checks(ytd.id)).toEqual([]);
+
+    await setPeriodControls(db, ctx, fy2024.id, {
+      reportedNetIncome: "310",
+      reconciliation: [{ label: "Dividends declared", amount: "(50)" }],
+    });
+    expect(await checks(fy2024.id)).toEqual([
+      [
+        "error",
+        "net_income",
+        "Net income is 300 in the spread but 310 on the statements (difference -10).",
+      ],
+    ]);
+    await setPeriodControls(db, ctx, fy2024.id, { reportedNetIncome: "300" });
+    expect(await checks(fy2024.id)).toEqual([]);
+
+    // Forcing adds what's left, and replaces what was forced before.
+    await setPeriodControls(db, ctx, fy2024.id, {
+      reconciliation: [{ label: "Dividends declared", amount: "-30" }],
+    });
+    const forced = await forceRetainedEarnings(db, ctx, fy2024.id);
+    expect(forced.reconciliation).toMatchObject([
+      { label: "Dividends declared", amount: "-30" },
+      { label: "Unreconciled difference", amount: "-20", forced: true },
+    ]);
+    expect(await checks(fy2024.id)).toEqual([]);
+    const again = await forceRetainedEarnings(db, ctx, fy2024.id);
+    expect(again.reconciliation).toHaveLength(2);
+    await rejects(
+      setPeriodControls(db, ctx, fy2024.id, {
+        reconciliation: [{ label: "Dividends", amount: "lots" }],
+      }),
+      "invalid",
+    );
+
+    // A paste is checked against the period it rolls forward from.
+    const preview = await previewPaste(
+      db,
+      ctx,
+      entity.id,
+      "\tFY2025\nCash and equivalents\t1,500\nRetained earnings (deficit)\t1,500\nRevenue\t200\n",
+    );
+    expect(preview.columns[0]!.checks.map((i) => i.message)).toEqual([
+      "Retained earnings (deficit) doesn't roll forward from 2024-12-31: 1,250 + net income 200 = 1,450, vs 1,500 on the balance sheet (difference 50).",
+    ]);
   });
 
   it("pastes a spread, creating periods and reusing existing ones", async () => {

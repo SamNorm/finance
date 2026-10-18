@@ -8,8 +8,10 @@ import {
   sql,
   type Db,
 } from "@finance/db";
+import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
+import { entryId } from "../financing/common";
 import { normalizeDebtSchedule } from "../financing/debt-schedule";
 import {
   getLatestPublishedVersion,
@@ -17,7 +19,16 @@ import {
   listItems,
 } from "../scoring-models/service";
 import type { ScoringItem } from "../scoring-models/types";
-import { checkPeriod, effectiveAmounts, isNumeric } from "./checks";
+import {
+  checkControls,
+  checkPeriod,
+  effectiveAmounts,
+  isNumeric,
+  previousPeriod,
+  TOLERANCE,
+  type CheckItems,
+  type ReconciliationLine,
+} from "./checks";
 import { parseSpreadPaste, type PasteColumn, type PasteRow } from "./paste";
 import { parseValue } from "./values";
 
@@ -480,6 +491,8 @@ export interface Spread {
   // Subtotals summed from their lines where nothing was entered.
   computed: Record<string, Record<string, string>>;
   checks: Record<string, Issue[]>;
+  // The scoring model's net income and retained earnings, for its checks.
+  checkItems: CheckItems;
 }
 
 export async function getSpread(
@@ -505,11 +518,10 @@ export async function getSpread(
         )
     : [];
 
-  const latest = await getLatestPublishedVersion(
-    db,
-    ctx,
-    entity.scoringModelId,
-  );
+  const [latest, { checkItems }] = await Promise.all([
+    getLatestPublishedVersion(db, ctx, entity.scoringModelId),
+    getScoringModel(db, ctx, entity.scoringModelId),
+  ]);
   const itemsByVersion = new Map<string, ScoringItem[]>();
   for (const versionId of new Set([
     ...list.map((p) => p.scoringModelVersionId),
@@ -531,14 +543,23 @@ export async function getSpread(
     values: {},
     computed: {},
     checks: {},
+    checkItems,
   };
+  const figures = new Map(
+    list.map((period) => [
+      period.id,
+      new Map(
+        rows
+          .filter((r) => r.periodId === period.id)
+          .map((r) => [r.code, (r.amount ?? r.text)!]),
+      ),
+    ]),
+  );
+  const itemsOf = (period: StatementPeriod) =>
+    itemsByVersion.get(period.scoringModelVersionId)!;
   for (const period of list) {
-    const entered = new Map(
-      rows
-        .filter((r) => r.periodId === period.id)
-        .map((r) => [r.code, (r.amount ?? r.text)!]),
-    );
-    const items = itemsByVersion.get(period.scoringModelVersionId)!;
+    const entered = figures.get(period.id)!;
+    const items = itemsOf(period);
     spread.values[period.id] = Object.fromEntries(entered);
     spread.computed[period.id] = Object.fromEntries(
       [...effectiveAmounts(items, entered).computed].map(([code, value]) => [
@@ -546,9 +567,148 @@ export async function getSpread(
         value.toFixed(),
       ]),
     );
-    spread.checks[period.id] = checkPeriod(items, entered);
+    const previous = previousPeriod(period, list);
+    spread.checks[period.id] = [
+      ...checkPeriod(items, entered),
+      ...checkControls(items, entered, {
+        items: checkItems,
+        reportedNetIncome: period.reportedNetIncome,
+        reconciliation: period.reconciliation,
+        previous: previous && {
+          end: previous.periodEnd,
+          items: itemsOf(previous),
+          entered: figures.get(previous.id)!,
+        },
+      }),
+    ];
   }
   return spread;
+}
+
+// A period's figures from the statements themselves, which its checks
+// compare the spread with. Each is optional.
+export interface PeriodControlsInput {
+  // Net income as printed; blank or null clears it.
+  reportedNetIncome?: string | null;
+  // Replaces how retained earnings changed other than by net income, each
+  // line's amount as typed, negative when it reduces them.
+  reconciliation?: readonly {
+    id?: unknown;
+    label?: unknown;
+    amount?: unknown;
+    forced?: unknown;
+  }[];
+}
+
+const MAX_RECONCILIATION = 50;
+
+function normalizeReconciliation(
+  lines: PeriodControlsInput["reconciliation"],
+): ReconciliationLine[] {
+  if (!Array.isArray(lines) || lines.length > MAX_RECONCILIATION)
+    throw new DomainError(
+      "invalid",
+      `The reconciliation is a list of up to ${MAX_RECONCILIATION} lines.`,
+    );
+  return lines.map((line, i) => {
+    const label = String(line?.label ?? "").trim();
+    if (!label)
+      throw new DomainError(
+        "invalid",
+        `Reconciliation line ${i + 1}: give it a label.`,
+      );
+    const parsed = parseValue(String(line.amount ?? ""), "amount");
+    if ("error" in parsed)
+      throw new DomainError("invalid", `${label}: ${parsed.error}`);
+    if (parsed.value === null)
+      throw new DomainError("invalid", `${label}: enter the amount.`);
+    return {
+      id: entryId(line.id),
+      label,
+      amount: parsed.value,
+      ...(line.forced === true ? { forced: true } : {}),
+    };
+  });
+}
+
+export async function setPeriodControls(
+  db: Db,
+  ctx: Context,
+  periodId: string,
+  input: PeriodControlsInput,
+): Promise<StatementPeriod> {
+  await findPeriod(db, ctx, periodId);
+  let reportedNetIncome: string | null | undefined;
+  if (input.reportedNetIncome !== undefined) {
+    const parsed = parseValue(String(input.reportedNetIncome ?? ""), "amount");
+    if ("error" in parsed)
+      throw new DomainError("invalid", `Net income: ${parsed.error}`);
+    reportedNetIncome = parsed.value;
+  }
+  const [updated] = await db
+    .update(periods)
+    .set({
+      reportedNetIncome,
+      reconciliation:
+        input.reconciliation && normalizeReconciliation(input.reconciliation),
+    })
+    .where(eq(periods.id, periodId))
+    .returning();
+  return updated!;
+}
+
+// Forces retained earnings to roll forward from the period before: a line
+// for what's left once net income and the reconciliation's other lines are
+// counted, replacing any forced before. It stays in the reconciliation, so
+// a reviewer sees what was forced.
+export async function forceRetainedEarnings(
+  db: Db,
+  ctx: Context,
+  periodId: string,
+): Promise<StatementPeriod> {
+  const period = await findPeriod(db, ctx, periodId);
+  const spread = await getSpread(db, ctx, period.entityId);
+  const { netIncome, retainedEarnings } = spread.checkItems;
+  if (!netIncome || !retainedEarnings)
+    throw new DomainError(
+      "conflict",
+      "The scoring model doesn't say which items are net income and retained earnings yet.",
+    );
+  const current = spread.periods.find((p) => p.id === periodId)!;
+  const previous = previousPeriod(current, spread.periods);
+  if (!previous)
+    throw new DomainError(
+      "invalid",
+      "There's no period before this one for retained earnings to roll forward from.",
+    );
+  const figure = (id: string, code: string) =>
+    spread.values[id]?.[code] ?? spread.computed[id]?.[code];
+  const end = figure(periodId, retainedEarnings);
+  const start = figure(previous.id, retainedEarnings);
+  if (end === undefined || start === undefined)
+    throw new DomainError(
+      "invalid",
+      "Retained earnings need a figure in both periods to roll forward.",
+    );
+  const kept = current.reconciliation.filter((line) => !line.forced);
+  const difference = kept
+    .reduce(
+      (left, line) => left.minus(line.amount),
+      new Dec(end).minus(start).minus(figure(periodId, netIncome) ?? 0),
+    )
+    .toDecimalPlaces(2);
+  return setPeriodControls(db, ctx, periodId, {
+    reconciliation: difference.abs().gt(TOLERANCE)
+      ? [
+          ...kept,
+          {
+            label: "Unreconciled difference",
+            amount: difference.toFixed(),
+            forced: true,
+          },
+        ]
+      : kept,
+  });
 }
 
 export interface PastePreview {
@@ -591,38 +751,77 @@ export async function previewPaste(
           ),
         )
     : [];
+  const { checkItems } = await getScoringModel(db, ctx, entity.scoringModelId);
   const byCode = new Map(items.map((item) => [item.code, item]));
   const totals = items.filter(
     (item) => item.parentCode === null && item.kind === "subtotal",
   );
+  const figuresOf = (periodId: string | null) =>
+    new Map(
+      existingFigures
+        .filter((v) => v.periodId === periodId)
+        .map((v) => [v.code, (v.amount ?? v.text)!]),
+    );
+  // What each column leaves in its period: the figures already there, with
+  // those pasted in their place. Checked as the spread is, so a figure
+  // mistyped on its way here shows, as totals that don't tie.
+  const pasted = parsed.columns.map((column, position) => {
+    const months = column.months ?? 12;
+    const period =
+      existing.find(
+        (p) => p.periodEnd === column.periodEnd && p.months === months,
+      ) ?? null;
+    const entered = figuresOf(period?.id ?? null);
+    for (const { item, value } of columnFigures(parsed, position, byCode))
+      entered.set(item.code, value);
+    return { column, period, months, entered };
+  });
+  // The spread as it would stand, for retained earnings to roll forward
+  // through: the pasted columns, and the periods they leave alone.
+  const after = [
+    ...pasted.flatMap(({ column, months, entered }) =>
+      column.periodEnd
+        ? [{ periodEnd: column.periodEnd, months, entered }]
+        : [],
+    ),
+    ...existing
+      .filter((e) => !pasted.some((p) => p.period?.id === e.id))
+      .map((e) => ({
+        periodEnd: e.periodEnd,
+        months: e.months,
+        entered: figuresOf(e.id),
+      })),
+  ];
   return {
-    // What each column leaves in its period: the figures already there, with
-    // those pasted in their place. Checked as the spread is, so a figure
-    // mistyped on its way here shows, as totals that don't tie.
-    columns: parsed.columns.map((column, position) => {
-      const existingPeriodId =
-        existing.find(
-          (p) =>
-            p.periodEnd === column.periodEnd &&
-            p.months === (column.months ?? 12),
-        )?.id ?? null;
-      const entered = new Map(
-        existingFigures
-          .filter((v) => v.periodId === existingPeriodId)
-          .map((v) => [v.code, (v.amount ?? v.text)!]),
-      );
-      for (const { item, value } of columnFigures(parsed, position, byCode))
-        entered.set(item.code, value);
+    columns: pasted.map(({ column, period, entered }) => {
       const { amounts } = effectiveAmounts(items, entered);
+      const self = after.find((a) => a.entered === entered);
+      const previous = self && previousPeriod(self, after);
       return {
         ...column,
-        existingPeriodId,
+        existingPeriodId: period?.id ?? null,
         totals: totals.map((item) => ({
           code: item.code,
           label: item.label,
           value: amounts.get(item.code)?.toFixed() ?? null,
         })),
-        checks: checkPeriod(items, entered),
+        checks: [
+          ...checkPeriod(items, entered),
+          ...(self
+            ? checkControls(items, entered, {
+                items: checkItems,
+                reportedNetIncome: period?.reportedNetIncome ?? null,
+                reconciliation: period?.reconciliation ?? [],
+                previous: previous
+                  ? {
+                      end: previous.periodEnd,
+                      items,
+                      entered: previous.entered,
+                    }
+                  : null,
+              })
+            : []),
+        ],
       };
     }),
     matched: parsed.matched.length,
