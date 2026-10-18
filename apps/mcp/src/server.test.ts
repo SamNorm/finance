@@ -24,7 +24,12 @@ import {
   StreamableHTTPClientTransport,
   type VersionNegotiationMode,
 } from "@modelcontextprotocol/client";
-import { browserPath, closeBrowser } from "@finance/documents";
+import {
+  browserPath,
+  closeBrowser,
+  deleteTemplate,
+  publishTemplate,
+} from "@finance/documents";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "./server";
@@ -249,6 +254,10 @@ describe("MCP server", () => {
       list_document_templates: "reads",
       generate_document: "adds",
       list_documents: "reads",
+      describe_document_sections: "reads",
+      get_document_template: "reads",
+      create_document_template: "adds",
+      set_document_template: "changes",
       list_analyses: "reads",
       get_analysis: "reads",
       run_analysis: "reads",
@@ -1317,6 +1326,89 @@ describe("MCP server", () => {
     expect(
       (await call("list_documents", { analysisId: ids.analysis })).value,
     ).toEqual([]);
+  });
+
+  it("writes an organization's document as a draft", async () => {
+    const call = await connect();
+    const { value: reference } = await call("describe_document_sections");
+    expect(
+      reference.sections.find((s: { type: string }) => s.type === "lines")
+        .settings,
+    ).toHaveProperty("lines");
+    expect(reference.when).toHaveProperty("project");
+    expect(reference.mergeFields).toHaveProperty("line.CODE");
+
+    const { value: models } = await call("list_financial_models");
+    const model = models.find(
+      (m: { name: string }) => m.name === "Debt service",
+    );
+    const { value: created } = await call("create_document_template", {
+      name: "Coverage note",
+      financialModelId: model.id,
+      from: "debt-summary",
+    });
+    expect(created).toMatchObject({
+      name: "Coverage note",
+      status: "draft",
+      financialModel: { name: "Debt service", publishedVersion: 1 },
+      draft: { orientation: "portrait" },
+      issues: [],
+      editorUrl: `http://localhost:3000/documents/templates/${created.id}`,
+    });
+    expect(created.draft.sections.map((s: { type: string }) => s.type)).toEqual(
+      ["facts", "debt", "heading", "amortization"],
+    );
+    expect(created.lines).toContainEqual({
+      code: "DSCR",
+      label: "Debt service coverage",
+    });
+
+    const { value: written } = await call("set_document_template", {
+      templateId: created.id,
+      title: "{{borrower.name}}: coverage",
+      sections: [
+        { type: "facts" },
+        { type: "lines", lines: ["DSCR", "NOPE"], periods: "recent" },
+        { type: "text", text: "Coverage is {{line.DSCR}}.", when: "project" },
+      ],
+    });
+    expect(written.draft.title).toBe("{{borrower.name}}: coverage");
+    expect(written.issues).toEqual([
+      "error: Section 2 (Model lines): Debt service has no line NOPE.",
+    ]);
+    const { error } = await call("set_document_template", {
+      templateId: created.id,
+      sections: [{ type: "memo" }],
+    });
+    expect(error).toMatch(
+      /^The sections can't be saved\.\n- Section 1: "memo"/,
+    );
+
+    // Analysts get it once a person publishes it.
+    const printable = async () =>
+      (
+        await call("list_document_templates", { analysisId: ids.analysis })
+      ).value.map((t: { template: string }) => t.template);
+    expect(await printable()).not.toContain(created.id);
+    await call("set_document_template", {
+      templateId: created.id,
+      sections: [{ type: "facts" }, { type: "lines", lines: ["DSCR"] }],
+    });
+    await publishTemplate(db, ctx, created.id);
+    expect(await printable()).toEqual([
+      created.id,
+      "analysis-report",
+      "deal-summary",
+      "debt-summary",
+    ]);
+    const { value: all } = await call("list_document_templates");
+    expect(all[0]).toMatchObject({
+      template: created.id,
+      status: "published",
+      financialModel: "Debt service",
+    });
+    expect(all[2]).toMatchObject({ template: "deal-summary", hidden: false });
+    await deleteTemplate(db, ctx, created.id);
   });
 
   it.skipIf(!browserPath())(

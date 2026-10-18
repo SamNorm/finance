@@ -14,22 +14,71 @@ import {
 // (documents-plan.md §6.3). What can't be stored stops a save; any error
 // stops publishing.
 
-// Each block's settings besides `type` and `when`, and what each holds.
-const SETTINGS: Record<
-  BlockType,
-  Record<string, "text" | "codes" | "periods">
-> = {
-  heading: { text: "text" },
-  text: { text: "text" },
+// Each block's settings besides `type` and `when`: what each holds, and
+// what it does, as MCP clients read it (describeSections).
+type Setting = { kind: "text" | "codes" | "periods"; help: string };
+
+const SETTINGS: Record<BlockType, Record<string, Setting>> = {
+  heading: {
+    text: { kind: "text", help: "The heading, with merge fields." },
+  },
+  text: {
+    text: {
+      kind: "text",
+      help: 'Paragraphs with a blank line between them; lines starting "- " are bullets; **bold** and *italics*; merge fields for every figure.',
+    },
+  },
   facts: {},
-  lines: { title: "text", lines: "codes", periods: "periods" },
+  lines: {
+    title: {
+      kind: "text",
+      help: "Shown above the table, with merge fields. Optional.",
+    },
+    lines: {
+      kind: "codes",
+      help: "Codes of the lines to show, printed in the model's order. Omit for every line, by section. Naming lines needs the document to read a financial model.",
+    },
+    periods: {
+      kind: "periods",
+      help: '"all" for every period, or "recent" for the latest fiscal year and what follows it.',
+    },
+  },
   covenants: {},
-  charts: { charts: "codes" },
+  charts: {
+    charts: {
+      kind: "codes",
+      help: "Ids of the model's charts to show. Omit for every chart, the model's and the analysis's own. Naming charts needs the document to read a financial model.",
+    },
+  },
   sourcesUses: {},
   debt: {},
   amortization: {},
   pageBreak: {},
 };
+
+// The sections a document is made of, each with its settings, the
+// conditions any can show on, and the merge fields text takes: what an AI
+// client reads before writing a document's sections.
+export function describeSections() {
+  return {
+    sections: (Object.keys(SECTIONS) as BlockType[]).map((type) => ({
+      type,
+      label: SECTIONS[type].label,
+      description: SECTIONS[type].description,
+      settings: Object.fromEntries(
+        Object.entries(SETTINGS[type]).map(([key, { help }]) => [key, help]),
+      ),
+    })),
+    when: CONDITIONS,
+    mergeFields: {
+      ...MERGE_FIELDS,
+      "line.CODE":
+        "A line's figure in the latest fiscal year, e.g. {{line.DSCR}}",
+      "line.CODE.post":
+        "That figure post-project, when the scenario has a project",
+    },
+  };
+}
 
 const MAX_BLOCKS = 100;
 const MAX_TEXT = 10_000;
@@ -113,7 +162,9 @@ export function parseBlocks(input: unknown): {
           );
         continue;
       }
-      const kind = Object.hasOwn(settings, key) ? settings[key] : undefined;
+      const kind = Object.hasOwn(settings, key)
+        ? settings[key]!.kind
+        : undefined;
       if (!kind) {
         fail(
           "unknown_setting",

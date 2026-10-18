@@ -1,6 +1,6 @@
 # PDF Documents: Draft Plan
 
-_Status: phase 1 built (§4); phase 3 under way, slices 1 to 3 built (§6.6) · Last updated: 2026-10-18_
+_Status: phase 1 built (§4); phase 3 under way, slices 1 to 4 built (§6.6) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -168,14 +168,16 @@ The built-in documents ship as default templates made of these same blocks, so t
 
 ### 6.5 MCP
 
-- `list_document_templates` includes the organization's, by id; `generate_document` takes one.
+- `list_document_templates` lists every document, or with an analysis the ones it prints as; `generate_document` takes an organization's document by id.
 - Authoring, so a client's AI can build a document on request:
-  - `describe_document_sections`: each section and its settings, for the AI to read;
+  - `describe_document_sections`: each section and its settings, the conditions and the merge fields, for the AI to read;
+  - `get_document_template`: the draft, what's published, its issues, and the model's lines and charts it can name;
   - `create_document_template`;
-  - `set_document_template`: the whole draft at once (title, orientation, blocks), returning the checks;
-  - `publish_document_template`.
+  - `set_document_template`: the draft's title, orientation and whole list of sections at once, returning the checks.
 
-  Replacing the whole draft keeps the tools few; the blocks are small JSON.
+  Replacing the whole list keeps the tools few; the blocks are small JSON.
+
+- There's no publishing over MCP. AI writes go to drafts (recap §8): the AI gives the user the editor's link, and a person reviews and publishes the document there.
 
 ### 6.6 Slices
 
@@ -193,6 +195,6 @@ Each slice is committed and merged on its own.
 
    How it's built: `listPrintableTemplates` gives an analysis's model the organization's published, unarchived documents that read it or no model, then the built-ins it hasn't hidden (`organizations.hidden_built_ins`, set with `setBuiltInHidden`). A hidden built-in no longer prints, even when asked for by key. On the analysis tab, the organization's own open in the editor and a built-in copies into one reading the analysis's model, both previewing that analysis and scenario.
 
-4. **MCP:** listing and printing them, then authoring.
+4. **MCP (built):** listing and printing them, then authoring (§6.5). `describeSections` in `check.ts` describes each setting beside the parser's own list of them.
 5. **French and English** (§3.6), the documents' part of the app's i18n (recap §7): a template's language sets its fixed wording (headings, "Base case", "Page 1 of 3", months) and number formats (1 234 567,89 $). Model line labels then need a French label, which is a change to financial models. Text sections are already in whatever language they're written in, and templates refer to codes rather than labels, so templates aren't stuck in one language meanwhile.
 6. **Personal templates and roles**, with sign-in (§6.1).
