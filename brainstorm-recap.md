@@ -216,7 +216,7 @@ Without a scoring model, where do the inputs live?
 - **M&A pro forma:** combine entities and add acquisition debt, synergies, and sources and uses.
 - **Normalization adjustments:** remove non-recurring items and adjust owner compensation to get adjusted EBITDA.
 - **Consolidation** beyond adding members at 100%: ownership shares and non-controlling interest, consolidated clients within others, and intercompany loans in members' debt schedules (built so far: consolidated clients, §5.5).
-- **PDF documents** and institutions' own templates: see `documents-plan.md`.
+- **PDF documents** and institutions' own templates: see `documents-plan.md`. Phase 1 is built: an analysis report, a deal summary and a debt summary, printed from an analysis with the organization's branding and kept as snapshots.
 - **Annual review memo drafting**, done by the client's LLM through MCP.
 - **Covenant breach forecasting** from projections.
 - **Portfolio views and benchmarking** within the institution's own book.

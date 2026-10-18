@@ -1,6 +1,6 @@
 # PDF Documents: Draft Plan
 
-_Status: draft, nothing built · Last updated: 2026-10-18_
+_Status: phase 1 built (§4) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -88,10 +88,19 @@ The built-in documents ship as default templates made of these same blocks, so t
 
 ## 4. Phases
 
-1. **First slice, enough for a demo:**
+1. **First slice, enough for a demo (built):**
    - The data contract, the block model and the rendering pipeline.
    - Organization branding (logo, colours, notice) and snapshots.
    - Three built-in templates: the analysis report, the deal summary, and the debt summary with amortization schedules.
+
+   How it's built:
+   - `packages/documents` holds the data contract (`data.ts`), the blocks and built-in templates (`templates.ts`), the HTML renderer with print CSS and SVG charts (`html.ts`, `chart.ts`), printing through `playwright-core` (`pdf.ts`), and the service (`service.ts`).
+   - PDFs print in the Chrome or Chromium on the machine, or the one `CHROME_PATH` names. Containers will need one installed.
+   - Snapshots are kept in the `documents` table: the PDF, the template's blocks, the data (values without lineage) and its hash, and the model version. Deleting an analysis deletes its documents.
+   - Analysts preview and print from an analysis's Documents tab. Administrators set the branding on the Documents page under Model setup.
+   - MCP: `list_document_templates`, `generate_document` (returns a link built on `APP_URL`) and `list_documents`.
+   - Charts, covenants and figures follow the app: a covenant's thresholds by year draw on its line's chart.
+
 2. **Documents that follow new features:** the covenant report and compliance certificate, the scenario comparison, the spread report and the consolidation worksheet.
 3. **Template editor** in the Admin model setup area: versions, merge fields, conditional blocks, and labels in French and English.
 4. **Narrative sections:** MCP drafting, the credit memo package and Word output.

@@ -8,6 +8,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  customType,
   date,
   foreignKey,
   index,
@@ -32,11 +33,25 @@ const updatedAt = () =>
     .defaultNow()
     .$onUpdate(() => new Date());
 
+// How an organization's documents look: its colour, its logo (a small image
+// as a data URL, kept in the row) and the notice printed on every page.
+export interface Branding {
+  color?: string;
+  logo?: string;
+  notice?: string;
+}
+
 export const organizations = pgTable("organizations", {
   id: uuid().primaryKey().defaultRandom(),
   name: text().notNull(),
+  branding: jsonb().$type<Branding>().notNull().default({}),
   createdAt: createdAt(),
 }).enableRLS();
+
+// Raw bytes, such as a generated PDF.
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => "bytea",
+});
 
 // ---------------------------------------------------------------------------
 // Scoring models (§5.2): one or more per organization (say, commercial and real
@@ -773,4 +788,44 @@ export const analysisScenarios = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],
+).enableRLS();
+
+// ---------------------------------------------------------------------------
+// Documents (documents-plan.md): PDFs generated from an analysis, kept as
+// snapshots for the credit file. Each records what it was built from: the
+// template's blocks, the data they read (without lineage) and its hash, and
+// the model version, so it reads the same however the analysis changes.
+
+export const documents = pgTable(
+  "documents",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    analysisId: uuid().references(() => analyses.id, { onDelete: "cascade" }),
+    // The scenario it shows, when one; kept when the scenario is deleted.
+    scenarioId: uuid(),
+    title: text().notNull(),
+    // The template's key and the blocks it had when generated.
+    template: text().notNull(),
+    definition: jsonb().notNull(),
+    data: jsonb().notNull(),
+    dataHash: text().notNull(),
+    financialModelVersionId: uuid().references(
+      () => financialModelVersions.id,
+    ),
+    pdf: bytea().notNull(),
+    pages: integer().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("documents_organization").on(t.organizationId),
+    index("documents_entity").on(t.entityId),
+    index("documents_analysis").on(t.analysisId),
+    index("documents_financial_model_version").on(t.financialModelVersionId),
+  ],
 ).enableRLS();

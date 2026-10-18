@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./amortization": "./src/financing/amortization.ts"
+    "./amortization": "./src/financing/amortization.ts",
+    "./demo/*": "./src/demo/*.ts"
   },
   "scripts": {
     "seed": "tsx --env-file-if-exists=../../.env scripts/seed.ts",

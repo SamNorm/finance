@@ -23,6 +23,9 @@ importers:
       '@finance/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@finance/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
       '@finance/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -60,6 +63,9 @@ importers:
       '@finance/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@finance/documents':
+        specifier: workspace:*
+        version: link:../../packages/documents
       '@finance/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -137,6 +143,31 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  packages/documents:
+    dependencies:
+      '@finance/db':
+        specifier: workspace:*
+        version: link:../db
+      '@finance/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@finance/engine':
+        specifier: workspace:*
+        version: link:../engine
+      playwright-core:
+        specifier: 1.49.1
+        version: 1.49.1
+    devDependencies:
+      '@types/node':
+        specifier: ^24
+        version: 24.19.2
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
   packages/domain:
     dependencies:
@@ -3546,6 +3577,11 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.49.1:
+    resolution: {integrity: sha512-BzmpVcs4kE2CH15rWfzpjzVGhWERJfmnXmniSyKeRZUs9Ws65m+RGIi7mjJK/euCegfn3i7jvqWeWyHe9y3Vgg==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
@@ -7236,6 +7272,8 @@ snapshots:
   picomatch@4.0.7: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.49.1: {}
 
   possible-typed-array-names@1.1.0: {}
 
