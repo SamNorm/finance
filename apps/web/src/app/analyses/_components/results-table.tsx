@@ -9,6 +9,7 @@ import type {
   RunPeriod,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
+import { TriangleAlert } from "lucide-react";
 import {
   useOptimistic,
   useState,
@@ -100,6 +101,7 @@ export function ResultsTable({
   project,
   postProject,
   scenarioName,
+  imbalance = null,
 }: {
   analysisId: string;
   lines: ModelLine[];
@@ -111,6 +113,8 @@ export function ResultsTable({
   // Periods shown with a post-project column, by key.
   postProject: string[];
   scenarioName: string | null;
+  // How the scenario's project is out of balance, when it is.
+  imbalance?: string | null;
 }) {
   const [trail, setTrail] = useState<Trail[]>([]);
   const [keys, setKeys] = useOptimistic(postProject);
@@ -246,7 +250,17 @@ export function ResultsTable({
                       {formatDate(column.period.end)}
                     </span>
                     {column.post ? (
-                      <span className="flex items-center justify-end gap-1 text-accent">
+                      <span
+                        className={`flex items-center justify-end gap-1 ${imbalance ? "text-danger" : "text-accent"}`}
+                        title={
+                          imbalance
+                            ? `${imbalance}: these figures don't balance`
+                            : undefined
+                        }
+                      >
+                        {imbalance && (
+                          <TriangleAlert className="size-3.5" aria-hidden />
+                        )}
                         Post-project
                         <button
                           type="button"

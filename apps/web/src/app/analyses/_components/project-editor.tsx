@@ -328,10 +328,11 @@ export function SourcesUses({
         )}
       </div>
       {Math.abs(difference) >= 1 && (
-        <p className="text-sm text-warning">
+        <p className="text-sm text-danger">
           Sources {difference > 0 ? "exceed" : "fall short of"} uses by{" "}
           {formatFigure(String(Math.abs(difference)), "amount")}, so the
-          post-project balance sheet won&apos;t balance.
+          post-project balance sheet won&apos;t balance. The analysis can&apos;t
+          be completed until they match.
         </p>
       )}
       {(project.lines.length > 0 || project.subordinations.length > 0) && (
@@ -703,7 +704,7 @@ export function ProjectEditor({
       </div>
 
       <p
-        className={`text-sm ${Math.abs(sources - uses) >= 1 ? "text-warning" : "text-muted"}`}
+        className={`text-sm ${Math.abs(sources - uses) >= 1 ? "text-danger" : "text-muted"}`}
       >
         Sources {formatFigure(String(sources), "amount")} · uses{" "}
         {formatFigure(String(uses), "amount")}

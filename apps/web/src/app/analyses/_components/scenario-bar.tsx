@@ -32,6 +32,8 @@ export interface ScenarioOption {
   name: string;
   overrides: Record<string, string>;
   project: Project | null;
+  // How the project is out of balance, e.g. "Sources exceed uses by 500".
+  imbalance?: string | null;
 }
 
 // What the project editor needs from the analysis.
@@ -86,10 +88,22 @@ export function ScenarioSwitcher({
             href={href(s.id)}
             aria-current={s.id === current ? "page" : undefined}
             className={pill}
-            title={s.project ? "Finances a project" : undefined}
+            title={
+              s.imbalance
+                ? `${s.imbalance}: the project is out of balance`
+                : s.project
+                  ? "Finances a project"
+                  : undefined
+            }
           >
             {s.project && <Landmark className="size-3.5" aria-hidden />}
             {s.name}
+            {s.imbalance && (
+              <span
+                className="size-1.5 rounded-full bg-danger"
+                aria-label="Project out of balance"
+              />
+            )}
           </Link>
         ))}
       </nav>

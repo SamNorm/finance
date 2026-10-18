@@ -4,6 +4,7 @@ import {
   getAnalysis,
   getScoringModel,
   getSpread,
+  imbalance,
   listItems,
   runAnalysis,
   type AnalysisRun,
@@ -80,7 +81,11 @@ async function AnalysisView({ params, searchParams }: Props) {
     name: s.name,
     overrides: s.overrides,
     project: s.project,
+    imbalance: s.project && imbalance(s.project),
   }));
+  // The open scenario's project, when it's out of balance.
+  const offBalance =
+    scenarios.find((s) => s.id === scenario?.id)?.imbalance ?? null;
   const empty = (
     <p className="rounded-xl border border-dashed border-line-strong px-6 py-12 text-center text-sm text-muted">
       {entity.name} has no periods in this analysis. Add figures on the{" "}
@@ -174,14 +179,17 @@ async function AnalysisView({ params, searchParams }: Props) {
           {
             value: "results",
             label: "Results",
-            alert: run.breakdowns.some((b) => !b.reconciles)
-              ? "warning"
-              : undefined,
+            alert: offBalance
+              ? "error"
+              : run.breakdowns.some((b) => !b.reconciles)
+                ? "warning"
+                : undefined,
             content:
               run.periods.length === 0 ? (
                 empty
               ) : (
                 <div className="flex flex-col gap-5">
+                  {offBalance && <ProjectImbalance message={offBalance} />}
                   <Breakdowns run={run} />
                   <CovenantSummary
                     lines={detail.lines}
@@ -197,6 +205,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                     project={results.project}
                     postProject={results.postProject}
                     scenarioName={scenario?.name ?? null}
+                    imbalance={offBalance}
                   />
                 </div>
               ),
@@ -225,6 +234,7 @@ async function AnalysisView({ params, searchParams }: Props) {
           {
             value: "scenario",
             label: "Assumptions & project",
+            alert: offBalance ? "error" : undefined,
             content: scenario ? (
               <ScenarioEditor
                 key={scenario.id}
@@ -252,6 +262,28 @@ async function AnalysisView({ params, searchParams }: Props) {
           },
         ]}
       />
+    </div>
+  );
+}
+
+// A project whose sources and uses differ: its post-project balance sheet
+// doesn't balance, and the analysis can't be completed until it does.
+function ProjectImbalance({ message }: { message: string }) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm">
+      <TriangleAlert
+        className="mt-0.5 size-4 shrink-0 text-danger"
+        aria-hidden
+      />
+      <div className="flex flex-col gap-1">
+        <p className="font-medium text-danger">The project is out of balance</p>
+        <p className="text-muted">
+          {message}, so the post-project balance sheet doesn&apos;t balance and
+          post-project figures can&apos;t be relied on. Settle its sources and
+          uses under Assumptions &amp; project; the analysis can&apos;t be
+          completed until then.
+        </p>
+      </div>
     </div>
   );
 }
