@@ -42,7 +42,9 @@ export interface GridPeriod {
 // period. Figures are typed in place: a click selects one to type over, F2 or
 // a double-click edits it, and Enter moves down a column, as analysts enter
 // one period at a time. The header row and the labels stay in view
-// while the grid scrolls, like frozen panes.
+// while the grid scrolls, like frozen panes. A consolidated client's figures
+// add up its members' and can't be typed: its periods open `onPeriod`, with
+// null to add one.
 export function SpreadGrid({
   entityId,
   items,
@@ -52,6 +54,7 @@ export function SpreadGrid({
   checks,
   checked,
   statement,
+  consolidated,
 }: {
   entityId: string;
   items: ScoringItem[];
@@ -62,6 +65,7 @@ export function SpreadGrid({
   // Which checks against the statements the scoring model turns on.
   checked: Checked;
   statement: Statement;
+  consolidated?: { onPeriod: (periodId: string | null) => void };
 }) {
   const [pasting, setPasting] = useState(false);
   const [period, setPeriod] = useState<GridPeriod | "new" | null>(null);
@@ -92,26 +96,55 @@ export function SpreadGrid({
           ))}
         </nav>
         <div className="ml-auto flex gap-2 py-2">
-          <button
-            type="button"
-            className={button.secondary}
-            onClick={() => setPeriod("new")}
-          >
-            <Icon name="plus" />
-            Add period
-          </button>
-          <button
-            type="button"
-            className={button.primary}
-            onClick={() => setPasting(true)}
-          >
-            <Icon name="upload" />
-            Paste spread
-          </button>
+          {consolidated ? (
+            <button
+              type="button"
+              className={button.primary}
+              onClick={() => consolidated.onPeriod(null)}
+            >
+              <Icon name="plus" />
+              Add period
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={button.secondary}
+                onClick={() => setPeriod("new")}
+              >
+                <Icon name="plus" />
+                Add period
+              </button>
+              <button
+                type="button"
+                className={button.primary}
+                onClick={() => setPasting(true)}
+              >
+                <Icon name="upload" />
+                Paste spread
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {periods.length === 0 ? (
+      {periods.length === 0 && consolidated ? (
+        <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <p className="text-sm font-medium">No periods yet.</p>
+          <p className="max-w-md text-sm text-muted">
+            Add a period and choose the members&apos; statements it adds up.
+            They can end on other dates, such as a March year end with a
+            December one.
+          </p>
+          <button
+            type="button"
+            className={button.primary}
+            onClick={() => consolidated.onPeriod(null)}
+          >
+            Add period
+          </button>
+        </div>
+      ) : periods.length === 0 ? (
         <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
           <span className="grid size-10 place-items-center rounded-full bg-surface-2 text-muted">
             <ClipboardPaste className="size-5" aria-hidden />
@@ -154,7 +187,11 @@ export function SpreadGrid({
                   >
                     <button
                       type="button"
-                      onClick={() => setPeriod(p)}
+                      onClick={() =>
+                        consolidated
+                          ? consolidated.onPeriod(p.id)
+                          : setPeriod(p)
+                      }
                       className="flex w-full flex-col items-end gap-0.5 px-3 py-2 hover:bg-surface-2"
                       title="Edit period"
                     >
@@ -208,18 +245,30 @@ export function SpreadGrid({
                     >
                       {item.label}
                     </td>
-                    {periods.map((p, col) => (
-                      <FigureCell
-                        key={p.id}
-                        periodId={p.id}
-                        item={item}
-                        entered={values[p.id]?.[item.code]}
-                        computed={computed[p.id]?.[item.code]}
-                        issue={flagged(p.id, item.code)}
-                        row={row}
-                        col={col}
-                      />
-                    ))}
+                    {periods.map((p, col) =>
+                      consolidated ? (
+                        <StaticCell
+                          key={p.id}
+                          item={item}
+                          value={
+                            values[p.id]?.[item.code] ??
+                            computed[p.id]?.[item.code]
+                          }
+                          issue={flagged(p.id, item.code)}
+                        />
+                      ) : (
+                        <FigureCell
+                          key={p.id}
+                          periodId={p.id}
+                          item={item}
+                          entered={values[p.id]?.[item.code]}
+                          computed={computed[p.id]?.[item.code]}
+                          issue={flagged(p.id, item.code)}
+                          row={row}
+                          col={col}
+                        />
+                      ),
+                    )}
                     <td className="border-b border-line/60" />
                   </tr>
                 );
@@ -229,19 +278,49 @@ export function SpreadGrid({
         </div>
       )}
 
-      <PasteDialog
-        open={pasting}
-        onClose={() => setPasting(false)}
-        entityId={entityId}
-      />
-      <PeriodDialog
-        period={period}
-        entityId={entityId}
-        checked={checked}
-        checks={period && period !== "new" ? (checks[period.id] ?? []) : []}
-        onClose={() => setPeriod(null)}
-      />
+      {!consolidated && (
+        <>
+          <PasteDialog
+            open={pasting}
+            onClose={() => setPasting(false)}
+            entityId={entityId}
+          />
+          <PeriodDialog
+            period={period}
+            entityId={entityId}
+            checked={checked}
+            checks={period && period !== "new" ? (checks[period.id] ?? []) : []}
+            onClose={() => setPeriod(null)}
+          />
+        </>
+      )}
     </section>
+  );
+}
+
+// A figure a consolidated client adds up from its members'.
+function StaticCell({
+  item,
+  value,
+  issue,
+}: {
+  item: ScoringItem;
+  value: string | undefined;
+  issue: Issue | undefined;
+}) {
+  const numeric = item.dataType !== "text" && item.dataType !== "date";
+  const tone = issue
+    ? issue.severity === "error"
+      ? "ring-1 ring-danger/50 ring-inset"
+      : "ring-1 ring-warning/60 ring-inset"
+    : "";
+  return (
+    <td
+      title={issue?.message}
+      className={`h-8 border-b border-l border-line/60 px-3 whitespace-pre-line ${numeric ? "text-right tabular-nums" : "text-left"} ${tone}`}
+    >
+      {value === undefined ? "" : formatFigure(value, item.dataType)}
+    </td>
   );
 }
 

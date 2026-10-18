@@ -1,14 +1,20 @@
 "use server";
 
 import {
+  addConsolidatedPeriod,
+  addConsolidationMember,
   addPeriod,
+  createConsolidatedClient,
   createEntity,
   deleteEntity,
   deletePeriod,
   forceRetainedEarnings,
   pasteSpread,
   previewPaste,
+  removeConsolidationMember,
+  setConsolidatedStatements,
   setDebtSchedule,
+  setEliminations,
   setExistingLoanAdjustments,
   setPeriodControls,
   setValue,
@@ -214,6 +220,105 @@ export async function saveDebtScheduleAction(
           ]),
         ),
       ),
+    });
+  });
+}
+
+export async function createConsolidatedClientAction(
+  form: FormData,
+): Promise<ActionResult> {
+  const result = await attempt((db, ctx) =>
+    createConsolidatedClient(db, ctx, {
+      ...readEntity(form),
+      memberIds: form.getAll("memberIds").map(String),
+    }),
+  );
+  if (!result.ok) return result;
+  redirect(`/borrowers/${result.value.id}`);
+}
+
+export async function addConsolidationMemberAction(
+  entityId: string,
+  memberId: string,
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    addConsolidationMember(db, ctx, String(entityId), String(memberId)),
+  );
+}
+
+export async function removeConsolidationMemberAction(
+  entityId: string,
+  memberId: string,
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    removeConsolidationMember(db, ctx, String(entityId), String(memberId)),
+  );
+}
+
+// A consolidated period as its dialog sends it: its end and length, the
+// statement chosen for each member (null for none), its eliminations and its
+// own retained earnings lines.
+export interface ConsolidatedPeriodForm {
+  periodEnd: string;
+  months: string;
+  statements: { memberId: string; periodId: string | null }[];
+  eliminations: { id?: string; name: string; item: string; amount: string }[];
+  reconciliation: { id?: string; label: string; amount: string }[];
+}
+
+// Adds or changes a consolidated period, whole or not at all.
+export async function saveConsolidatedPeriodAction(
+  entityId: string,
+  periodId: string | null,
+  input: ConsolidatedPeriodForm,
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    const list = <T>(value: unknown, what: string): T[] => {
+      if (!Array.isArray(value)) throw invalid(`${what} must be a list.`);
+      return value as T[];
+    };
+    const statements = list<ConsolidatedPeriodForm["statements"][number]>(
+      input?.statements,
+      "Statements",
+    ).map((s) => ({
+      memberId: String(s?.memberId ?? ""),
+      periodId: s?.periodId ? String(s.periodId) : null,
+    }));
+    const eliminations = list<Record<string, unknown>>(
+      input.eliminations,
+      "Eliminations",
+    ).map((e) => ({
+      id: e?.id,
+      name: String(e?.name ?? ""),
+      item: String(e?.item ?? ""),
+      amount: String(e?.amount ?? ""),
+    }));
+    const reconciliation = reconciliationLines(
+      list(input.reconciliation, "Reconciliation lines"),
+    );
+    const period = {
+      periodEnd: String(input.periodEnd ?? ""),
+      months: Number(input.months),
+    };
+    return db.transaction(async (tx) => {
+      let id = periodId ? String(periodId) : null;
+      if (id) {
+        await updatePeriod(tx, ctx, id, period);
+        await setConsolidatedStatements(tx, ctx, id, statements);
+      } else {
+        id = (
+          await addConsolidatedPeriod(tx, ctx, String(entityId), {
+            ...period,
+            statements: statements.flatMap((s) =>
+              s.periodId
+                ? [{ memberId: s.memberId, periodId: s.periodId }]
+                : [],
+            ),
+          })
+        ).id;
+      }
+      await setEliminations(tx, ctx, id, eliminations);
+      await setPeriodControls(tx, ctx, id, { reconciliation });
     });
   });
 }

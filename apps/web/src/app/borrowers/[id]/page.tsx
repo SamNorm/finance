@@ -1,13 +1,20 @@
 import {
+  balanceSheetSides,
+  describeTerms,
   DomainError,
+  eliminable,
   getSpread,
   listAnalyses,
+  listEntities,
   listScoringModels,
   nextYearDebtService,
   type AnalysisSummary,
+  type Consolidation,
   type Issue,
+  type Spread,
+  type Statement,
 } from "@finance/domain";
-import { ChartLine, ListTree, Plus } from "lucide-react";
+import { ChartLine, Landmark, Layers, ListTree, Plus } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -28,6 +35,11 @@ import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITIES, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { BorrowerActions } from "../_components/borrower-actions";
+import {
+  ConsolidatedSpread,
+  Members,
+  Worksheet,
+} from "../_components/consolidation";
 import { DebtScheduleEditor } from "../_components/debt-schedule";
 import { Notice } from "../_components/notice";
 import { SpreadGrid, type GridPeriod } from "../_components/spread-grid";
@@ -80,6 +92,23 @@ async function SpreadView({ params, searchParams }: Props) {
   const scoringModel = scoringModels.find(
     (m) => m.id === entity.scoringModelId,
   )!;
+  if (spread.consolidation)
+    return (
+      <ConsolidatedView
+        spread={spread}
+        consolidation={spread.consolidation}
+        periods={periods}
+        statement={statement}
+        tab={typeof query.tab === "string" ? query.tab : undefined}
+        analyses={analyses}
+        scoringModel={scoringModel}
+        scoringModels={scoringModels.map((m) => ({
+          id: m.id,
+          name: m.name,
+          published: m.versions.some((v) => v.status === "published"),
+        }))}
+      />
+    );
   const nextYear = nextYearDebtService(entity.debtSchedule);
   const issues = Object.values(spread.checks).flat();
   const errors = issues.filter((i) => i.severity === "error").length;
@@ -233,6 +262,314 @@ async function SpreadView({ params, searchParams }: Props) {
           },
         ]}
       />
+    </div>
+  );
+}
+
+// A consolidated client: its spread adds up its members' statements less
+// eliminations, period by period; its existing loans are its members'.
+async function ConsolidatedView({
+  spread,
+  consolidation,
+  periods,
+  statement,
+  tab,
+  analyses,
+  scoringModel,
+  scoringModels,
+}: {
+  spread: Spread;
+  consolidation: Consolidation;
+  periods: GridPeriod[];
+  statement: Statement;
+  tab: string | undefined;
+  analyses: AnalysisSummary[];
+  scoringModel: { id: string; name: string };
+  scoringModels: { id: string; name: string; published: boolean }[];
+}) {
+  const db = getDb();
+  const ctx = await getContext();
+  const { entity, layout } = spread;
+  const { members } = consolidation;
+  const borrowers = await listEntities(db, ctx);
+  const candidates = borrowers.filter(
+    (b) =>
+      b.kind === "borrower" &&
+      b.scoringModelId === entity.scoringModelId &&
+      !members.some((m) => m.id === b.id),
+  );
+  const items = layout?.items ?? [];
+  const sides = balanceSheetSides(items);
+  const issues = Object.values(spread.checks).flat();
+  const errors = issues.filter((i) => i.severity === "error").length;
+  const schedules = members.map((m) => m.debtSchedule);
+  const nextYear = schedules.flatMap(nextYearDebtService);
+  const newAnalysis = `/analyses?borrower=${entity.id}`;
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        crumbs={[{ href: "/borrowers", label: "Borrowers" }]}
+        title={entity.name}
+        badges={
+          <>
+            <span title="Adds up its members' statements, less eliminations.">
+              <Badge tone="accent">Consolidated</Badge>
+            </span>
+            {entity.riskRating && <Badge>Rating {entity.riskRating}</Badge>}
+          </>
+        }
+        meta={
+          <>
+            <Link
+              href={`/scoring-models/${scoringModel.id}`}
+              className="flex items-center gap-1.5 text-accent hover:underline"
+            >
+              <ListTree className="size-3.5" aria-hidden />
+              {scoringModel.name}
+            </Link>
+            <span className="flex items-center gap-1.5">
+              <Layers className="size-3.5" aria-hidden />
+              {members.map((m) => m.name).join(" + ") || "No members yet"}
+            </span>
+            {entity.industry && <span>{entity.industry}</span>}
+          </>
+        }
+        description={entity.notes}
+        actions={
+          <>
+            <Link href={newAnalysis} className={button.primary}>
+              <Plus />
+              New analysis
+            </Link>
+            <BorrowerActions
+              entity={{
+                id: entity.id,
+                name: entity.name,
+                scoringModelId: entity.scoringModelId,
+                industry: entity.industry,
+                naicsCode: entity.naicsCode,
+                riskRating: entity.riskRating,
+                notes: entity.notes,
+              }}
+              scoringModels={scoringModels}
+              canSwitchModel={false}
+              consolidated
+            />
+          </>
+        }
+      />
+
+      <Summary
+        periods={periods}
+        issues={issues}
+        debt={{
+          asOf: schedules.find((s) => s.asOf)?.asOf ?? null,
+          balance: schedules
+            .flatMap((s) => s.loans)
+            .reduce((sum, loan) => sum + Number(loan.balance), 0),
+          service: nextYear.reduce(
+            (sum, year) => sum + Number(year.interest) + Number(year.principal),
+            0,
+          ),
+          loans: schedules.reduce((n, s) => n + s.loans.length, 0),
+        }}
+        analyses={analyses}
+      />
+
+      <Tabs
+        initial={tab}
+        tabs={[
+          {
+            value: "spread",
+            label: "Spread",
+            count: periods.length,
+            alert: errors ? "error" : issues.length ? "warning" : undefined,
+            content: !layout ? (
+              <Notice
+                action={
+                  <Link
+                    href={`/scoring-models/${scoringModel.id}`}
+                    className={button.secondary}
+                  >
+                    Open {scoringModel.name}
+                  </Link>
+                }
+              >
+                Publish {scoringModel.name} before consolidating its borrowers.
+              </Notice>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <Checks periods={periods} checks={spread.checks} />
+                <ConsolidatedSpread
+                  key={layout.versionId}
+                  entityId={entity.id}
+                  items={items}
+                  periods={periods}
+                  values={spread.values}
+                  computed={spread.computed}
+                  checks={spread.checks}
+                  checked={{
+                    netIncome: false,
+                    retainedEarnings: Boolean(
+                      spread.checkItems.netIncome &&
+                      spread.checkItems.retainedEarnings,
+                    ),
+                  }}
+                  statement={statement}
+                  consolidation={consolidation}
+                  eliminable={eliminable(items).map((item) => ({
+                    code: item.code,
+                    label: item.label,
+                    statement: item.statement,
+                    side: sides.get(item.code) ?? null,
+                  }))}
+                />
+              </div>
+            ),
+          },
+          {
+            value: "worksheet",
+            label: "Worksheet",
+            content: (
+              <Worksheet
+                items={items}
+                periods={periods}
+                values={spread.values}
+                computed={spread.computed}
+                consolidation={consolidation}
+              />
+            ),
+          },
+          {
+            value: "members",
+            label: "Members",
+            count: members.length,
+            content: (
+              <Members
+                entityId={entity.id}
+                members={members.map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                  periods: m.periods.length,
+                  latest: m.periods.at(-1)?.periodEnd ?? null,
+                }))}
+                candidates={candidates.map((c) => ({ id: c.id, name: c.name }))}
+              />
+            ),
+          },
+          {
+            value: "existing-debt",
+            label: "Existing debt",
+            count: schedules.reduce((n, s) => n + s.loans.length, 0),
+            content: <MembersDebt members={members} />,
+          },
+          {
+            value: "analyses",
+            label: "Analyses",
+            count: analyses.length,
+            content: (
+              <Analyses
+                analyses={analyses}
+                name={entity.name}
+                newAnalysis={newAnalysis}
+              />
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+// Each member's existing loans, as of its own date, entered on its page.
+function MembersDebt({ members }: { members: Consolidation["members"] }) {
+  if (!members.length)
+    return (
+      <EmptyState icon={<Landmark />} title="No members yet.">
+        Add members: their existing loans are the consolidated client&apos;s.
+      </EmptyState>
+    );
+  return (
+    <div className="flex flex-col gap-4">
+      {members.map((member) => {
+        const { asOf, loans } = member.debtSchedule;
+        const next = new Map(
+          nextYearDebtService(member.debtSchedule).map((y) => [y.id, y]),
+        );
+        return (
+          <Card
+            key={member.id}
+            flush
+            title={member.name}
+            description={
+              asOf && loans.length
+                ? `As of ${formatDate(asOf)}`
+                : "No existing loans entered."
+            }
+            actions={
+              <Link
+                href={`/borrowers/${member.id}?tab=existing-debt`}
+                className={button.secondary}
+              >
+                Open {member.name}
+              </Link>
+            }
+          >
+            {loans.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className={table.table}>
+                  <thead>
+                    <tr className={table.head}>
+                      <th className={table.th}>Loan</th>
+                      <th className={`${table.th} text-right`}>Balance</th>
+                      <th className={`${table.th} text-right`}>Rate</th>
+                      <th className={table.th}>Terms</th>
+                      <th className={`${table.th} text-right`}>
+                        Next 12 months
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loans.map((loan) => {
+                      const year = next.get(loan.id);
+                      return (
+                        <tr
+                          key={loan.id}
+                          className="border-b border-line/70 last:border-b-0"
+                        >
+                          <td className={`${table.td} font-medium`}>
+                            {loan.name}
+                          </td>
+                          <td className={`${table.td} text-right tabular-nums`}>
+                            {formatFigure(loan.balance, "amount")}
+                          </td>
+                          <td className={`${table.td} text-right tabular-nums`}>
+                            {formatFigure(loan.rate, "percent")}
+                          </td>
+                          <td className={`${table.td} text-muted`}>
+                            {describeTerms(loan)}
+                          </td>
+                          <td className={`${table.td} text-right tabular-nums`}>
+                            {year
+                              ? formatFigure(
+                                  String(
+                                    Number(year.interest) +
+                                      Number(year.principal),
+                                  ),
+                                  "amount",
+                                )
+                              : "–"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        );
+      })}
     </div>
   );
 }

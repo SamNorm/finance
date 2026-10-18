@@ -50,9 +50,10 @@ export interface ProjectSetup {
   items: BalanceSheetItem[];
   // What adjustments can change: any statement's numeric inputs.
   adjustable: AdjustableItem[];
-  // The borrower's existing loans, which a project can consolidate, and
-  // where a use repaying one posts by default.
-  debtSchedule: DebtSchedule;
+  // The borrower's existing loans (a consolidated client's members'), which
+  // a project can consolidate, and where a use repaying one posts by
+  // default.
+  debtSchedules: DebtSchedule[];
   repayItem: string;
   canAddLoans: boolean;
   scoringModelId: string;
@@ -417,7 +418,7 @@ export function ScenarioEditor({
             project={scenario.project}
             items={setup.items}
             adjustable={setup.adjustable}
-            debtSchedule={setup.debtSchedule}
+            debtSchedules={setup.debtSchedules}
             scenarioId={scenario.id}
           />
         ) : (
@@ -425,7 +426,7 @@ export function ScenarioEditor({
             draft={project}
             items={setup.items}
             adjustable={setup.adjustable}
-            debtSchedule={setup.debtSchedule}
+            debtSchedules={setup.debtSchedules}
             repayItem={setup.repayItem}
             canAddLoans={setup.canAddLoans}
             scoringModelId={setup.scoringModelId}

@@ -7,6 +7,7 @@ import { Badge, EmptyState, Page, PageHeader } from "@/components/page";
 import { button, card, rowLink, table } from "@/components/styles";
 import { formatDate } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
+import { NewConsolidatedClient } from "./_components/consolidation";
 import { NewBorrower } from "./_components/new-borrower";
 import { Notice } from "./_components/notice";
 
@@ -42,8 +43,22 @@ async function BorrowersView() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Borrowers"
-        description="Paste each borrower's spread or enter it by hand. Every financial model reads the same figures."
-        actions={<NewBorrower scoringModels={options} />}
+        description="Paste each borrower's spread or enter it by hand. Every financial model reads the same figures. A consolidated client adds up several borrowers' spreads."
+        actions={
+          <>
+            <NewConsolidatedClient
+              scoringModels={options}
+              borrowers={borrowers
+                .filter((b) => b.kind === "borrower")
+                .map((b) => ({
+                  id: b.id,
+                  name: b.name,
+                  scoringModelId: b.scoringModelId,
+                }))}
+            />
+            <NewBorrower scoringModels={options} />
+          </>
+        }
       />
 
       {!options.some((o) => o.published) && (
@@ -82,9 +97,14 @@ async function BorrowersView() {
                   <tr key={b.id} className={table.row}>
                     <td className={table.td}>
                       <div className="flex flex-col gap-0.5">
-                        <Link href={`/borrowers/${b.id}`} className={rowLink}>
-                          {b.name}
-                        </Link>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Link href={`/borrowers/${b.id}`} className={rowLink}>
+                            {b.name}
+                          </Link>
+                          {b.kind === "consolidated" && (
+                            <Badge tone="accent">Consolidated</Badge>
+                          )}
+                        </span>
                         {(b.industry || b.naicsCode) && (
                           <span className="text-xs text-muted">
                             {b.industry}

@@ -108,6 +108,13 @@ const owedAt = (
 ) =>
   amortize(loan, schedule.asOf!, true).balanceAt(monthIndex(date)).toFixed(2);
 
+// The existing loans a project can consolidate, each with its schedule: the
+// borrower's, or each member's for a consolidated client.
+const existingLoans = (schedules: readonly DebtSchedule[]) =>
+  schedules.flatMap((schedule) =>
+    schedule.loans.map((loan) => ({ loan, schedule })),
+  );
+
 type List = "sources" | "uses" | "lines" | "subordinations" | "adjustments";
 
 const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
@@ -294,17 +301,17 @@ export function SourcesUses({
   project,
   items,
   adjustable,
-  debtSchedule,
+  debtSchedules,
   scenarioId,
 }: {
   project: Project;
   items: BalanceSheetItem[];
   adjustable: AdjustableItem[];
-  debtSchedule: DebtSchedule;
+  debtSchedules: DebtSchedule[];
   scenarioId: string;
 }) {
-  const consolidated = debtSchedule.loans.filter((l) =>
-    project.consolidatedLoans?.includes(l.id),
+  const consolidated = existingLoans(debtSchedules).filter(({ loan }) =>
+    project.consolidatedLoans?.includes(loan.id),
   );
   const label = (code: string) =>
     (
@@ -468,14 +475,14 @@ export function SourcesUses({
         <div className="flex flex-col gap-1">
           <p className="text-sm font-medium">Existing loans consolidated</p>
           <ul className="flex flex-col gap-1 text-sm">
-            {consolidated.map((loan) => (
+            {consolidated.map(({ loan, schedule }) => (
               <li key={loan.id}>
                 {loan.name}: repaid at closing
                 <span className="text-muted">
                   {" "}
                   · owes{" "}
                   {formatFigure(
-                    owedAt(debtSchedule, loan, project.closing),
+                    owedAt(schedule, loan, project.closing),
                     "amount",
                   )}{" "}
                   then; post-project, its debt service stops
@@ -608,7 +615,7 @@ export function ProjectEditor({
   draft,
   items,
   adjustable,
-  debtSchedule,
+  debtSchedules,
   repayItem,
   canAddLoans,
   scoringModelId,
@@ -618,8 +625,9 @@ export function ProjectEditor({
   draft: ProjectDraft;
   items: BalanceSheetItem[];
   adjustable: AdjustableItem[];
-  // The borrower's existing loans, which the project can consolidate.
-  debtSchedule: DebtSchedule;
+  // The borrower's existing loans, which the project can consolidate: a
+  // consolidated client's members'.
+  debtSchedules: DebtSchedule[];
   // Where a use repaying one posts by default: the long-term debt item.
   repayItem: string;
   // Whether the scoring model says where new loans post.
@@ -1068,7 +1076,7 @@ export function ProjectEditor({
         </div>
       </fieldset>
 
-      {debtSchedule.loans.length > 0 && (
+      {existingLoans(debtSchedules).length > 0 && (
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 text-sm font-medium">
             Existing loans consolidated
@@ -1077,10 +1085,10 @@ export function ProjectEditor({
               stops. The borrower keeps them for its other scenarios.
             </span>
           </legend>
-          {debtSchedule.loans.map((loan) => {
+          {existingLoans(debtSchedules).map(({ loan, schedule }) => {
             const checked = draft.consolidatedLoans.includes(loan.id);
             const closing = draft.closing || defaultClosing;
-            const owed = closing ? owedAt(debtSchedule, loan, closing) : null;
+            const owed = closing ? owedAt(schedule, loan, closing) : null;
             const repay = `Repay ${loan.name}`;
             return (
               <div

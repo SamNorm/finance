@@ -2,6 +2,7 @@ import {
   balanceSheetSides,
   DomainError,
   getAnalysis,
+  getDebtSchedules,
   getScoringModel,
   getSpread,
   imbalance,
@@ -62,10 +63,11 @@ async function AnalysisView({ params, searchParams }: Props) {
   });
   const scenario =
     detail.scenarios.find((s) => s.id === query.scenario) ?? null;
-  const [results, spread, scoringItems] = await Promise.all([
+  const [results, spread, scoringItems, debt] = await Promise.all([
     runAnalysis(db, ctx, id, scenario?.id ?? null),
     getSpread(db, ctx, detail.entity.id),
     listItems(db, ctx, detail.version.scoringModelVersionId),
+    getDebtSchedules(db, ctx, detail.entity.id),
   ]);
   const scoringModel = await getScoringModel(
     db,
@@ -267,7 +269,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                       statement: item.statement,
                       side: sides.get(item.code) ?? null,
                     })),
-                  debtSchedule: spread.entity.debtSchedule,
+                  debtSchedules: debt.map((d) => d.schedule),
                   repayItem: longTermDebt ?? "",
                   canAddLoans: Boolean(longTermDebt && currentDebt && cash),
                   scoringModelId: scoringModel.id,

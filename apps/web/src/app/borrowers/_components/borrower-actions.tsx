@@ -15,11 +15,13 @@ import { deleteEntityAction, updateEntityAction } from "../actions";
 import { BorrowerFields, type ScoringModelOption } from "./new-borrower";
 
 // The borrower's less frequent actions, behind the "…" button. The dialog
-// sits outside the menu: a menu's portal would be inert under it.
+// sits outside the menu: a menu's portal would be inert under it. Deleting a
+// consolidated client leaves its members.
 export function BorrowerActions({
   entity,
   scoringModels,
   canSwitchModel,
+  consolidated = false,
 }: {
   entity: {
     id: string;
@@ -32,6 +34,7 @@ export function BorrowerActions({
   };
   scoringModels: ScoringModelOption[];
   canSwitchModel: boolean;
+  consolidated?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, startDelete] = useTransition();
@@ -46,7 +49,13 @@ export function BorrowerActions({
   );
 
   function remove() {
-    if (!confirm(`Delete ${entity.name} with all its periods and figures?`))
+    if (
+      !confirm(
+        consolidated
+          ? `Delete ${entity.name} with its periods and analyses? Its members and their spreads stay.`
+          : `Delete ${entity.name} with all its periods and figures?`,
+      )
+    )
       return;
     setFailure(null);
     startDelete(async () => {
@@ -68,7 +77,11 @@ export function BorrowerActions({
           disabled={deleting}
           onSelect={remove}
         >
-          {deleting ? "Deleting…" : "Delete borrower"}
+          {deleting
+            ? "Deleting…"
+            : consolidated
+              ? "Delete consolidated client"
+              : "Delete borrower"}
         </MenuItem>
       </Menu>
       {failure && (
@@ -77,7 +90,9 @@ export function BorrowerActions({
       <Modal
         open={editing}
         onClose={() => setEditing(false)}
-        title="Borrower details"
+        title={
+          consolidated ? "Consolidated client details" : "Borrower details"
+        }
       >
         <form
           onSubmit={keepFields(formAction)}
