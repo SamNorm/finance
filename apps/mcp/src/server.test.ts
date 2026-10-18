@@ -129,12 +129,20 @@ beforeAll(async () => {
     formula: "EBITDA / DEBT_SERVICE",
   });
   await add({
+    code: "MIN_DSCR",
+    label: "Minimum DSCR",
+    kind: "assumption",
+    format: "ratio",
+    defaultValue: "1.25",
+  });
+  await add({
     code: "COVENANT",
-    label: "DSCR ≥ 1.25",
+    label: "DSCR covenant",
     kind: "calculation",
     format: "flag",
-    formula: "DSCR >= 1.25",
+    formula: "DSCR >= MIN_DSCR",
   });
+  await add({ code: "BACKLOG", label: "Order backlog", kind: "input" });
   const v1 = await publishFinancialModelVersion(db, ctx, model.draft.id);
   const analysis = await createAnalysis(db, ctx, {
     entityId: acme.id,
@@ -219,6 +227,15 @@ describe("MCP server", () => {
       update_project_entry: "changes",
       remove_project_entry: "changes",
       set_project_closing: "changes",
+      list_financial_models: "reads",
+      create_analysis: "adds",
+      update_analysis: "changes",
+      set_analysis_status: "changes",
+      set_model_input: "changes",
+      repin_analysis: "adds",
+      update_scenario: "changes",
+      duplicate_scenario: "adds",
+      remove_scenario: "changes",
       get_loan_schedule: "reads",
       add_existing_loan: "adds",
       update_existing_loan: "changes",
@@ -509,6 +526,128 @@ describe("MCP server", () => {
       loanId: added.loan.id,
     });
     expect(removed.existingLoans).toEqual({ asOf: null, loans: [] });
+  });
+
+  it("makes an analysis, and completes it once its projects balance", async () => {
+    const call = await connect();
+    const { value: models } = await call("list_financial_models", {
+      search: "debt",
+    });
+    expect(models).toMatchObject([
+      { name: "Debt service", scoringModel: "Commercial", latest: 1 },
+    ]);
+    const create = {
+      borrowerId: ids.acme,
+      financialModelId: models[0].id,
+      name: "Annual review",
+    };
+    expect(await call("create_analysis", { ...create, version: 2 })).toEqual({
+      error: "Debt service has no published version 2.",
+    });
+    const { value: analysis } = await call("create_analysis", create);
+    expect(analysis).toMatchObject({
+      status: "in_progress",
+      model: "Debt service v1",
+      periodIds: [],
+    });
+    const { value: renamed } = await call("update_analysis", {
+      analysisId: analysis.id,
+      name: "Annual review 2024",
+    });
+    expect(renamed.name).toBe("Annual review 2024");
+
+    // A stricter covenant, then back to the model's.
+    const { value: strict } = await call("add_scenario", {
+      analysisId: analysis.id,
+      name: "Strict covenant",
+      overrides: { MIN_DSCR: "2.2" },
+    });
+    expect(strict.overrides).toEqual([
+      { code: "MIN_DSCR", label: "Minimum DSCR", value: "2.20x" },
+    ]);
+    const { value: results } = await call("run_analysis", {
+      analysisId: analysis.id,
+      scenarioId: strict.id,
+      lines: ["COVENANT", "MIN_DSCR"],
+    });
+    expect(results.lines).toMatchObject([
+      { code: "COVENANT", values: ["Fail", "Pass"] },
+    ]);
+    expect(results.assumptions).toEqual([
+      {
+        code: "MIN_DSCR",
+        label: "Minimum DSCR",
+        value: "2.20x",
+        base: "1.25x",
+      },
+    ]);
+    const { value: copy } = await call("duplicate_scenario", {
+      scenarioId: strict.id,
+    });
+    expect(copy).toMatchObject({ name: "Strict covenant (copy)" });
+    const { value: relaxed } = await call("update_scenario", {
+      scenarioId: copy.id,
+      name: "Model covenant",
+      overrides: { MIN_DSCR: null },
+    });
+    expect(relaxed).toMatchObject({ name: "Model covenant", overrides: [] });
+    expect(await call("remove_scenario", { scenarioId: relaxed.id })).toEqual({
+      value: { removed: "Model covenant" },
+    });
+
+    // Inputs belong to the borrower's periods.
+    const [fy2023, fy2024] = results.periods;
+    await call("set_model_input", {
+      analysisId: analysis.id,
+      periodId: fy2024.id,
+      code: "BACKLOG",
+      value: "450000",
+    });
+    const { value: backlog } = await call("run_analysis", {
+      analysisId: analysis.id,
+      lines: ["BACKLOG"],
+    });
+    expect(backlog.lines[0].values).toEqual([null, "450,000"]);
+    expect(fy2023.end).toBe("2023-12-31");
+
+    // A project out of balance holds completion back.
+    const { value: expansion } = await call("add_scenario", {
+      analysisId: analysis.id,
+      name: "Expansion",
+    });
+    await call("add_project_loan", {
+      scenarioId: expansion.id,
+      name: "Term loan",
+      amount: "300,000",
+      rate: "6%",
+      repayment: "blended",
+      years: 10,
+      closing: "2024-12-31",
+    });
+    expect(
+      await call("set_analysis_status", {
+        analysisId: analysis.id,
+        status: "completed",
+      }),
+    ).toEqual({
+      error:
+        "Balance each project's sources and uses before completing the analysis. Expansion: sources exceed uses by 300,000.",
+    });
+    await call("add_project_use", {
+      scenarioId: expansion.id,
+      name: "New press",
+      amount: "300,000",
+      postsTo: "MACHINERY",
+    });
+    const { value: completed } = await call("set_analysis_status", {
+      analysisId: analysis.id,
+      status: "completed",
+    });
+    expect(completed.status).toBe("completed");
+
+    expect(await call("repin_analysis", { analysisId: analysis.id })).toEqual({
+      error: "The analysis already uses the latest published version.",
+    });
   });
 
   it("explains what's wrong rather than failing", async () => {

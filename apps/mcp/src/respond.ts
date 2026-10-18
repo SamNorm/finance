@@ -15,7 +15,7 @@ export async function respond(
   } catch (error) {
     if (error instanceof DomainError) {
       const details = error.issues
-        .filter((issue) => issue.message !== error.message)
+        .filter((issue) => !error.message.includes(issue.message))
         .map((issue) => `- ${issue.message}`);
       return {
         isError: true,

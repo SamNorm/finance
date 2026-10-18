@@ -1,11 +1,17 @@
 import type { Db } from "@finance/db";
 import {
-  addScenario,
+  createAnalysis,
   getAnalysis,
   getEntity,
+  getFinancialModel,
   imbalance,
   listAnalyses,
+  listFinancialModels,
+  repinAnalysis,
   runAnalysis,
+  setModelInput,
+  updateAnalysis,
+  type Analysis,
   type Context,
   type ModelLine,
   type ResultCell,
@@ -13,10 +19,11 @@ import {
 } from "@finance/domain";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
-import { analysisId } from "../fields";
+import { analysisId, borrowerId } from "../fields";
 import { figure } from "../format";
-import { describeProject, imbalanceWarning } from "../loans";
-import { ADD, invalid, matches, READ, respond } from "../respond";
+import { imbalanceWarning } from "../loans";
+import { ADD, CHANGE, invalid, matches, READ, respond } from "../respond";
+import { describeScenario } from "./scenarios";
 
 const value = (cell: ResultCell | undefined, line: ModelLine) =>
   cell?.error
@@ -32,8 +39,36 @@ function describePeriod(p: RunPeriod) {
         : p.months === 12
           ? `fiscal year (${p.quality})`
           : `year to date (${p.quality})`;
-  return { end: p.end, months: p.months, kind };
+  // Projected years computed from assumptions aren't spread periods.
+  const id = p.projection === "assumptions" ? {} : { id: p.key };
+  return { ...id, end: p.end, months: p.months, kind };
 }
+
+const periodIds = z
+  .array(z.string())
+  .describe(
+    "The borrower's periods to analyze, by id from get_borrower; all of them when empty.",
+  );
+const projectionMode = z
+  .enum(["assumptions", "client"])
+  .describe(
+    "assumptions: years after the last period are projected from the model's assumptions. client: the client's own projections, spread as periods, are used instead.",
+  );
+const projectionYears = z
+  .number()
+  .int()
+  .min(0)
+  .max(10)
+  .describe("Years projected from assumptions, 0 to 10.");
+
+// An analysis as tools return it after a change.
+const summary = (a: Analysis) => ({
+  id: a.id,
+  name: a.name,
+  status: a.status,
+  periodIds: a.periodIds,
+  projection: { mode: a.projectionMode, years: a.projectionYears },
+});
 
 export function analysisTools(server: McpServer, db: Db, ctx: Context) {
   server.registerTool(
@@ -87,7 +122,6 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
-        const byCode = new Map(lines.map((l) => [l.code, l]));
         return {
           id: analysis.id,
           name: analysis.name,
@@ -105,6 +139,8 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
             mode: analysis.projectionMode,
             years: analysis.projectionYears,
           },
+          // The borrower's periods it analyzes; all of them when empty.
+          periodIds: analysis.periodIds,
           lines: lines
             .filter((l) => l.kind !== "header")
             .map((l) => ({
@@ -116,16 +152,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
                 ? { default: figure(l.defaultValue, l.format) }
                 : {}),
             })),
-          scenarios: detail.scenarios.map((s) => ({
-            id: s.id,
-            name: s.name,
-            overrides: Object.entries(s.overrides).map(([code, raw]) => ({
-              code,
-              label: byCode.get(code)?.label ?? code,
-              value: figure(raw, byCode.get(code)?.format ?? "text"),
-            })),
-            project: s.project ? describeProject(s.project) : null,
-          })),
+          scenarios: detail.scenarios.map((s) => describeScenario(s, lines)),
         };
       }),
   );
@@ -217,32 +244,161 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
   );
 
   server.registerTool(
-    "add_scenario",
+    "list_financial_models",
     {
-      title: "Add a scenario",
+      title: "List financial models",
       description:
-        "Adds a scenario to an analysis, to stress its assumptions or to finance a project. Add the project's loans to it afterwards with add_project_loan.",
+        "Lists the organization's financial models, the scoring model each is built on, and their published versions. An analysis runs a published version, on a borrower that follows the same scoring model.",
       inputSchema: z.object({
-        analysisId,
-        name: z
+        search: z.string().optional().describe("Part of the model's name."),
+      }),
+      annotations: READ,
+    },
+    ({ search }) =>
+      respond(async () =>
+        (await listFinancialModels(db, ctx))
+          .filter((m) => matches(m.name, search))
+          .map((m) => {
+            const published = m.versions.filter(
+              (v) => v.status === "published",
+            );
+            return {
+              id: m.id,
+              name: m.name,
+              description: m.description,
+              scoringModel: m.scoringModel.name,
+              publishedVersions: published.map((v) => v.number),
+              latest: published.at(-1)?.number ?? null,
+            };
+          }),
+      ),
+  );
+
+  server.registerTool(
+    "create_analysis",
+    {
+      title: "Create an analysis",
+      description:
+        "Creates an analysis of a borrower on a financial model, pinned to a published version: the latest unless one is given. It starts in progress with no scenarios.",
+      inputSchema: z.object({
+        borrowerId,
+        financialModelId: z
           .string()
-          .describe('e.g. "Revenue −15%" or "Post-project: new plant".'),
-        overrides: z
-          .record(z.string(), z.string())
+          .describe("The model's id, from list_financial_models."),
+        version: z
+          .number()
+          .int()
+          .positive()
           .optional()
-          .describe(
-            'Assumption code → value, e.g. {"REVENUE_GROWTH": "-15%"}. Codes are the analysis\'s assumption lines, from get_analysis.',
-          ),
+          .describe("A published version's number; the latest when omitted."),
+        name: z.string().describe('e.g. "Annual review 2024".'),
+        periodIds: periodIds.optional(),
+        projectionMode: projectionMode.optional(),
+        projectionYears: projectionYears.optional(),
       }),
       annotations: ADD,
     },
-    ({ analysisId, name, overrides }) =>
+    ({ borrowerId, financialModelId, version, ...settings }) =>
       respond(async () => {
-        const scenario = await addScenario(db, ctx, analysisId, {
-          name,
-          overrides,
+        const model = await getFinancialModel(db, ctx, financialModelId);
+        const usable = model.versions.filter((v) => v.status !== "draft");
+        const chosen = version
+          ? usable.find((v) => v.number === version)
+          : usable.findLast((v) => v.status === "published");
+        if (!chosen)
+          throw invalid(
+            version
+              ? `${model.name} has no published version ${version}.`
+              : `${model.name} has no published version yet.`,
+          );
+        const analysis = await createAnalysis(db, ctx, {
+          entityId: borrowerId,
+          financialModelVersionId: chosen.id,
+          ...settings,
         });
-        return { id: scenario.id, name: scenario.name };
+        return {
+          ...summary(analysis),
+          model: `${model.name} v${chosen.number}`,
+        };
       }),
+  );
+
+  server.registerTool(
+    "update_analysis",
+    {
+      title: "Change an analysis's settings",
+      description:
+        "Renames an analysis, or changes the periods it analyzes or how it projects. Only what's given changes.",
+      inputSchema: z.object({
+        analysisId,
+        name: z.string().optional(),
+        periodIds: periodIds.optional(),
+        projectionMode: projectionMode.optional(),
+        projectionYears: projectionYears.optional(),
+      }),
+      annotations: CHANGE,
+    },
+    ({ analysisId, ...patch }) =>
+      respond(async () => {
+        if (Object.values(patch).every((v) => v === undefined))
+          throw invalid("Give at least one setting to change.");
+        return summary(await updateAnalysis(db, ctx, analysisId, patch));
+      }),
+  );
+
+  server.registerTool(
+    "set_analysis_status",
+    {
+      title: "Complete or reopen an analysis",
+      description:
+        "Marks an analysis completed, e.g. once it's in the credit file, or reopens it. Completing needs every scenario's project to balance; when it fails, tell the user which projects don't and by how much.",
+      inputSchema: z.object({
+        analysisId,
+        status: z.enum(["in_progress", "completed"]),
+      }),
+      annotations: CHANGE,
+    },
+    ({ analysisId, status }) =>
+      respond(async () =>
+        summary(await updateAnalysis(db, ctx, analysisId, { status })),
+      ),
+  );
+
+  server.registerTool(
+    "set_model_input",
+    {
+      title: "Enter a model input",
+      description:
+        "Enters, changes or clears (empty value) the figure of one of the model's input lines (kind \"input\" in get_analysis), such as inventory by type, for one of the borrower's periods (ids from run_analysis or get_borrower). Figures belong to the borrower, so other analyses with the same input read them too.",
+      inputSchema: z.object({
+        analysisId,
+        periodId: z.string().describe("The borrower's period."),
+        code: z.string().describe("The input line's code."),
+        value: z
+          .string()
+          .describe(
+            'The figure, e.g. "450000"; percentages with their percent sign.',
+          ),
+      }),
+      annotations: CHANGE,
+    },
+    ({ analysisId, periodId, code, value }) =>
+      respond(async () => {
+        await setModelInput(db, ctx, analysisId, periodId, code, value);
+        return { analysisId, periodId, code, value: value.trim() || null };
+      }),
+  );
+
+  server.registerTool(
+    "repin_analysis",
+    {
+      title: "Copy an analysis onto the model's latest version",
+      description:
+        "When get_analysis shows a newer published version of its model, copies the analysis onto it, with the same periods, scenarios and projects, to compare against the original, which stays as it is.",
+      inputSchema: z.object({ analysisId }),
+      annotations: ADD,
+    },
+    ({ analysisId }) =>
+      respond(async () => summary(await repinAnalysis(db, ctx, analysisId))),
   );
 }
