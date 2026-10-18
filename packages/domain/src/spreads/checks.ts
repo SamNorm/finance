@@ -2,6 +2,7 @@ import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Issue } from "../errors";
 import { monthIndex } from "../financing/amortization";
+import type { FinancingPart } from "../financing/common";
 import type { ScoringItem } from "../scoring-models/types";
 
 // Statement checks (§5.6): subtotals reconcile with their lines, the balance
@@ -62,6 +63,53 @@ export function effectiveAmounts(
     if (value !== null) amounts.set(item.code, value);
   }
   return { amounts, computed, sum };
+}
+
+// Adds amounts to input items, such as a project's postings or a
+// consolidation's eliminations, and to each subtotal above them that holds a
+// figure of its own, as pasted totals do, so totals move with their lines.
+// Each figure changed keeps what it's made of: as entered, then each part.
+export function addToItems(
+  items: readonly ScoringItem[],
+  entered: Readonly<Record<string, string>>,
+  changes: ReadonlyMap<string, { delta: Amount; parts: FinancingPart[] }>,
+): {
+  entered: Record<string, string>;
+  adjusted: Record<string, FinancingPart[]>;
+} {
+  const byCode = new Map(items.map((item) => [item.code, item]));
+  const result = { ...entered };
+  const adjusted: Record<string, FinancingPart[]> = {};
+  const add = (code: string, delta: Amount, parts: FinancingPart[]) => {
+    result[code] = delta.plus(result[code] ?? 0).toFixed();
+    (adjusted[code] ??= [
+      { id: "entered", name: "As entered", value: entered[code] ?? "0" },
+    ]).push(...parts);
+  };
+  for (const [code, { delta, parts }] of changes) {
+    add(code, delta, parts);
+    // Up the hierarchy, flipping the sign through lines a total subtracts.
+    let negative = false;
+    let child = byCode.get(code);
+    while (child?.parentCode && child.aggregation !== "ignore") {
+      if (child.aggregation === "subtract") negative = !negative;
+      const parent = byCode.get(child.parentCode);
+      if (!parent) break;
+      if (entered[parent.code] !== undefined)
+        add(
+          parent.code,
+          negative ? delta.neg() : delta,
+          negative
+            ? parts.map((p) => ({
+                ...p,
+                value: new Dec(p.value).neg().toFixed(),
+              }))
+            : parts,
+        );
+      child = parent;
+    }
+  }
+  return { entered: result, adjusted };
 }
 
 export function checkPeriod(

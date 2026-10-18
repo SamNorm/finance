@@ -352,6 +352,36 @@ describe("demo data", () => {
         checkPeriod(commercial, new Map(Object.entries(period.entered))),
         period.end,
       ).toEqual([]);
+    // Pasted with its totals, as spreading systems export them, it still
+    // balances: the project moves the totals with their lines.
+    const pasted = spread.map((p) => ({
+      ...p,
+      entered: {
+        ...Object.fromEntries(
+          [
+            ...effectiveAmounts(commercial, new Map(Object.entries(p.entered)))
+              .computed,
+          ].map(([code, v]) => [code, v.toFixed()]),
+        ),
+        ...p.entered,
+      },
+    }));
+    const posted = withProject(
+      pasted,
+      project,
+      commercial,
+      sides,
+      POSTING.get(commercial)!,
+    );
+    for (const period of posted)
+      expect(
+        checkPeriod(commercial, new Map(Object.entries(period.entered))),
+        period.end,
+      ).toEqual([]);
+    expect(
+      Number(posted[2]!.entered.TOTAL_ASSETS) -
+        Number(pasted[2]!.entered.TOTAL_ASSETS),
+    ).toBe(1_950_000);
   });
 
   it("the borrowing base margins inventory by type", () => {

@@ -33,7 +33,7 @@ import {
   type Side,
 } from "../financing/financing";
 import type { ScoringItem } from "../scoring-models/types";
-import { effectiveAmounts, TOLERANCE } from "../spreads/checks";
+import { addToItems, effectiveAmounts, TOLERANCE } from "../spreads/checks";
 import type { StatementQuality } from "../spreads/service";
 
 // Runs a financial model version over a borrower's periods, plus projected
@@ -330,7 +330,8 @@ export function runModel(input: RunInput): AnalysisRun {
 }
 
 // The spread's periods with the project posted to their balance sheet
-// items, subtotals summed again, and what each adjusted item is made of.
+// items, subtotals moved or summed again, and what each adjusted item is
+// made of.
 export function withProject(
   periods: RunInput["periods"],
   project: Project,
@@ -354,19 +355,7 @@ export function withProject(
   return periods.map((period, i) => {
     const changes = adjustments[i]!;
     if (!changes.size) return period;
-    const entered = { ...period.entered };
-    const adjusted: Record<
-      string,
-      NonNullable<RunInput["periods"][number]["adjusted"]>[string]
-    > = {};
-    for (const [code, change] of changes) {
-      const original = entered[code] ?? "0";
-      entered[code] = change.delta.plus(original).toFixed();
-      adjusted[code] = [
-        { id: "entered", name: "As entered", value: original },
-        ...change.parts,
-      ];
-    }
+    const { entered, adjusted } = addToItems(items, period.entered, changes);
     const { computed } = effectiveAmounts(
       items,
       new Map(Object.entries(entered)),
