@@ -2,18 +2,13 @@ import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 import { DomainError } from "../errors";
 import type { ScoringItem } from "../scoring-models/types";
-import {
-  amortize,
-  monthIndex,
-  REPAYMENTS,
-  type Repayment,
-} from "./amortization";
+import { amortize, monthIndex } from "./amortization";
 import {
   entryId,
   parseAmount,
   parseDate,
-  parseMonths,
   parseRate,
+  parseTerms,
   type Amount,
   type FinancingPart,
   type FinancingPeriod,
@@ -197,25 +192,13 @@ export function normalizeProject(
       const name = named(s.name, `Source ${i + 1}`);
       const amount = parseAmount(s.amount, name, "amount", true);
       if (s.kind === "loan") {
-        const repayment = s.repayment as Repayment;
-        if (!Object.hasOwn(REPAYMENTS, String(repayment)))
-          throw invalid(`${name}: choose how it's repaid.`);
         return {
           kind: "loan",
           id: entryId(s.id),
           name,
           amount,
           rate: parseRate(s.rate, name),
-          repayment,
-          // Typed as years; a saved project, copied, has months.
-          months:
-            repayment === "interest_only"
-              ? 0
-              : parseMonths(
-                  s.years ??
-                    (typeof s.months === "number" ? s.months / 12 : ""),
-                  name,
-                ),
+          ...parseTerms(s, name),
         };
       }
       if (s.kind !== "funds")

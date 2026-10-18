@@ -121,9 +121,14 @@ Each financial model version contains:
 - **Statements:** values per entity and per period, keyed by input item code. They are stored once at the input layer, so every financial model reads the same data. Enter once, and every model fills.
 - **Analysis:** an entity, a financial model version, a set of periods and a set of scenarios. It is pinned and reproducible; this is what goes into a credit file.
 - **Scenario:** overrides of model assumptions within an analysis, e.g. revenue −15%.
-- **Existing debt:** each borrower has a schedule of its existing loans as of a date: balance, rate, repayment and amortization left. Projected years and post-project columns use their actual scheduled payments (`DEBT_SCHEDULE_INTEREST`, `_PRINCIPAL`, `_BALANCE`), running back before the schedule's date for a year that began earlier. Actual periods leave them blank, so a model falls back on the statements.
+- **Loan terms**, the same for existing and new loans:
+  - Repayment: blended, equal principal or interest only.
+  - Payments monthly, quarterly, semi-annually or annually, at the annual rate divided by the payments in a year.
+  - An optional moratorium at the start, either on principal (interest still paid) or on principal and interest (interest capitalized, so no debt service). The amortization either includes it (20 years with a 1-year moratorium repays principal over 19) or follows it (over 20 more).
+  - Each loan opens its payment schedule: each payment, or each year of the loan, with principal, interest, total paid and the balance owed. It's computed in the browser when opened, not stored.
+- **Existing debt:** each borrower has a schedule of its existing loans as of a date: balance, rate, terms and amortization left, and any moratorium left. Projected years and post-project columns use their actual scheduled payments (`DEBT_SCHEDULE_INTEREST`, `_PRINCIPAL`, `_BALANCE`), running back before the schedule's date for a year that began earlier. Actual periods leave them blank, so a model falls back on the statements.
 - **The project:** a scenario can finance a project, presented as a sources and uses table at a closing date. The base case stays the borrower as is.
-  - **Sources:** new loans (amount, rate, amortization, blended, equal principal or interest only, paid monthly), and other funds such as equity injected or cash on hand.
+  - **Sources:** new loans (amount, rate and terms, starting at closing), and other funds such as equity injected or cash on hand.
   - **Uses:** what the money buys or repays: equipment, a building, debt refinanced, costs.
   - **Balance sheet postings:** each source and use posts to a balance sheet item. New loans go to the long-term debt and current portion items, set once per scoring model, so the post-project balance sheet balances when the table does.
   - **Outside the table**, because they move no funds at closing:

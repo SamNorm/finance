@@ -1,12 +1,23 @@
 "use client";
 
 import type { Project } from "@finance/domain";
+import { REPAYMENTS, type Repayment } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import Link from "next/link";
+import type { ReactNode } from "react";
+import { LoanSchedule } from "@/components/loan-schedule";
+import {
+  describeTerms,
+  FrequencySelect,
+  MoratoriumFields,
+  NEW_TERMS,
+  termsDraft,
+  termsInput,
+  type TermsDraft,
+} from "@/components/loan-terms";
 import { button, input } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
-import { REPAYMENTS } from "@/lib/labels";
 
 // A scenario's project: a sources and uses table at closing, plus line of
 // credit increases and subordinations, which move no funds at closing.
@@ -17,17 +28,14 @@ export interface BalanceSheetItem {
   side: "assets" | "claims";
 }
 
-type Repayment = keyof typeof REPAYMENTS;
-
-interface SourceDraft {
+// A loan's terms are kept on other funds too, unused.
+interface SourceDraft extends TermsDraft {
   key: string;
   id?: string;
   kind: "loan" | "funds";
   name: string;
   amount: string;
   rate: string;
-  repayment: Repayment;
-  years: string;
   item: string;
 }
 interface UseDraft {
@@ -88,10 +96,7 @@ export function toDraft(project: Project | null): ProjectDraft {
             name: s.name,
             amount: amount(s.amount),
             rate: percent(s.rate),
-            repayment: s.repayment,
-            years: s.months
-              ? String(Math.round((s.months / 12) * 100) / 100)
-              : "",
+            ...termsDraft({ ...s, balance: s.amount }),
             item: "",
           }
         : {
@@ -101,8 +106,7 @@ export function toDraft(project: Project | null): ProjectDraft {
             name: s.name,
             amount: amount(s.amount),
             rate: "",
-            repayment: "blended",
-            years: "",
+            ...NEW_TERMS,
             item: s.item,
           },
     ),
@@ -150,8 +154,7 @@ export function toInput(draft: ProjectDraft) {
             name: s.name,
             amount: s.amount,
             rate: s.rate,
-            repayment: s.repayment,
-            years: s.years,
+            ...termsInput(s),
           }
         : {
             kind: s.kind,
@@ -210,7 +213,12 @@ export function SourcesUses({
 
   const side = (
     title: string,
-    rows: { id: string; name: string; amount: string; detail: string }[],
+    rows: {
+      id: string;
+      name: ReactNode;
+      amount: string;
+      detail: string;
+    }[],
     total: number,
   ) => (
     <table className="w-full text-sm">
@@ -267,19 +275,23 @@ export function SourcesUses({
           "Sources of funds",
           project.sources.map((s) => ({
             id: s.id,
-            name: s.name,
+            name:
+              s.kind === "loan" ? (
+                <LoanSchedule
+                  name={s.name}
+                  loan={{ ...s, balance: s.amount }}
+                  start={project.closing}
+                  className="text-left text-accent hover:underline"
+                >
+                  {s.name}
+                </LoanSchedule>
+              ) : (
+                s.name
+              ),
             amount: s.amount,
             detail:
               s.kind === "loan"
-                ? [
-                    percent(s.rate),
-                    s.repayment === "interest_only"
-                      ? null
-                      : `${Math.round((s.months / 12) * 100) / 100} years`,
-                    REPAYMENTS[s.repayment].toLowerCase(),
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")
+                ? `${percent(s.rate)} · ${describeTerms({ ...s, balance: s.amount })}`
                 : `To ${label(s.item)}`,
           })),
           sources,
@@ -478,7 +490,7 @@ export function ProjectEditor({
               </label>
               <Remove name={s.name} onClick={() => remove("sources", s.key)} />
               {s.kind === "loan" ? (
-                <div className="col-span-2 grid grid-cols-3 gap-2 sm:col-span-3">
+                <div className="col-span-2 grid grid-cols-2 gap-2 sm:col-span-3 sm:grid-cols-4">
                   <label className="flex flex-col gap-1">
                     <span className={caption}>Rate</span>
                     <input
@@ -508,6 +520,12 @@ export function ProjectEditor({
                       ))}
                     </select>
                   </label>
+                  <FrequencySelect
+                    value={s.frequency}
+                    onChange={(frequency) =>
+                      update("sources", s.key, { frequency })
+                    }
+                  />
                   <label className="flex flex-col gap-1">
                     <span className={caption}>Amortization (years)</span>
                     <input
@@ -520,6 +538,12 @@ export function ProjectEditor({
                       className={numeric}
                     />
                   </label>
+                  <div className="col-span-full flex flex-wrap items-end gap-3">
+                    <MoratoriumFields
+                      draft={s}
+                      onChange={(patch) => update("sources", s.key, patch)}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="col-span-2 sm:col-span-3">
@@ -548,7 +572,7 @@ export function ProjectEditor({
                       name: "Term loan",
                       amount: "",
                       rate: "6%",
-                      repayment: "blended",
+                      ...NEW_TERMS,
                       years: "10",
                       item: "",
                     },
@@ -572,8 +596,7 @@ export function ProjectEditor({
                       name: "Equity injection",
                       amount: "",
                       rate: "",
-                      repayment: "blended",
-                      years: "",
+                      ...NEW_TERMS,
                       item: "",
                     },
                   ],

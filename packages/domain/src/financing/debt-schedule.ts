@@ -1,20 +1,16 @@
 import type { schema } from "@finance/db";
 import { Dec } from "@finance/engine";
 import { DomainError } from "../errors";
-import {
-  amortize,
-  monthIndex,
-  REPAYMENTS,
-  type Repayment,
-} from "./amortization";
+import { amortize, monthIndex } from "./amortization";
 import {
   entryId,
   parseAmount,
   parseDate,
-  parseMonths,
   parseRate,
+  parseTerms,
   type FinancingPeriod,
   type FinancingValue,
+  type LoanTermsInput,
 } from "./common";
 
 // The borrower's existing loans as of a date (§5.5): their actual future
@@ -26,14 +22,12 @@ export type ExistingLoan = DebtSchedule["loans"][number];
 
 export const EMPTY_SCHEDULE: DebtSchedule = { asOf: null, loans: [] };
 
-export interface ExistingLoanInput {
+// Amortization (`years`) and any moratorium are what's left at the date.
+export interface ExistingLoanInput extends LoanTermsInput {
   id?: unknown;
   name?: unknown;
   balance?: unknown;
   rate?: unknown;
-  repayment?: unknown;
-  // Amortization left, in years.
-  years?: unknown;
 }
 
 export function normalizeDebtSchedule(input: {
@@ -52,17 +46,12 @@ export function normalizeDebtSchedule(input: {
       const what = name || `Loan ${i + 1}`;
       if (!name)
         throw new DomainError("invalid", `${what}: give the loan a name.`);
-      const repayment = loan.repayment as Repayment;
-      if (!Object.hasOwn(REPAYMENTS, String(repayment)))
-        throw new DomainError("invalid", `${what}: choose how it's repaid.`);
       return {
         id: entryId(loan.id),
         name,
         balance: parseAmount(loan.balance, what, "balance", true),
         rate: parseRate(loan.rate, what),
-        repayment,
-        months:
-          repayment === "interest_only" ? 0 : parseMonths(loan.years, what),
+        ...parseTerms(loan, what),
       };
     }),
   };

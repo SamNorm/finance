@@ -87,13 +87,3 @@ export const PROJECTION_MODES: Record<"assumptions" | "client", string> = {
   assumptions: "From assumptions",
   client: "Client's projections",
 };
-
-// How a new loan in a scenario is repaid.
-export const REPAYMENTS: Record<
-  "blended" | "equal_principal" | "interest_only",
-  string
-> = {
-  blended: "Blended payments",
-  equal_principal: "Equal principal",
-  interest_only: "Interest only",
-};

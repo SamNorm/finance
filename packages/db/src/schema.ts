@@ -181,6 +181,20 @@ export const scoringModelItems = pgTable(
 // Borrowers and spreads (§5.5): figures per entity and period, keyed by input
 // item code and stored once, so every financial model reads the same data.
 
+// How often a loan is paid; monthly when absent.
+export type PaymentFrequency =
+  "monthly" | "quarterly" | "semiannual" | "annual";
+
+// Payments suspended at the start of a loan's schedule. "principal": interest
+// is still paid. "full": nothing is paid and interest is capitalized.
+export interface Moratorium {
+  kind: "principal" | "full";
+  months: number;
+  // Within the amortization (a 20-year loan with a year's moratorium repays
+  // its principal over the 19 that follow) or before it (over 20 more).
+  included: boolean;
+}
+
 // The borrower's existing loans as of a date, so analyses can use their
 // actual future debt service. Amounts and rates are canonical decimal strings.
 export interface DebtSchedule {
@@ -194,6 +208,9 @@ export interface DebtSchedule {
     repayment: "blended" | "equal_principal" | "interest_only";
     // Months of amortization left; 0 for interest-only loans.
     months: number;
+    frequency?: PaymentFrequency;
+    // What's left of a moratorium at the schedule's date.
+    moratorium?: Moratorium;
   }[];
 }
 
@@ -509,6 +526,9 @@ export interface Project {
         repayment: "blended" | "equal_principal" | "interest_only";
         // Months of amortization; 0 for interest only.
         months: number;
+        frequency?: PaymentFrequency;
+        // Starting at closing.
+        moratorium?: Moratorium;
       }
     | { kind: "funds"; id: string; name: string; amount: string; item: string }
   )[];

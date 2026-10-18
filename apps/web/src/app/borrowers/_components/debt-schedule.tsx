@@ -1,22 +1,30 @@
 "use client";
 
 import type { DebtSchedule } from "@finance/domain";
+import { REPAYMENTS } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import { useState, useTransition } from "react";
+import { LoanSchedule } from "@/components/loan-schedule";
+import {
+  FrequencySelect,
+  MoratoriumFields,
+  NEW_TERMS,
+  termsDraft,
+  termsInput,
+  type TermsDraft,
+} from "@/components/loan-terms";
 import { button, input } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
-import { REPAYMENTS } from "@/lib/labels";
 import { saveDebtScheduleAction } from "../actions";
 
-interface Draft {
+// Amortization and any moratorium are what's left at the schedule's date.
+interface Draft extends TermsDraft {
   key: string;
   id?: string;
   name: string;
   balance: string;
   rate: string;
-  repayment: keyof typeof REPAYMENTS;
-  years: string;
 }
 
 const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
@@ -27,8 +35,16 @@ const toDraft = (loan: DebtSchedule["loans"][number]): Draft => ({
   name: loan.name,
   balance: grouped.format(Number(loan.balance)),
   rate: `${new Dec(loan.rate).times(100).toString()}%`,
-  repayment: loan.repayment,
-  years: loan.months ? String(Math.round((loan.months / 12) * 100) / 100) : "",
+  ...termsDraft(loan),
+});
+
+// The fields the server reads.
+const toInput = (loan: Draft) => ({
+  id: loan.id,
+  name: loan.name,
+  balance: loan.balance,
+  rate: loan.rate,
+  ...termsInput(loan),
 });
 
 // The borrower's existing loans as of a date. Analyses read their actual
@@ -70,14 +86,7 @@ export function DebtScheduleEditor({
     startTransition(async () => {
       const result = await saveDebtScheduleAction(entityId, {
         asOf,
-        loans: loans.map((loan) => ({
-          id: loan.id,
-          name: loan.name,
-          balance: loan.balance,
-          rate: loan.rate,
-          repayment: loan.repayment,
-          years: loan.years,
-        })),
+        loans: loans.map(toInput),
       });
       startTransition(() =>
         setFeedback(
@@ -140,10 +149,18 @@ export function DebtScheduleEditor({
         <div className="flex flex-col gap-2">
           {loans.map((loan) => {
             const year = loan.id ? nextYear[loan.id] : undefined;
+            // The schedule shows the loan as saved, so only while it's
+            // unchanged.
+            const saved = schedule.loans.find((l) => l.id === loan.id);
+            const unchanged =
+              !!saved &&
+              asOf === schedule.asOf &&
+              JSON.stringify(toInput(toDraft(saved))) ===
+                JSON.stringify(toInput(loan));
             return (
               <fieldset
                 key={loan.key}
-                className="grid grid-cols-2 gap-3 rounded-md border border-line p-3 sm:grid-cols-3 lg:grid-cols-[minmax(10rem,1.5fr)_repeat(4,minmax(6rem,1fr))_minmax(8rem,1fr)_auto]"
+                className="grid grid-cols-2 gap-3 rounded-md border border-line p-3 sm:grid-cols-3 lg:grid-cols-[minmax(10rem,1.5fr)_repeat(5,minmax(6rem,1fr))_minmax(8rem,1fr)_auto]"
               >
                 <legend className="sr-only">{loan.name || "Loan"}</legend>
                 <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
@@ -193,6 +210,10 @@ export function DebtScheduleEditor({
                     ))}
                   </select>
                 </label>
+                <FrequencySelect
+                  value={loan.frequency}
+                  onChange={(frequency) => update(loan.key, { frequency })}
+                />
                 <label className="flex flex-col gap-1">
                   <span className={caption}>Years left</span>
                   <input
@@ -235,6 +256,34 @@ export function DebtScheduleEditor({
                     <Icon name="close" />
                   </button>
                 </div>
+                <div className="col-span-full flex flex-wrap items-end gap-3">
+                  <MoratoriumFields
+                    draft={loan}
+                    left
+                    onChange={(patch) => update(loan.key, patch)}
+                  />
+                  <div className="ml-auto">
+                    {saved && schedule.asOf && unchanged ? (
+                      <LoanSchedule
+                        name={saved.name}
+                        loan={saved}
+                        start={schedule.asOf}
+                        className={button.secondary}
+                      >
+                        Payment schedule
+                      </LoanSchedule>
+                    ) : (
+                      <button
+                        type="button"
+                        className={button.secondary}
+                        disabled
+                        title="Save to see its schedule"
+                      >
+                        Payment schedule
+                      </button>
+                    )}
+                  </div>
+                </div>
               </fieldset>
             );
           })}
@@ -253,8 +302,7 @@ export function DebtScheduleEditor({
                 name: "",
                 balance: "",
                 rate: "",
-                repayment: "blended",
-                years: "",
+                ...NEW_TERMS,
               },
             ])
           }
