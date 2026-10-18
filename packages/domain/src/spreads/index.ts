@@ -5,6 +5,7 @@ export {
   type PasteParse,
   type PasteRow,
 } from "./paste";
+export * from "./existing-loans";
 export * from "./service";
 export {
   parsePeriodHeader,

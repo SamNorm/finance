@@ -11,6 +11,12 @@ import {
 } from "../scoring-models/service";
 import { fixture } from "../scoring-models/test-helpers";
 import {
+  addExistingLoan,
+  removeExistingLoan,
+  setDebtScheduleDate,
+  updateExistingLoan,
+} from "./existing-loans";
+import {
   addPeriod,
   createEntity,
   deleteEntity,
@@ -260,5 +266,91 @@ describe("borrowers and spreads", () => {
     await rejects(setValue(db, stranger, period.id, "CASH", "1"), "not_found");
     await rejects(deletePeriod(db, stranger, period.id), "not_found");
     expect(await listEntities(db, stranger)).toEqual([]);
+  });
+});
+
+describe("existing loans", () => {
+  it("are edited a loan at a time, as of the schedule's date", async () => {
+    const entity = await createEntity(db, ctx, {
+      name: "Acme",
+      scoringModelId: ctx.modelId,
+    });
+    const loan = {
+      name: "Mortgage",
+      balance: "850,000",
+      rate: "4.5%",
+      repayment: "blended",
+      years: 18,
+    };
+    // The first loan dates the schedule.
+    await rejects(addExistingLoan(db, ctx, entity.id, loan), "invalid");
+    const { loan: mortgage } = await addExistingLoan(db, ctx, entity.id, {
+      ...loan,
+      asOf: "2024-12-31",
+    });
+    expect(mortgage).toMatchObject({
+      name: "Mortgage",
+      balance: "850000",
+      rate: "0.045",
+      months: 216,
+    });
+    // Others are known at the same date.
+    await rejects(
+      addExistingLoan(db, ctx, entity.id, { ...loan, asOf: "2025-06-30" }),
+      "invalid",
+    );
+    const { loan: term, entity: both } = await addExistingLoan(
+      db,
+      ctx,
+      entity.id,
+      {
+        name: "Term loan",
+        balance: "200000",
+        rate: "6%",
+        repayment: "equal_principal",
+        years: 4,
+        frequency: "quarterly",
+      },
+    );
+    expect(both.debtSchedule.asOf).toBe("2024-12-31");
+    expect(both.debtSchedule.loans).toEqual([mortgage, term]);
+
+    const { loan: changed } = await updateExistingLoan(
+      db,
+      ctx,
+      entity.id,
+      term.id,
+      {
+        balance: "150000",
+        moratorium: { kind: "full", payments: 2, included: false },
+      },
+    );
+    expect(changed).toMatchObject({
+      balance: "150000",
+      frequency: "quarterly",
+      moratorium: { kind: "full", payments: 2, included: false },
+    });
+    await rejects(
+      updateExistingLoan(db, ctx, entity.id, term.id, { rate: "" }),
+      "invalid",
+    );
+    await rejects(
+      updateExistingLoan(db, ctx, entity.id, randomUUID(), { rate: "1%" }),
+      "not_found",
+    );
+
+    const moved = await setDebtScheduleDate(db, ctx, entity.id, "2025-03-31");
+    expect(moved.debtSchedule.asOf).toBe("2025-03-31");
+    await removeExistingLoan(db, ctx, entity.id, mortgage.id);
+    const none = await removeExistingLoan(db, ctx, entity.id, term.id);
+    expect(none.debtSchedule).toEqual({ asOf: null, loans: [] });
+    await rejects(
+      setDebtScheduleDate(db, ctx, entity.id, "2025-03-31"),
+      "invalid",
+    );
+    await rejects(
+      addExistingLoan(db, { organizationId: randomUUID() }, entity.id, loan),
+      "not_found",
+    );
   });
 });
