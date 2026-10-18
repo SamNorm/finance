@@ -5,6 +5,7 @@ import {
   getScoringModel,
   getSpread,
   imbalance,
+  isNumeric,
   listItems,
   runAnalysis,
   spreadErrors,
@@ -255,6 +256,14 @@ async function AnalysisView({ params, searchParams }: Props) {
                       code: item.code,
                       label: item.label,
                       side: sides.get(item.code)!,
+                    })),
+                  adjustable: scoringItems
+                    .filter((item) => item.kind === "input" && isNumeric(item))
+                    .map((item) => ({
+                      code: item.code,
+                      label: item.label,
+                      statement: item.statement,
+                      side: sides.get(item.code) ?? null,
                     })),
                   canAddLoans: Boolean(longTermDebt && currentDebt && cash),
                   scoringModelId: scoringModel.id,

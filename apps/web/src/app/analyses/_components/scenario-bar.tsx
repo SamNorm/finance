@@ -23,6 +23,7 @@ import {
   SourcesUses,
   toDraft,
   toInput,
+  type AdjustableItem,
   type BalanceSheetItem,
   type ProjectDraft,
 } from "./project-editor";
@@ -39,6 +40,8 @@ export interface ScenarioOption {
 // What the project editor needs from the analysis.
 export interface ProjectSetup {
   items: BalanceSheetItem[];
+  // What adjustments can change: any statement's numeric inputs.
+  adjustable: AdjustableItem[];
   canAddLoans: boolean;
   scoringModelId: string;
   defaultClosing: string;
@@ -367,7 +370,7 @@ export function ScenarioEditor({
 
       <Card
         title="Project"
-        description="Sources and uses at closing, plus line of credit increases and subordinations. Results show it in post-project columns."
+        description="Sources and uses at closing, plus line of credit increases, subordinations and adjustments. Results show it in post-project columns."
         actions={
           scenario.project &&
           !editing && (
@@ -386,12 +389,14 @@ export function ScenarioEditor({
           <SourcesUses
             project={scenario.project}
             items={setup.items}
+            adjustable={setup.adjustable}
             scenarioId={scenario.id}
           />
         ) : (
           <ProjectEditor
             draft={project}
             items={setup.items}
+            adjustable={setup.adjustable}
             canAddLoans={setup.canAddLoans}
             scoringModelId={setup.scoringModelId}
             defaultClosing={setup.defaultClosing}

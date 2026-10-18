@@ -1,6 +1,6 @@
 "use client";
 
-import type { Project } from "@finance/domain";
+import type { Project, Statement } from "@finance/domain";
 import {
   describeTerms,
   REPAYMENTS,
@@ -22,15 +22,26 @@ import {
 import { button, input } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
+import { STATEMENTS } from "@/lib/labels";
 import { saveProjectLoanAdjustmentsAction } from "../actions";
 
 // A scenario's project: a sources and uses table at closing, plus line of
-// credit increases and subordinations, which move no funds at closing.
+// credit increases, subordinations and adjustments, which move no funds at
+// closing.
 
 export interface BalanceSheetItem {
   code: string;
   label: string;
   side: "assets" | "claims";
+}
+
+// An input item an adjustment can change, on any statement; balance sheet
+// ones have a side.
+export interface AdjustableItem {
+  code: string;
+  label: string;
+  statement: Statement;
+  side: "assets" | "claims" | null;
 }
 
 // A loan's terms are kept on other funds too, unused. Adjustments are edited
@@ -68,6 +79,13 @@ interface SubordinationDraft {
   interestSaved: string;
   principalSaved: string;
 }
+interface AdjustmentDraft {
+  key: string;
+  id?: string;
+  name: string;
+  item: string;
+  amount: string;
+}
 
 export interface ProjectDraft {
   closing: string;
@@ -75,7 +93,10 @@ export interface ProjectDraft {
   uses: UseDraft[];
   lines: LineDraft[];
   subordinations: SubordinationDraft[];
+  adjustments: AdjustmentDraft[];
 }
+
+type List = "sources" | "uses" | "lines" | "subordinations" | "adjustments";
 
 const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
 const amount = (raw: string) => grouped.format(Number(raw));
@@ -91,6 +112,7 @@ export function toDraft(project: Project | null): ProjectDraft {
       uses: [],
       lines: [],
       subordinations: [],
+      adjustments: [],
     };
   return {
     closing: project.closing,
@@ -142,6 +164,13 @@ export function toDraft(project: Project | null): ProjectDraft {
       interestSaved: amount(s.interestSaved),
       principalSaved: amount(s.principalSaved),
     })),
+    adjustments: (project.adjustments ?? []).map((a) => ({
+      key: a.id,
+      id: a.id,
+      name: a.name,
+      item: a.item,
+      amount: amount(a.amount),
+    })),
   };
 }
 
@@ -151,7 +180,8 @@ export function toInput(draft: ProjectDraft) {
     !draft.sources.length &&
     !draft.uses.length &&
     !draft.lines.length &&
-    !draft.subordinations.length;
+    !draft.subordinations.length &&
+    !draft.adjustments.length;
   if (empty) return null;
   return {
     closing: draft.closing,
@@ -196,7 +226,44 @@ export function toInput(draft: ProjectDraft) {
         principalSaved,
       }),
     ),
+    adjustments: draft.adjustments.map(({ id, name, item, amount }) => ({
+      id,
+      name,
+      item,
+      amount,
+    })),
   };
+}
+
+// Balance sheet adjustments' changes to assets and to liabilities and
+// equity, which must match.
+function adjustmentSides(
+  entries: { item: string; amount: number }[],
+  adjustable: AdjustableItem[],
+) {
+  const totals = { assets: 0, claims: 0 };
+  for (const entry of entries) {
+    const side = adjustable.find((i) => i.code === entry.item)?.side;
+    if (side) totals[side] += entry.amount;
+  }
+  return totals;
+}
+
+function AdjustmentBalance({
+  totals,
+}: {
+  totals: { assets: number; claims: number };
+}) {
+  const off = Math.abs(totals.assets - totals.claims) >= 1;
+  return (
+    <p className={`text-sm ${off ? "text-danger" : "text-muted"}`}>
+      Balance sheet adjustments: assets{" "}
+      {formatFigure(String(totals.assets), "amount")} · liabilities and equity{" "}
+      {formatFigure(String(totals.claims), "amount")}
+      {off &&
+        ". They must change both sides alike, or the post-project balance sheet won't balance and the analysis can't be completed."}
+    </p>
+  );
 }
 
 // Figures as typed, for totals while editing: "1,200,000" → 1200000.
@@ -210,14 +277,20 @@ const typed = (raw: string) => {
 export function SourcesUses({
   project,
   items,
+  adjustable,
   scenarioId,
 }: {
   project: Project;
   items: BalanceSheetItem[];
+  adjustable: AdjustableItem[];
   scenarioId: string;
 }) {
   const label = (code: string) =>
-    items.find((i) => i.code === code)?.label ?? code;
+    (
+      items.find((i) => i.code === code) ??
+      adjustable.find((i) => i.code === code)
+    )?.label ?? code;
+  const adjustments = project.adjustments ?? [];
   const sources = project.sources.reduce((t, s) => t + Number(s.amount), 0);
   const uses = project.uses.reduce((t, u) => t + Number(u.amount), 0);
   const share = (value: string, total: number) =>
@@ -370,7 +443,68 @@ export function SourcesUses({
           ))}
         </ul>
       )}
+      {adjustments.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium">Adjustments</p>
+          <ul className="flex flex-col gap-1 text-sm">
+            {adjustments.map((a) => (
+              <li key={a.id}>
+                {a.name}: {label(a.item)}{" "}
+                <span className="tabular-nums">
+                  {Number(a.amount) > 0 ? "+" : ""}
+                  {formatFigure(a.amount, "amount")}
+                </span>
+                {!a.side && <span className="text-muted"> a year</span>}
+              </li>
+            ))}
+          </ul>
+          <AdjustmentBalance
+            totals={adjustmentSides(
+              adjustments.map((a) => ({
+                item: a.item,
+                amount: Number(a.amount),
+              })),
+              adjustable,
+            )}
+          />
+        </div>
+      )}
     </div>
+  );
+}
+
+// An input item for an adjustment, grouped by statement.
+function AdjustableSelect({
+  value,
+  items,
+  onChange,
+  label,
+}: {
+  value: string;
+  items: AdjustableItem[];
+  onChange: (code: string) => void;
+  label: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={label}
+      className={input}
+    >
+      <option value="">Changes…</option>
+      {STATEMENTS.map((statement) => (
+        <optgroup key={statement.value} label={statement.label}>
+          {items
+            .filter((i) => i.statement === statement.value)
+            .map((i) => (
+              <option key={i.code} value={i.code}>
+                {i.label}
+              </option>
+            ))}
+        </optgroup>
+      ))}
+    </select>
   );
 }
 
@@ -431,6 +565,7 @@ function Remove({ onClick, name }: { onClick: () => void; name: string }) {
 export function ProjectEditor({
   draft,
   items,
+  adjustable,
   canAddLoans,
   scoringModelId,
   defaultClosing,
@@ -438,6 +573,7 @@ export function ProjectEditor({
 }: {
   draft: ProjectDraft;
   items: BalanceSheetItem[];
+  adjustable: AdjustableItem[];
   // Whether the scoring model says where new loans post.
   canAddLoans: boolean;
   scoringModelId: string;
@@ -446,7 +582,7 @@ export function ProjectEditor({
 }) {
   const set = (patch: Partial<ProjectDraft>) =>
     onChange({ ...draft, closing: draft.closing || defaultClosing, ...patch });
-  const update = <K extends "sources" | "uses" | "lines" | "subordinations">(
+  const update = <K extends List>(
     list: K,
     key: string,
     patch: Partial<ProjectDraft[K][number]>,
@@ -456,10 +592,7 @@ export function ProjectEditor({
         entry.key === key ? { ...entry, ...patch } : entry,
       ),
     } as Partial<ProjectDraft>);
-  const remove = (
-    list: "sources" | "uses" | "lines" | "subordinations",
-    key: string,
-  ) =>
+  const remove = (list: List, key: string) =>
     set({
       [list]: (draft[list] as { key: string }[]).filter((e) => e.key !== key),
     } as Partial<ProjectDraft>);
@@ -883,6 +1016,88 @@ export function ProjectEditor({
           >
             <Icon name="plus" />
             Subordination
+          </button>
+        </div>
+      </fieldset>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-2 text-sm font-medium">
+          Adjustments
+          <span className="ml-2 text-xs font-normal text-muted">
+            Changes that move no funds, such as an asset written off: added to
+            the item post-project, negative to reduce. Balance sheet ones must
+            balance; others are yearly.
+          </span>
+        </legend>
+        {draft.adjustments.map((a) => (
+          <div
+            key={a.key}
+            className="grid grid-cols-2 gap-2 rounded-md border border-line p-2.5 sm:grid-cols-[minmax(8rem,1.2fr)_minmax(10rem,1.4fr)_minmax(7rem,1fr)_auto]"
+          >
+            <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
+              <span className={caption}>Adjustment</span>
+              <input
+                value={a.name}
+                placeholder="Write off old press"
+                onChange={(e) =>
+                  update("adjustments", a.key, { name: e.target.value })
+                }
+                className={input}
+              />
+            </label>
+            <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
+              <span className={caption}>Item</span>
+              <AdjustableSelect
+                value={a.item}
+                items={adjustable}
+                label={`What ${a.name || "the adjustment"} changes`}
+                onChange={(item) => update("adjustments", a.key, { item })}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={caption}>Amount</span>
+              <input
+                value={a.amount}
+                inputMode="decimal"
+                placeholder="-300,000"
+                onChange={(e) =>
+                  update("adjustments", a.key, { amount: e.target.value })
+                }
+                className={numeric}
+              />
+            </label>
+            <Remove
+              name={a.name}
+              onClick={() => remove("adjustments", a.key)}
+            />
+          </div>
+        ))}
+        {draft.adjustments.length > 0 && (
+          <AdjustmentBalance
+            totals={adjustmentSides(
+              draft.adjustments.map((a) => ({
+                item: a.item,
+                amount: typed(a.amount),
+              })),
+              adjustable,
+            )}
+          />
+        )}
+        <div>
+          <button
+            type="button"
+            className={button.secondary}
+            onClick={() =>
+              set({
+                adjustments: [
+                  ...draft.adjustments,
+                  { key: newKey(), name: "", item: "", amount: "" },
+                ],
+              })
+            }
+          >
+            <Icon name="plus" />
+            Adjustment
           </button>
         </div>
       </fieldset>
