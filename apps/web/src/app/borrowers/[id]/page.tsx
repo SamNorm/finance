@@ -4,33 +4,46 @@ import {
   listAnalyses,
   listScoringModels,
   nextYearDebtService,
+  type AnalysisSummary,
   type Issue,
 } from "@finance/domain";
+import { ChartLine, ListTree, Plus } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { IssueList } from "@/components/issue-list";
-import { button } from "@/components/styles";
-import { formatDate } from "@/lib/format";
-import { STATEMENTS } from "@/lib/labels";
+import { IssueList, IssuesSummary } from "@/components/issue-list";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  Page,
+  PageHeader,
+  plural,
+  Stat,
+} from "@/components/page";
+import { button, rowLink, table } from "@/components/styles";
+import { Tabs } from "@/components/tabs";
+import { formatDate, formatFigure } from "@/lib/format";
+import { QUALITIES, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { BorrowerActions } from "../_components/borrower-actions";
 import { DebtScheduleEditor } from "../_components/debt-schedule";
+import { Notice } from "../_components/notice";
 import { SpreadGrid, type GridPeriod } from "../_components/spread-grid";
 
 export const metadata: Metadata = { title: "Borrower" };
 
-export default function Page({
+export default function BorrowerPage({
   params,
   searchParams,
 }: PageProps<"/borrowers/[id]">) {
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6">
+    <Page wide>
       <Suspense fallback={<Loading />}>
         <SpreadView params={params} searchParams={searchParams} />
       </Suspense>
-    </div>
+    </Page>
   );
 }
 
@@ -65,138 +78,235 @@ async function SpreadView({ params, searchParams }: Props) {
   const scoringModel = scoringModels.find(
     (m) => m.id === entity.scoringModelId,
   )!;
+  const nextYear = nextYearDebtService(entity.debtSchedule);
+  const issues = Object.values(spread.checks).flat();
+  const errors = issues.filter((i) => i.severity === "error").length;
+  const newAnalysis = `/analyses?borrower=${entity.id}`;
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium tracking-wide text-muted uppercase">
-            <Link href="/borrowers" className="hover:text-foreground">
-              Borrowers
-            </Link>
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {entity.name}
-          </h1>
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        crumbs={[{ href: "/borrowers", label: "Borrowers" }]}
+        title={entity.name}
+        badges={
+          entity.riskRating && (
+            <span title="The official rating from the institution's system, kept for reference.">
+              <Badge>Rating {entity.riskRating}</Badge>
+            </span>
+          )
+        }
+        meta={
+          <>
             <Link
               href={`/scoring-models/${scoringModel.id}`}
-              className="text-accent hover:underline"
+              className="flex items-center gap-1.5 text-accent hover:underline"
             >
+              <ListTree className="size-3.5" aria-hidden />
               {scoringModel.name}
             </Link>
-            {entity.industry && <span>· {entity.industry}</span>}
+            {entity.industry && <span>{entity.industry}</span>}
             {entity.naicsCode && (
               <span className="font-mono text-xs">
                 NAICS {entity.naicsCode}
               </span>
             )}
-            {entity.riskRating && (
-              <span
-                className="rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-foreground"
-                title="The official rating from the institution's system"
-              >
-                Rating {entity.riskRating}
-              </span>
-            )}
-          </p>
-          {entity.notes && <p className="text-sm text-muted">{entity.notes}</p>}
-        </div>
-        <BorrowerActions
-          entity={{
-            id: entity.id,
-            name: entity.name,
-            scoringModelId: entity.scoringModelId,
-            industry: entity.industry,
-            naicsCode: entity.naicsCode,
-            riskRating: entity.riskRating,
-            notes: entity.notes,
-          }}
-          scoringModels={scoringModels.map((m) => ({
-            id: m.id,
-            name: m.name,
-            published: m.versions.some((v) => v.status === "published"),
-          }))}
-          canSwitchModel={spread.periods.length === 0}
-        />
-      </header>
-
-      {!spread.layout ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm">
-          <span>
-            Publish {scoringModel.name} before entering this borrower&apos;s
-            figures.
-          </span>
-          <Link
-            href={`/scoring-models/${scoringModel.id}`}
-            className={button.secondary}
-          >
-            Open {scoringModel.name}
-          </Link>
-        </div>
-      ) : (
-        <>
-          <Checks periods={periods} checks={spread.checks} />
-          <SpreadGrid
-            key={spread.layout.versionId}
-            entityId={entity.id}
-            items={items}
-            periods={periods}
-            values={spread.values}
-            computed={spread.computed}
-            checks={spread.checks}
-            statement={statement}
-          />
-        </>
-      )}
-
-      <DebtScheduleEditor
-        entityId={entity.id}
-        schedule={entity.debtSchedule}
-        nextYear={Object.fromEntries(
-          nextYearDebtService(entity.debtSchedule).map(({ id, ...year }) => [
-            id,
-            year,
-          ]),
-        )}
+          </>
+        }
+        description={entity.notes}
+        actions={
+          <>
+            <Link href={newAnalysis} className={button.primary}>
+              <Plus />
+              New analysis
+            </Link>
+            <BorrowerActions
+              entity={{
+                id: entity.id,
+                name: entity.name,
+                scoringModelId: entity.scoringModelId,
+                industry: entity.industry,
+                naicsCode: entity.naicsCode,
+                riskRating: entity.riskRating,
+                notes: entity.notes,
+              }}
+              scoringModels={scoringModels.map((m) => ({
+                id: m.id,
+                name: m.name,
+                published: m.versions.some((v) => v.status === "published"),
+              }))}
+              canSwitchModel={spread.periods.length === 0}
+            />
+          </>
+        }
       />
 
-      <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold">Analyses</h2>
-          <Link
-            href={`/analyses?borrower=${entity.id}`}
-            className={button.secondary}
-          >
-            New analysis
-          </Link>
-        </div>
-        {analyses.length ? (
-          <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
-            {analyses.map((a) => (
-              <li
-                key={a.id}
-                className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
+      <Summary
+        periods={periods}
+        issues={issues}
+        debt={{
+          asOf: entity.debtSchedule.asOf,
+          balance: entity.debtSchedule.loans.reduce(
+            (sum, loan) => sum + Number(loan.balance),
+            0,
+          ),
+          service: nextYear.reduce(
+            (sum, year) => sum + Number(year.interest) + Number(year.principal),
+            0,
+          ),
+          loans: entity.debtSchedule.loans.length,
+        }}
+        analyses={analyses}
+      />
+
+      <Tabs
+        initial={typeof query.tab === "string" ? query.tab : undefined}
+        tabs={[
+          {
+            value: "spread",
+            label: "Spread",
+            count: periods.length,
+            alert: errors ? "error" : issues.length ? "warning" : undefined,
+            content: !spread.layout ? (
+              <Notice
+                action={
+                  <Link
+                    href={`/scoring-models/${scoringModel.id}`}
+                    className={button.secondary}
+                  >
+                    Open {scoringModel.name}
+                  </Link>
+                }
               >
-                <Link
-                  href={`/analyses/${a.id}`}
-                  className="font-medium hover:text-accent"
-                >
-                  {a.name}
-                </Link>
-                <span className="text-muted">
-                  {a.modelName} v{a.versionNumber}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted">
-            No analyses for {entity.name} yet.
-          </p>
-        )}
-      </section>
+                Publish {scoringModel.name} before entering this borrower&apos;s
+                figures.
+              </Notice>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <Checks periods={periods} checks={spread.checks} />
+                <SpreadGrid
+                  key={spread.layout.versionId}
+                  entityId={entity.id}
+                  items={items}
+                  periods={periods}
+                  values={spread.values}
+                  computed={spread.computed}
+                  checks={spread.checks}
+                  statement={statement}
+                />
+              </div>
+            ),
+          },
+          {
+            value: "existing-debt",
+            label: "Existing debt",
+            count: entity.debtSchedule.loans.length,
+            content: (
+              <DebtScheduleEditor
+                entityId={entity.id}
+                schedule={entity.debtSchedule}
+                nextYear={Object.fromEntries(
+                  nextYear.map(({ id, ...year }) => [id, year]),
+                )}
+              />
+            ),
+          },
+          {
+            value: "analyses",
+            label: "Analyses",
+            count: analyses.length,
+            content: (
+              <Analyses
+                analyses={analyses}
+                name={entity.name}
+                newAnalysis={newAnalysis}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
+  );
+}
+
+// The borrower at a glance: what's spread, what it owes, what's been run.
+function Summary({
+  periods,
+  issues,
+  debt,
+  analyses,
+}: {
+  periods: GridPeriod[];
+  issues: Issue[];
+  debt: {
+    asOf: string | null;
+    balance: number;
+    service: number;
+    loans: number;
+  };
+  analyses: AnalysisSummary[];
+}) {
+  const actual = periods.filter((p) => p.quality !== "projected");
+  const projected = periods.length - actual.length;
+  const latest = actual.at(-1);
+  const errors = issues.filter((i) => i.severity === "error").length;
+  const owes = debt.asOf && debt.loans > 0;
+  return (
+    <Card>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 xl:grid-cols-5">
+        <Stat
+          label="Periods spread"
+          value={periods.length}
+          detail={
+            periods.length
+              ? `${actual.length} actual${projected ? ` · ${projected} projected` : ""}`
+              : "None yet"
+          }
+        />
+        <Stat
+          label="Latest statements"
+          value={latest ? formatDate(latest.periodEnd) : "–"}
+          detail={
+            latest && `${latest.months} months · ${QUALITIES[latest.quality]}`
+          }
+        />
+        <Stat
+          label="Statement checks"
+          value={
+            !periods.length
+              ? "–"
+              : !issues.length
+                ? "All pass"
+                : errors
+                  ? plural(errors, "error")
+                  : plural(issues.length, "warning")
+          }
+          tone={
+            !periods.length
+              ? undefined
+              : errors
+                ? "danger"
+                : issues.length
+                  ? "warning"
+                  : "success"
+          }
+          detail={issues.length ? "Flagged, nothing blocked" : undefined}
+        />
+        <Stat
+          label="Existing debt"
+          value={owes ? formatFigure(String(debt.balance), "amount") : "–"}
+          detail={
+            owes
+              ? `${formatFigure(String(debt.service), "amount")} due over the next 12 months`
+              : "No schedule"
+          }
+        />
+        <Stat
+          label="Analyses"
+          value={analyses.length}
+          detail={analyses[0] && `Latest: ${analyses[0].name}`}
+        />
+      </div>
+    </Card>
   );
 }
 
@@ -207,40 +317,14 @@ function Checks({
   periods: GridPeriod[];
   checks: Record<string, Issue[]>;
 }) {
-  if (!periods.length) return null;
   const flagged = periods.filter((p) => checks[p.id]?.length);
-  if (!flagged.length) {
-    return <p className="text-sm text-success">All statement checks pass.</p>;
-  }
-  const errors = flagged.reduce(
-    (n, p) => n + checks[p.id]!.filter((i) => i.severity === "error").length,
-    0,
-  );
-  const total = flagged.reduce((n, p) => n + checks[p.id]!.length, 0);
+  if (!flagged.length) return null;
   return (
-    <details className="group rounded-lg border border-line bg-surface">
-      <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 text-sm">
-        {errors > 0 && (
-          <span className="rounded bg-danger-soft px-1.5 py-0.5 font-medium text-danger">
-            {errors} {errors === 1 ? "error" : "errors"}
-          </span>
-        )}
-        {total > errors && (
-          <span className="rounded bg-warning-soft px-1.5 py-0.5 font-medium text-warning">
-            {total - errors} {total - errors === 1 ? "warning" : "warnings"}
-          </span>
-        )}
-        <span className="text-muted">
-          Statement checks. They flag problems; nothing is blocked.
-        </span>
-        <span className="ml-auto text-xs text-muted group-open:hidden">
-          Show
-        </span>
-        <span className="ml-auto hidden text-xs text-muted group-open:inline">
-          Hide
-        </span>
-      </summary>
-      <div className="flex flex-col gap-4 border-t border-line px-4 py-3">
+    <IssuesSummary
+      issues={flagged.flatMap((p) => checks[p.id]!)}
+      note="Statement checks. They flag problems; nothing is blocked."
+    >
+      <div className="flex flex-col gap-4">
         {flagged.map((p) => (
           <div key={p.id} className="flex flex-col gap-1.5">
             <p className="text-xs font-semibold text-muted">
@@ -250,16 +334,94 @@ function Checks({
           </div>
         ))}
       </div>
-    </details>
+    </IssuesSummary>
+  );
+}
+
+function Analyses({
+  analyses,
+  name,
+  newAnalysis,
+}: {
+  analyses: AnalysisSummary[];
+  name: string;
+  newAnalysis: string;
+}) {
+  if (!analyses.length) {
+    return (
+      <EmptyState
+        icon={<ChartLine />}
+        title={`No analyses for ${name} yet.`}
+        actions={
+          <Link href={newAnalysis} className={button.primary}>
+            <Plus />
+            New analysis
+          </Link>
+        }
+      >
+        Run the spread through a published financial model, with projections and
+        scenarios.
+      </EmptyState>
+    );
+  }
+  return (
+    <Card
+      flush
+      title="Analyses"
+      description="Each stays pinned to its model version, so the credit file reproduces."
+      actions={
+        <Link href={newAnalysis} className={button.secondary}>
+          <Plus />
+          New analysis
+        </Link>
+      }
+    >
+      <div className="overflow-x-auto">
+        <table className={table.table}>
+          <thead>
+            <tr className={table.head}>
+              <th className={table.th}>Analysis</th>
+              <th className={table.th}>Financial model</th>
+              <th className={`${table.th} text-right`}>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {analyses.map((a) => (
+              <tr key={a.id} className={table.row}>
+                <td className={table.td}>
+                  <Link href={`/analyses/${a.id}`} className={rowLink}>
+                    {a.name}
+                  </Link>
+                </td>
+                <td className={`${table.td} text-muted`}>
+                  {a.modelName}{" "}
+                  <span className="text-xs">v{a.versionNumber}</span>
+                </td>
+                <td
+                  className={`${table.td} text-right text-muted tabular-nums`}
+                >
+                  {formatDate(a.updatedAt.toISOString().slice(0, 10))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
 function Loading() {
   return (
-    <div className="flex animate-pulse flex-col gap-4" aria-label="Loading">
-      <div className="h-3 w-20 rounded bg-surface-2" />
-      <div className="h-7 w-72 rounded bg-surface-2" />
-      <div className="h-96 w-full rounded-lg bg-surface-2" />
+    <div className="flex animate-pulse flex-col gap-6" aria-label="Loading">
+      <div className="flex flex-col gap-2">
+        <div className="h-3 w-20 rounded bg-surface-2" />
+        <div className="h-7 w-72 rounded bg-surface-2" />
+        <div className="h-4 w-96 max-w-full rounded bg-surface-2" />
+      </div>
+      <div className="h-24 w-full rounded-xl bg-surface-2" />
+      <div className="h-10 w-full rounded bg-surface-2" />
+      <div className="h-96 w-full rounded-xl bg-surface-2" />
     </div>
   );
 }

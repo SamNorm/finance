@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowDown, ArrowUp, Plus, Upload, X } from "lucide-react";
 import {
   startTransition,
   useEffect,
@@ -147,27 +148,15 @@ export function Segmented<T extends string>({
   );
 }
 
-const paths = {
-  close: "M4 4l8 8M12 4l-8 8",
-  up: "M8 12V4M4.5 7.5L8 4l3.5 3.5",
-  down: "M8 4v8M4.5 8.5L8 12l3.5-3.5",
-  plus: "M8 3.5v9M3.5 8h9",
-  upload: "M8 10.5V3M5 6l3-3 3 3M3.5 10.5v2h9v-2",
+const icons = {
+  close: X,
+  up: ArrowUp,
+  down: ArrowDown,
+  plus: Plus,
+  upload: Upload,
 };
 
-export function Icon({ name }: { name: keyof typeof paths }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className="size-4"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d={paths[name]} />
-    </svg>
-  );
+export function Icon({ name }: { name: keyof typeof icons }) {
+  const Glyph = icons[name];
+  return <Glyph className="size-4" aria-hidden />;
 }

@@ -1,6 +1,8 @@
 "use client";
 
+import { Pencil, Trash2 } from "lucide-react";
 import { useActionState, useState, useTransition } from "react";
+import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button, input } from "@/components/styles";
 import { Field, Icon, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
@@ -176,7 +178,8 @@ export function NewScoringModel() {
   );
 }
 
-// Edit details or delete one model.
+// Edit details or delete one model, from the page's "…" menu. The dialog
+// sits outside the menu, which renders in a portal.
 export function ModelActions({
   model,
 }: {
@@ -205,23 +208,20 @@ export function ModelActions({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={button.danger}
-          onClick={remove}
-          disabled={deleting}
-        >
-          {deleting ? "Deleting…" : "Delete"}
-        </button>
-        <button
-          type="button"
-          className={button.secondary}
-          onClick={() => setEditing(true)}
-        >
+      <Menu>
+        <MenuItem icon={<Pencil />} onSelect={() => setEditing(true)}>
           Edit details
-        </button>
-      </div>
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          icon={<Trash2 />}
+          danger
+          disabled={deleting}
+          onSelect={remove}
+        >
+          {deleting ? "Deleting…" : "Delete model"}
+        </MenuItem>
+      </Menu>
       {failure && <p className="text-xs text-danger">{failure}</p>}
       <Modal
         open={editing}

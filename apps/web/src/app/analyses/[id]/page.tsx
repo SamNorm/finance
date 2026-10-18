@@ -9,36 +9,46 @@ import {
   type AnalysisRun,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
+import { Building2, Sigma, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { Badge, Page, PageHeader } from "@/components/page";
+import { Tabs } from "@/components/tabs";
+import { formatDate, formatDay, formatFigure } from "@/lib/format";
+import { getContext, getDb } from "@/lib/server";
 import { AnalysisActions } from "../_components/analysis-actions";
 import { AnalysisCharts } from "../_components/analysis-charts";
 import { AnalysisSettings } from "../_components/analysis-settings";
+import { CovenantSummary } from "../_components/covenant-summary";
 import { Repin } from "../_components/repin";
 import { ResultsTable } from "../_components/results-table";
-import { ScenarioBar } from "../_components/scenario-bar";
-import { formatDate, formatFigure } from "@/lib/format";
-import { getContext, getDb } from "@/lib/server";
+import {
+  BaseCase,
+  ScenarioEditor,
+  ScenarioSwitcher,
+} from "../_components/scenario-bar";
 
 export const metadata: Metadata = { title: "Analysis" };
 
-export default function Page({
+export default function AnalysisPage({
   params,
   searchParams,
 }: PageProps<"/analyses/[id]">) {
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6">
+    <Page wide>
       <Suspense fallback={<Loading />}>
         <AnalysisView params={params} searchParams={searchParams} />
       </Suspense>
-    </div>
+    </Page>
   );
 }
 
 type Props = Pick<PageProps<"/analyses/[id]">, "params" | "searchParams">;
 
+// The scenario picked above the tabs applies to all of them: its results,
+// its charts, and its assumptions and project.
 async function AnalysisView({ params, searchParams }: Props) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
   const db = getDb();
@@ -64,40 +74,71 @@ async function AnalysisView({ params, searchParams }: Props) {
   const sides = balanceSheetSides(scoringItems);
   const lastActual = results.base.periods.findLast((p) => !p.projection);
   const { longTermDebt, currentDebt, cash } = scoringModel.financingItems;
+  const assumptions = detail.lines.filter((l) => l.kind === "assumption");
+  const scenarios = detail.scenarios.map((s) => ({
+    id: s.id,
+    name: s.name,
+    overrides: s.overrides,
+    project: s.project,
+  }));
+  const empty = (
+    <p className="rounded-xl border border-dashed border-line-strong px-6 py-12 text-center text-sm text-muted">
+      {entity.name} has no periods in this analysis. Add figures on the{" "}
+      <Link
+        href={`/borrowers/${entity.id}`}
+        className="text-accent hover:underline"
+      >
+        borrower&apos;s page
+      </Link>
+      .
+    </p>
+  );
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium tracking-wide text-muted uppercase">
-            <Link href="/analyses" className="hover:text-foreground">
-              Analyses
-            </Link>
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {analysis.name}
-          </h1>
-          <p className="text-sm text-muted">
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        crumbs={[{ href: "/analyses", label: "Analyses" }]}
+        title={analysis.name}
+        badges={
+          analysis.status === "completed" ? (
+            <Badge tone="success">
+              Completed {formatDay(analysis.completedAt!)}
+            </Badge>
+          ) : (
+            <Badge tone="accent">In progress</Badge>
+          )
+        }
+        meta={
+          <>
             <Link
               href={`/borrowers/${entity.id}`}
-              className="text-accent hover:underline"
+              className="flex items-center gap-1.5 hover:text-foreground"
             >
+              <Building2 className="size-4" aria-hidden />
               {entity.name}
-            </Link>{" "}
-            ·{" "}
+            </Link>
             <Link
               href={`/financial-models/${model.id}?v=${version.number}`}
-              className="text-accent hover:underline"
+              className="flex items-center gap-1.5 hover:text-foreground"
             >
+              <Sigma className="size-4" aria-hidden />
               {model.name}
-            </Link>{" "}
-            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-xs font-medium">
-              pinned to v{version.number}
+            </Link>
+            <span title="Results come from this version, even after later ones are published.">
+              <Badge>Pinned to v{version.number}</Badge>
             </span>
-          </p>
-        </div>
-        <AnalysisActions analysis={{ id: analysis.id, name: analysis.name }} />
-      </header>
+          </>
+        }
+        actions={
+          <AnalysisActions
+            analysis={{
+              id: analysis.id,
+              name: analysis.name,
+              status: analysis.status,
+            }}
+          />
+        }
+      />
 
       {detail.newerVersion && (
         <Repin
@@ -107,82 +148,110 @@ async function AnalysisView({ params, searchParams }: Props) {
         />
       )}
 
-      <AnalysisSettings
+      <ScenarioSwitcher
         analysisId={analysis.id}
-        periods={spread.periods.map((p) => ({
-          id: p.id,
-          periodEnd: p.periodEnd,
-          months: p.months,
-          projected: p.quality === "projected",
-        }))}
-        selected={analysis.periodIds}
-        projectionMode={analysis.projectionMode}
-        projectionYears={analysis.projectionYears}
-      />
-
-      <ScenarioBar
-        analysisId={analysis.id}
-        scenarios={detail.scenarios.map((s) => ({
-          id: s.id,
-          name: s.name,
-          overrides: s.overrides,
-          project: s.project,
-        }))}
+        scenarios={scenarios}
         current={scenario?.id ?? null}
-        assumptions={detail.lines.filter((l) => l.kind === "assumption")}
-        setup={{
-          items: scoringItems
-            .filter((item) => sides.has(item.code))
-            .map((item) => ({
-              code: item.code,
-              label: item.label,
-              side: sides.get(item.code)!,
-            })),
-          canAddLoans: Boolean(longTermDebt && currentDebt && cash),
-          scoringModelId: scoringModel.id,
-          defaultClosing: lastActual ? nextMonthEnd(lastActual.end) : "",
-        }}
       />
 
-      <Breakdowns run={run} />
-
-      {run.periods.length > 0 && (
-        <AnalysisCharts
-          key={`charts:${scenario?.id ?? "base"}`}
-          analysisId={analysis.id}
-          lines={detail.lines}
-          run={run}
-          base={results.scenario ? results.base : null}
-          scenarioName={scenario?.name ?? null}
-          modelCharts={detail.modelCharts}
-          charts={analysis.charts}
-          project={results.project}
-        />
-      )}
-
-      {run.periods.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-line-strong px-6 py-12 text-center text-sm text-muted">
-          {entity.name} has no periods in this analysis. Add figures on the{" "}
-          <Link
-            href={`/borrowers/${entity.id}`}
-            className="text-accent hover:underline"
-          >
-            borrower&apos;s page
-          </Link>
-          .
-        </p>
-      ) : (
-        <ResultsTable
-          key={scenario?.id ?? "base"}
-          analysisId={analysis.id}
-          lines={detail.lines}
-          run={run}
-          base={results.scenario ? results.base : null}
-          project={results.project}
-          postProject={results.postProject}
-          scenarioName={scenario?.name ?? null}
-        />
-      )}
+      <Tabs
+        initial={typeof query.tab === "string" ? query.tab : undefined}
+        toolbar={
+          <AnalysisSettings
+            analysisId={analysis.id}
+            periods={spread.periods.map((p) => ({
+              id: p.id,
+              periodEnd: p.periodEnd,
+              months: p.months,
+              quality: p.quality,
+            }))}
+            selected={analysis.periodIds}
+            projectionMode={analysis.projectionMode}
+            projectionYears={analysis.projectionYears}
+          />
+        }
+        tabs={[
+          {
+            value: "results",
+            label: "Results",
+            alert: run.breakdowns.some((b) => !b.reconciles)
+              ? "warning"
+              : undefined,
+            content:
+              run.periods.length === 0 ? (
+                empty
+              ) : (
+                <div className="flex flex-col gap-5">
+                  <Breakdowns run={run} />
+                  <CovenantSummary
+                    lines={detail.lines}
+                    run={run}
+                    project={results.project}
+                  />
+                  <ResultsTable
+                    key={scenario?.id ?? "base"}
+                    analysisId={analysis.id}
+                    lines={detail.lines}
+                    run={run}
+                    base={results.scenario ? results.base : null}
+                    project={results.project}
+                    postProject={results.postProject}
+                    scenarioName={scenario?.name ?? null}
+                  />
+                </div>
+              ),
+          },
+          {
+            value: "charts",
+            label: "Charts",
+            count: detail.modelCharts.length + analysis.charts.length,
+            content:
+              run.periods.length === 0 ? (
+                empty
+              ) : (
+                <AnalysisCharts
+                  key={`charts:${scenario?.id ?? "base"}`}
+                  analysisId={analysis.id}
+                  lines={detail.lines}
+                  run={run}
+                  base={results.scenario ? results.base : null}
+                  scenarioName={scenario?.name ?? null}
+                  modelCharts={detail.modelCharts}
+                  charts={analysis.charts}
+                  project={results.project}
+                />
+              ),
+          },
+          {
+            value: "scenario",
+            label: "Assumptions & project",
+            content: scenario ? (
+              <ScenarioEditor
+                key={scenario.id}
+                analysisId={analysis.id}
+                scenario={scenarios.find((s) => s.id === scenario.id)!}
+                assumptions={assumptions}
+                setup={{
+                  items: scoringItems
+                    .filter((item) => sides.has(item.code))
+                    .map((item) => ({
+                      code: item.code,
+                      label: item.label,
+                      side: sides.get(item.code)!,
+                    })),
+                  canAddLoans: Boolean(longTermDebt && currentDebt && cash),
+                  scoringModelId: scoringModel.id,
+                  defaultClosing: lastActual
+                    ? nextMonthEnd(lastActual.end)
+                    : "",
+                }}
+              />
+            ) : (
+              <BaseCase analysisId={analysis.id} assumptions={assumptions} />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -192,24 +261,30 @@ function Breakdowns({ run }: { run: AnalysisRun }) {
   const off = run.breakdowns.filter((b) => !b.reconciles);
   if (!off.length) return null;
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-warning/40 bg-warning-soft px-4 py-3 text-sm">
-      <p className="font-medium text-warning">
-        Breakdowns that don&apos;t add up
-      </p>
-      <ul className="flex flex-col gap-0.5 text-muted">
-        {off.map((b) => {
-          const difference = new Dec(b.difference);
-          return (
-            <li key={`${b.code}:${b.period}`}>
-              {b.label}, {formatDate(run.periods[b.period]!.end)}: the parts add
-              up to {formatFigure(b.parts, "amount")},{" "}
-              {formatFigure(difference.abs().toFixed(), "amount")}{" "}
-              {difference.isPositive() ? "less" : "more"} than the{" "}
-              {formatFigure(b.total ?? "0", "amount")} in the spread.
-            </li>
-          );
-        })}
-      </ul>
+    <div className="flex gap-3 rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm">
+      <TriangleAlert
+        className="mt-0.5 size-4 shrink-0 text-warning"
+        aria-hidden
+      />
+      <div className="flex flex-col gap-1">
+        <p className="font-medium text-warning">
+          Breakdowns that don&apos;t add up
+        </p>
+        <ul className="flex flex-col gap-0.5 text-muted">
+          {off.map((b) => {
+            const difference = new Dec(b.difference);
+            return (
+              <li key={`${b.code}:${b.period}`}>
+                {b.label}, {formatDate(run.periods[b.period]!.end)}: the parts
+                add up to {formatFigure(b.parts, "amount")},{" "}
+                {formatFigure(difference.abs().toFixed(), "amount")}{" "}
+                {difference.isPositive() ? "less" : "more"} than the{" "}
+                {formatFigure(b.total ?? "0", "amount")} in the spread.
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -222,11 +297,14 @@ function nextMonthEnd(date: string) {
 
 function Loading() {
   return (
-    <div className="flex animate-pulse flex-col gap-4" aria-label="Loading">
-      <div className="h-3 w-20 rounded bg-surface-2" />
-      <div className="h-7 w-80 rounded bg-surface-2" />
-      <div className="h-10 w-full rounded bg-surface-2" />
-      <div className="h-96 w-full rounded-lg bg-surface-2" />
+    <div className="flex animate-pulse flex-col gap-6" aria-label="Loading">
+      <div className="flex flex-col gap-2">
+        <div className="h-3 w-20 rounded bg-surface-2" />
+        <div className="h-7 w-80 rounded bg-surface-2" />
+        <div className="h-4 w-96 rounded bg-surface-2" />
+      </div>
+      <div className="h-10 w-full max-w-2xl rounded-lg bg-surface-2" />
+      <div className="h-96 w-full rounded-xl bg-surface-2" />
     </div>
   );
 }

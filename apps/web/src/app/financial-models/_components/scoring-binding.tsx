@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { setScoringVersionAction } from "../actions";
 
@@ -8,31 +9,42 @@ import { setScoringVersionAction } from "../actions";
 export function ScoringBinding({
   versionId,
   editable,
+  scoringModelId,
   label,
   bound,
   options,
 }: {
   versionId: string;
   editable: boolean;
+  scoringModelId: string;
   label: string;
   bound: { id: string; number: number };
   options: { id: string; number: number }[];
 }) {
   const [pending, startTransition] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
+  const name = (
+    <Link
+      href={`/scoring-models/${scoringModelId}`}
+      className="text-accent hover:underline"
+    >
+      {label}
+    </Link>
+  );
   if (!editable) {
     return (
-      <p className="text-sm text-muted">
-        Built on {label} v{bound.number}
-      </p>
+      <span>
+        Built on {name} v{bound.number}
+      </span>
     );
   }
   return (
-    <label className="flex items-center gap-2 text-sm text-muted">
-      Built on {label}
+    <span className="flex items-center gap-1.5">
+      Built on {name}
       <select
         value={bound.id}
         disabled={pending}
+        aria-label={`${label} version`}
         onChange={(e) => {
           const next = e.target.value;
           setFailure(null);
@@ -41,7 +53,7 @@ export function ScoringBinding({
             if (!result.ok) setFailure(result.message);
           });
         }}
-        className="rounded-md border border-line bg-surface px-2 py-1 text-sm text-foreground"
+        className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-sm text-foreground"
       >
         {!options.some((o) => o.id === bound.id) && (
           <option value={bound.id}>v{bound.number}</option>
@@ -53,6 +65,6 @@ export function ScoringBinding({
         ))}
       </select>
       {failure && <span className="text-danger">{failure}</span>}
-    </label>
+    </span>
   );
 }

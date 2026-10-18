@@ -1,19 +1,47 @@
+export type NavIcon =
+  "overview" | "borrowers" | "analyses" | "scoring" | "financial";
+
 export interface NavItem {
   href: string;
   label: string;
+  icon: NavIcon;
 }
 
-export const navItems = (modelsLabel: string): NavItem[] => [
-  { href: "/", label: "Overview" },
-  { href: "/scoring-models", label: modelsLabel },
-  { href: "/financial-models", label: "Financial models" },
-  { href: "/borrowers", label: "Borrowers" },
-  { href: "/analyses", label: "Analyses" },
+export interface NavSection {
+  label: string;
+  // Who looks after the section, when it isn't everyone.
+  owner?: string;
+  items: NavItem[];
+}
+
+// Analysts work on borrowers and analyses. The models those run on are set
+// up by the organization's administrators or power users, and published for
+// everyone to use.
+export const navSections = (modelsLabel: string): NavSection[] => [
+  {
+    label: "Workspace",
+    items: [
+      { href: "/", label: "Overview", icon: "overview" },
+      { href: "/borrowers", label: "Borrowers", icon: "borrowers" },
+      { href: "/analyses", label: "Analyses", icon: "analyses" },
+    ],
+  },
+  {
+    label: "Model setup",
+    owner: "Admin",
+    items: [
+      { href: "/scoring-models", label: modelsLabel, icon: "scoring" },
+      {
+        href: "/financial-models",
+        label: "Financial models",
+        icon: "financial",
+      },
+    ],
+  },
 ];
 
-// On narrow screens the links scroll sideways inside the header.
-export const navClass =
-  "flex h-full min-w-0 flex-1 items-center gap-5 overflow-x-auto text-sm [scrollbar-width:none]";
+// Labels show in the full sidebar, not in the icon rail.
+export const wide = "hidden lg:inline lg:collapsed:hidden";
 
-export const navLinkClass =
-  "flex h-full shrink-0 items-center border-b-2 border-transparent text-muted hover:text-foreground aria-[current=page]:border-accent aria-[current=page]:font-medium aria-[current=page]:text-foreground";
+export const isCurrent = (href: string, pathname: string) =>
+  href === "/" ? pathname === "/" : pathname.startsWith(href);

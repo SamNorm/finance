@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { setFinancingItemsAction } from "../actions";
 
@@ -50,57 +51,54 @@ export function FinancingItems({
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-sm font-semibold">New loans post to</h2>
-        <p className="text-xs text-muted">
-          Post-project balance sheets put a project&apos;s new loans here, split
-          between the portion due within a year and the rest, and take their
-          repayments out of cash in projected years.
-        </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {FIELDS.map((field) => (
-          <label key={field.key} className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted">
-              {field.label}
-            </span>
-            <select
-              value={chosen[field.key]}
-              onChange={(e) =>
-                setChosen((c) => ({ ...c, [field.key]: e.target.value }))
-              }
-              className={input}
-            >
-              <option value="">Not set</option>
-              {items
-                .filter((item) => item.side === field.side)
-                .map((item) => (
-                  <option key={item.code} value={item.code}>
-                    {item.label} ({item.code})
-                  </option>
-                ))}
-            </select>
-          </label>
-        ))}
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className={button.secondary}
-          onClick={save}
-          disabled={pending}
-        >
-          {pending ? "Saving…" : "Save"}
-        </button>
-        {feedback && (
-          <span
-            className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
+    <Card
+      title="New loans post to"
+      description="Post-project balance sheets put a project's new loans here, split between the portion due within a year and the rest, and take their repayments out of cash in projected years."
+    >
+      <div className="flex flex-col gap-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {FIELDS.map((field) => (
+            <label key={field.key} className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-muted">
+                {field.label}
+              </span>
+              <select
+                value={chosen[field.key]}
+                onChange={(e) =>
+                  setChosen((c) => ({ ...c, [field.key]: e.target.value }))
+                }
+                className={input}
+              >
+                <option value="">Not set</option>
+                {items
+                  .filter((item) => item.side === field.side)
+                  .map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.label} ({item.code})
+                    </option>
+                  ))}
+              </select>
+            </label>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={button.secondary}
+            onClick={save}
+            disabled={pending}
           >
-            {feedback.message}
-          </span>
-        )}
+            {pending ? "Saving…" : "Save"}
+          </button>
+          {feedback && (
+            <span
+              className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
+            >
+              {feedback.message}
+            </span>
+          )}
+        </div>
       </div>
-    </section>
+    </Card>
   );
 }

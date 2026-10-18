@@ -7,7 +7,7 @@ import { DATA_TYPES, KINDS, STATEMENTS } from "@/lib/labels";
 import { moveItemAction } from "../actions";
 import { ImportDialog } from "./import-dialog";
 import { ItemDrawer, type Editing } from "./item-drawer";
-import { button } from "@/components/styles";
+import { button, card } from "@/components/styles";
 import { Icon } from "@/components/ui";
 
 // The items of one version, one statement at a time, laid out like the source
@@ -84,7 +84,7 @@ export function ItemsWorkspace({
   const endOfStatement = rows.length ? rows.at(-1)!.index + 1 : items.length;
 
   return (
-    <section className="overflow-hidden rounded-lg border border-line bg-surface">
+    <section className={`${card} overflow-hidden`}>
       <div className="flex flex-wrap items-center gap-x-2 border-b border-line px-2">
         <nav className="flex overflow-x-auto" aria-label="Statements">
           {STATEMENTS.map(({ value, label }) => (
@@ -95,7 +95,7 @@ export function ItemsWorkspace({
               className="flex items-center gap-2 border-b-2 border-transparent px-3 py-2.5 text-sm whitespace-nowrap text-muted hover:text-foreground aria-[current=page]:border-accent aria-[current=page]:font-medium aria-[current=page]:text-foreground"
             >
               {label}
-              <span className="rounded bg-surface-2 px-1.5 text-xs tabular-nums">
+              <span className="rounded-full bg-surface-2 px-1.5 text-[11px] font-medium text-muted tabular-nums">
                 {counts[value].items}
               </span>
               {counts[value].errors > 0 && (
@@ -158,9 +158,9 @@ export function ItemsWorkspace({
         <div className="overflow-x-auto">
           <table className={`w-full text-sm ${moving ? "opacity-60" : ""}`}>
             <thead>
-              <tr className="border-b border-line text-left text-xs text-muted">
+              <tr className="border-b border-line bg-surface-2/50 text-left text-xs text-muted">
                 <th className="w-7" />
-                <th className="py-2 pr-2 pl-2 font-medium">Label</th>
+                <th className="py-2.5 pr-2 pl-2 font-medium">Label</th>
                 <th className="w-64 px-2 font-medium">Code</th>
                 <th className="w-24 px-2 font-medium">Kind</th>
                 <th className="w-24 px-2 font-medium">Data type</th>

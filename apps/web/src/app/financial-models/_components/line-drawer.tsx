@@ -182,7 +182,9 @@ function LineForm({
         className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4"
       >
         {lineIssues.length > 0 && (
-          <div className="rounded-md border border-line bg-surface-2 p-3">
+          <div
+            className={`rounded-lg border p-3 ${lineIssues.some((i) => i.severity === "error") ? "border-danger/30 bg-danger-soft/40" : "border-warning/30 bg-warning-soft/40"}`}
+          >
             <IssueList issues={lineIssues} />
           </div>
         )}

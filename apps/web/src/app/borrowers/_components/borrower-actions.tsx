@@ -1,17 +1,21 @@
 "use client";
 
+import { Pencil, Trash2 } from "lucide-react";
 import {
   startTransition,
   useActionState,
   useState,
   useTransition,
 } from "react";
+import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button } from "@/components/styles";
 import { keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
 import { deleteEntityAction, updateEntityAction } from "../actions";
 import { BorrowerFields, type ScoringModelOption } from "./new-borrower";
 
+// The borrower's less frequent actions, behind the "…" button. The dialog
+// sits outside the menu: a menu's portal would be inert under it.
 export function BorrowerActions({
   entity,
   scoringModels,
@@ -44,6 +48,7 @@ export function BorrowerActions({
   function remove() {
     if (!confirm(`Delete ${entity.name} with all its periods and figures?`))
       return;
+    setFailure(null);
     startDelete(async () => {
       const result = await deleteEntityAction(entity.id);
       if (!result.ok) setFailure(result.message);
@@ -51,25 +56,24 @@ export function BorrowerActions({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={button.danger}
-          onClick={remove}
-          disabled={deleting}
-        >
-          {deleting ? "Deleting…" : "Delete"}
-        </button>
-        <button
-          type="button"
-          className={button.secondary}
-          onClick={() => setEditing(true)}
-        >
+    <>
+      <Menu label="Borrower actions">
+        <MenuItem icon={<Pencil />} onSelect={() => setEditing(true)}>
           Edit details
-        </button>
-      </div>
-      {failure && <p className="text-xs text-danger">{failure}</p>}
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          icon={<Trash2 />}
+          danger
+          disabled={deleting}
+          onSelect={remove}
+        >
+          {deleting ? "Deleting…" : "Delete borrower"}
+        </MenuItem>
+      </Menu>
+      {failure && (
+        <p className="w-full text-right text-xs text-danger">{failure}</p>
+      )}
       <Modal
         open={editing}
         onClose={() => setEditing(false)}
@@ -103,6 +107,6 @@ export function BorrowerActions({
           </div>
         </form>
       </Modal>
-    </div>
+    </>
   );
 }

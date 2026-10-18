@@ -1,6 +1,7 @@
 "use client";
 
 import type { PastePreview, StatementQuality } from "@finance/domain";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 import { startTransition, useState, useTransition } from "react";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
@@ -121,8 +122,13 @@ export function PasteDialog({
         </div>
 
         {checked && (
-          <div className="flex flex-col gap-4 rounded-md border border-line p-3">
-            <p className="text-sm">
+          <div className="flex flex-col gap-4 rounded-lg border border-line bg-surface-2/40 p-3">
+            <p className="flex items-center gap-2 text-sm">
+              {checked.canImport ? (
+                <CircleCheck className="size-4 text-success" aria-hidden />
+              ) : (
+                <TriangleAlert className="size-4 text-warning" aria-hidden />
+              )}
               <span className="font-medium">
                 {checked.matched} lines matched
               </span>

@@ -2,10 +2,14 @@
 
 import type { ModelLine, Project } from "@finance/domain";
 import { Dec } from "@finance/engine";
+import { Copy, Landmark, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
+import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
+import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
-import { Field, Icon, keepFields, Modal } from "@/components/ui";
+import { Field, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
 import { formatFigure } from "@/lib/format";
 import {
@@ -23,7 +27,7 @@ import {
   type ProjectDraft,
 } from "./project-editor";
 
-interface ScenarioOption {
+export interface ScenarioOption {
   id: string;
   name: string;
   overrides: Record<string, string>;
@@ -40,19 +44,66 @@ export interface ProjectSetup {
 
 // The base case, the borrower as is, and the analysis's scenarios: each
 // overrides assumptions, such as revenue growth of -15%, and can finance a
-// project, shown in post-project columns.
-export function ScenarioBar({
+// project, shown in post-project columns. Switching keeps the open tab.
+export function ScenarioSwitcher({
   analysisId,
   scenarios,
   current,
-  assumptions,
-  setup,
 }: {
   analysisId: string;
   scenarios: ScenarioOption[];
   current: string | null;
-  assumptions: ModelLine[];
-  setup: ProjectSetup;
+}) {
+  const params = useSearchParams();
+  const href = (id: string | null) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set("scenario", id);
+    else next.delete("scenario");
+    return `?${next}`;
+  };
+  const pill =
+    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm whitespace-nowrap text-muted hover:bg-surface-2 hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-medium aria-[current=page]:text-accent-fg aria-[current=page]:shadow-xs";
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="text-xs font-medium tracking-wide text-muted uppercase">
+        Scenario
+      </span>
+      <nav
+        aria-label="Scenarios"
+        className="flex max-w-full gap-1 overflow-x-auto rounded-lg border border-line bg-surface p-1 shadow-xs [scrollbar-width:none]"
+      >
+        <Link
+          href={href(null)}
+          aria-current={current === null ? "page" : undefined}
+          className={pill}
+        >
+          Base case
+        </Link>
+        {scenarios.map((s) => (
+          <Link
+            key={s.id}
+            href={href(s.id)}
+            aria-current={s.id === current ? "page" : undefined}
+            className={pill}
+            title={s.project ? "Finances a project" : undefined}
+          >
+            {s.project && <Landmark className="size-3.5" aria-hidden />}
+            {s.name}
+          </Link>
+        ))}
+      </nav>
+      <NewScenario analysisId={analysisId} />
+    </div>
+  );
+}
+
+export function NewScenario({
+  analysisId,
+  primary = false,
+}: {
+  analysisId: string;
+  primary?: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [state, formAction, pending] = useActionState(
@@ -60,49 +111,16 @@ export function ScenarioBar({
       addScenarioAction(analysisId, form),
     null,
   );
-  const scenario = scenarios.find((s) => s.id === current) ?? null;
-  const tab =
-    "rounded-md border border-transparent px-3 py-1 text-sm hover:bg-surface-2 aria-[current=page]:border-line aria-[current=page]:bg-surface aria-[current=page]:font-medium aria-[current=page]:shadow-xs";
-
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-1 border-b border-line pb-3">
-        <span className="mr-2 text-sm text-muted">Scenario</span>
-        <Link
-          href="?"
-          aria-current={current === null ? "page" : undefined}
-          className={tab}
-        >
-          Base case
-        </Link>
-        {scenarios.map((s) => (
-          <Link
-            key={s.id}
-            href={`?scenario=${s.id}`}
-            aria-current={s.id === current ? "page" : undefined}
-            className={tab}
-          >
-            {s.name}
-          </Link>
-        ))}
-        <button
-          type="button"
-          className={`${button.ghost} ml-1`}
-          onClick={() => setAdding(true)}
-        >
-          <Icon name="plus" />
-          Scenario
-        </button>
-      </div>
-      {scenario && (
-        <ScenarioEditor
-          key={scenario.id}
-          analysisId={analysisId}
-          scenario={scenario}
-          assumptions={assumptions}
-          setup={setup}
-        />
-      )}
+    <>
+      <button
+        type="button"
+        className={primary ? button.primary : button.ghost}
+        onClick={() => setAdding(true)}
+      >
+        <Plus />
+        New scenario
+      </button>
       <Modal
         open={adding}
         onClose={() => setAdding(false)}
@@ -140,7 +158,7 @@ export function ScenarioBar({
           </div>
         </form>
       </Modal>
-    </div>
+    </>
   );
 }
 
@@ -150,7 +168,54 @@ function display(raw: string | null | undefined, format: ModelLine["format"]) {
   return format === "percent" ? `${new Dec(raw).times(100).toString()}%` : raw;
 }
 
-function ScenarioEditor({
+// An assumption's base case value, as the model sets it.
+const baseValue = (a: ModelLine) =>
+  formatFigure(
+    a.defaultValue === "TRUE"
+      ? "true"
+      : a.defaultValue === "FALSE"
+        ? "false"
+        : a.defaultValue,
+    a.format,
+  ) || "blank";
+
+// The base case's assumptions, which scenarios change.
+export function BaseCase({
+  analysisId,
+  assumptions,
+}: {
+  analysisId: string;
+  assumptions: ModelLine[];
+}) {
+  return (
+    <Card
+      title="Base case"
+      description="The borrower as is: the model's assumptions and no project. A scenario overrides the assumptions that change and can finance a project."
+      actions={<NewScenario analysisId={analysisId} primary />}
+    >
+      {assumptions.length ? (
+        <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+          {assumptions.map((a) => (
+            <div
+              key={a.code}
+              className="flex items-baseline justify-between gap-3 border-b border-line/70 pb-2"
+            >
+              <dt className="text-sm text-muted">{a.label}</dt>
+              <dd className="text-sm font-medium tabular-nums">
+                {baseValue(a)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-sm text-muted">The model has no assumptions.</p>
+      )}
+    </Card>
+  );
+}
+
+// A scenario's assumption overrides and project, saved together.
+export function ScenarioEditor({
   analysisId,
   scenario,
   assumptions,
@@ -161,27 +226,34 @@ function ScenarioEditor({
   assumptions: ModelLine[];
   setup: ProjectSetup;
 }) {
-  const [values, setValues] = useState<Record<string, string>>(() =>
+  const typed = () =>
     Object.fromEntries(
       assumptions.map((a) => [
         a.code,
         display(scenario.overrides[a.code], a.format),
       ]),
-    ),
-  );
+    );
+  const [values, setValues] = useState<Record<string, string>>(typed);
   const [project, setProject] = useState<ProjectDraft>(() =>
     toDraft(scenario.project),
   );
   // The saved project shows as a sources and uses table until edited.
   const [editing, setEditing] = useState(!scenario.project);
-  // Adjustments saved from a loan's schedule change the saved project; while
-  // it isn't being edited, the draft follows.
-  const savedProject = JSON.stringify(scenario.project);
-  const [synced, setSynced] = useState(savedProject);
-  if (synced !== savedProject) {
-    setSynced(savedProject);
+  // Once saved, show the overrides as the server keeps them. Adjustments
+  // saved from a loan's schedule change the saved project; while it isn't
+  // being edited, the draft follows.
+  const saved = JSON.stringify([scenario.overrides, scenario.project]);
+  const [synced, setSynced] = useState(saved);
+  if (synced !== saved) {
+    setSynced(saved);
+    setValues(typed());
     if (!editing) setProject(toDraft(scenario.project));
   }
+  const dirty =
+    JSON.stringify(values) !== JSON.stringify(typed()) ||
+    (editing &&
+      JSON.stringify(toInput(project)) !==
+        JSON.stringify(toInput(toDraft(scenario.project))));
   const [pending, startTransition] = useTransition();
   const [deleting, startDelete] = useTransition();
   const [copying, startCopy] = useTransition();
@@ -204,7 +276,7 @@ function ScenarioEditor({
       startTransition(() => {
         setFeedback(
           result.ok
-            ? { ok: true, message: "Saved." }
+            ? { ok: true, message: "Saved. Results and charts are updated." }
             : { ok: false, message: result.message },
         );
         if (result.ok && toInput(project)) setEditing(false);
@@ -212,76 +284,109 @@ function ScenarioEditor({
     });
   }
 
+  const overridden = assumptions.filter((a) => values[a.code]?.trim()).length;
+
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4">
-      <p className="text-sm text-muted">
-        Override the assumptions that change in{" "}
-        <span className="font-medium text-foreground">{scenario.name}</span> and
-        set up the project it finances. Blank keeps the base case, the borrower
-        as is. With a project, post-project columns sit next to the last fiscal
-        year, and next to any other period you add them to.
-      </p>
-      <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-        {assumptions.map((a) => (
-          <label key={a.code} className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted">
-              {a.label}{" "}
-              <span className="font-normal">
-                · base{" "}
-                {formatFigure(
-                  a.defaultValue === "TRUE"
-                    ? "true"
-                    : a.defaultValue === "FALSE"
-                      ? "false"
-                      : a.defaultValue,
-                  a.format,
-                ) || "blank"}
-              </span>
-            </span>
-            <input
-              value={values[a.code] ?? ""}
-              onChange={(e) =>
-                setValues((v) => ({ ...v, [a.code]: e.target.value }))
+    <div className="flex flex-col gap-5">
+      <Card
+        title="Assumptions"
+        description={`Override what changes in ${scenario.name}. Blank keeps the base case.${overridden ? ` ${overridden} overridden.` : ""}`}
+        actions={
+          <Menu label="Scenario actions">
+            <MenuItem
+              icon={<Copy />}
+              disabled={copying}
+              onSelect={() =>
+                startCopy(async () => {
+                  const result = await duplicateScenarioAction(
+                    analysisId,
+                    scenario.id,
+                  );
+                  if (!result.ok)
+                    setFeedback({ ok: false, message: result.message });
+                })
               }
-              placeholder="Base case"
-              className={input}
-            />
-          </label>
-        ))}
-      </div>
-      <div className="flex flex-col gap-3 border-t border-line pt-3">
+            >
+              Duplicate scenario
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              icon={<Trash2 />}
+              danger
+              disabled={deleting}
+              onSelect={() => {
+                if (!confirm(`Delete the scenario "${scenario.name}"?`)) return;
+                startDelete(async () => {
+                  const result = await deleteScenarioAction(
+                    analysisId,
+                    scenario.id,
+                  );
+                  if (!result.ok)
+                    setFeedback({ ok: false, message: result.message });
+                });
+              }}
+            >
+              Delete scenario
+            </MenuItem>
+          </Menu>
+        }
+      >
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+          {assumptions.map((a) => (
+            <label key={a.code} className="flex flex-col gap-1">
+              <span className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="font-medium">{a.label}</span>
+                <span className="text-muted">base {baseValue(a)}</span>
+              </span>
+              <input
+                value={values[a.code] ?? ""}
+                onChange={(e) =>
+                  setValues((v) => ({ ...v, [a.code]: e.target.value }))
+                }
+                placeholder="Base case"
+                className={`${input} ${values[a.code]?.trim() ? "border-accent/50 bg-accent-soft/40" : ""}`}
+              />
+            </label>
+          ))}
+        </div>
+      </Card>
+
+      <Card
+        title="Project"
+        description="Sources and uses at closing, plus line of credit increases and subordinations. Results show it in post-project columns."
+        actions={
+          scenario.project &&
+          !editing && (
+            <button
+              type="button"
+              className={button.secondary}
+              onClick={() => setEditing(true)}
+            >
+              <Pencil />
+              Edit project
+            </button>
+          )
+        }
+      >
         {scenario.project && !editing ? (
-          <>
-            <SourcesUses
-              project={scenario.project}
-              items={setup.items}
-              scenarioId={scenario.id}
-            />
-            <div>
-              <button
-                type="button"
-                className={button.secondary}
-                onClick={() => setEditing(true)}
-              >
-                Edit project
-              </button>
-            </div>
-          </>
+          <SourcesUses
+            project={scenario.project}
+            items={setup.items}
+            scenarioId={scenario.id}
+          />
         ) : (
-          <>
-            <p className="text-sm font-medium">Project</p>
-            <ProjectEditor
-              draft={project}
-              items={setup.items}
-              canAddLoans={setup.canAddLoans}
-              scoringModelId={setup.scoringModelId}
-              defaultClosing={setup.defaultClosing}
-              onChange={setProject}
-            />
-          </>
+          <ProjectEditor
+            draft={project}
+            items={setup.items}
+            canAddLoans={setup.canAddLoans}
+            scoringModelId={setup.scoringModelId}
+            defaultClosing={setup.defaultClosing}
+            onChange={setProject}
+          />
         )}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+      </Card>
+
+      <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface/95 px-4 py-3 shadow-lg backdrop-blur">
         <button
           type="button"
           className={button.primary}
@@ -290,46 +395,16 @@ function ScenarioEditor({
         >
           {pending ? "Saving…" : "Save scenario"}
         </button>
-        <button
-          type="button"
-          className={button.secondary}
-          disabled={copying}
-          onClick={() =>
-            startCopy(async () => {
-              const result = await duplicateScenarioAction(
-                analysisId,
-                scenario.id,
-              );
-              if (!result.ok)
-                setFeedback({ ok: false, message: result.message });
-            })
-          }
-        >
-          {copying ? "Duplicating…" : "Duplicate"}
-        </button>
-        <button
-          type="button"
-          className={button.danger}
-          disabled={deleting}
-          onClick={() => {
-            if (!confirm(`Delete the scenario "${scenario.name}"?`)) return;
-            startDelete(async () => {
-              const result = await deleteScenarioAction(
-                analysisId,
-                scenario.id,
-              );
-              if (!result.ok)
-                setFeedback({ ok: false, message: result.message });
-            });
-          }}
-        >
-          Delete scenario
-        </button>
-        {feedback && (
+        {feedback ? (
           <span
             className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
           >
             {feedback.message}
+          </span>
+        ) : (
+          <span className="flex items-center gap-2 text-sm text-muted">
+            {dirty && <span className="size-2 rounded-full bg-warning" />}
+            {dirty ? "Unsaved changes" : "No changes"}
           </span>
         )}
       </div>

@@ -5,6 +5,7 @@ import { REPAYMENTS, type Adjustment } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import { useState, useTransition } from "react";
 import { LoanSchedule } from "@/components/loan-schedule";
+import { Card } from "@/components/page";
 import {
   FrequencySelect,
   MoratoriumFields,
@@ -123,17 +124,19 @@ export function DebtScheduleEditor({
   const caption = "text-xs font-medium text-muted";
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="text-sm font-semibold">Existing debt</h2>
-          <p className="text-xs text-muted">
-            The borrower&apos;s loans today. Analyses use their scheduled
-            payments for projected years and post-project debt service, as{" "}
-            <span className="font-mono">DEBT_SCHEDULE_</span> inputs.
-          </p>
-        </div>
-        {schedule.asOf && schedule.loans.length > 0 && (
+    <Card
+      flush
+      title="Existing debt"
+      description={
+        <>
+          The borrower&apos;s loans today. Analyses use their scheduled payments
+          for projected years and post-project debt service, as{" "}
+          <span className="font-mono">DEBT_SCHEDULE_</span> inputs.
+        </>
+      }
+      actions={
+        schedule.asOf &&
+        schedule.loans.length > 0 && (
           <p className="text-xs text-muted">
             {formatFigure(String(totals.balance), "amount")} owed on{" "}
             {formatDate(schedule.asOf)} · debt service over the next 12 months{" "}
@@ -141,177 +144,191 @@ export function DebtScheduleEditor({
               {formatFigure(String(totals.service), "amount")}
             </span>
           </p>
-        )}
-      </div>
+        )
+      }
+    >
+      <div className="flex flex-col gap-4 p-4">
+        <label className="flex w-48 flex-col gap-1">
+          <span className={caption}>Balances as of</span>
+          <input
+            type="date"
+            value={asOf}
+            onChange={(e) => setAsOf(e.target.value)}
+            className={input}
+          />
+        </label>
 
-      <label className="flex w-48 flex-col gap-1">
-        <span className={caption}>Balances as of</span>
-        <input
-          type="date"
-          value={asOf}
-          onChange={(e) => setAsOf(e.target.value)}
-          className={input}
-        />
-      </label>
-
-      {loans.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {loans.map((loan) => {
-            const year = loan.id ? nextYear[loan.id] : undefined;
-            // The schedule shows the loan as saved, so only while it's
-            // unchanged.
-            const saved = schedule.loans.find((l) => l.id === loan.id);
-            const unchanged =
-              !!saved &&
-              asOf === schedule.asOf &&
-              JSON.stringify(toInput(toDraft(saved))) ===
-                JSON.stringify(toInput(loan));
-            return (
-              <fieldset
-                key={loan.key}
-                className="grid grid-cols-2 gap-3 rounded-md border border-line p-3 sm:grid-cols-3 lg:grid-cols-[minmax(10rem,1.5fr)_repeat(5,minmax(6rem,1fr))_minmax(8rem,1fr)_auto]"
-              >
-                <legend className="sr-only">{loan.name || "Loan"}</legend>
-                <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
-                  <span className={caption}>Loan</span>
-                  <input
-                    value={loan.name}
-                    placeholder="Term loan, mortgage, lease…"
-                    onChange={(e) => update(loan.key, { name: e.target.value })}
-                    className={input}
+        {loans.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-line-strong px-4 py-8 text-center text-sm text-muted">
+            No existing loans. Add the borrower&apos;s term loans, mortgages and
+            leases, with what&apos;s left on them at the date above.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {loans.map((loan) => {
+              const year = loan.id ? nextYear[loan.id] : undefined;
+              // The schedule shows the loan as saved, so only while it's
+              // unchanged.
+              const saved = schedule.loans.find((l) => l.id === loan.id);
+              const unchanged =
+                !!saved &&
+                asOf === schedule.asOf &&
+                JSON.stringify(toInput(toDraft(saved))) ===
+                  JSON.stringify(toInput(loan));
+              return (
+                <fieldset
+                  key={loan.key}
+                  className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-surface-2/40 p-3 sm:grid-cols-3 lg:grid-cols-[minmax(10rem,1.5fr)_repeat(5,minmax(6rem,1fr))_minmax(8rem,1fr)_auto]"
+                >
+                  <legend className="sr-only">{loan.name || "Loan"}</legend>
+                  <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
+                    <span className={caption}>Loan</span>
+                    <input
+                      value={loan.name}
+                      placeholder="Term loan, mortgage, lease…"
+                      onChange={(e) =>
+                        update(loan.key, { name: e.target.value })
+                      }
+                      className={input}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className={caption}>Balance</span>
+                    <input
+                      value={loan.balance}
+                      inputMode="decimal"
+                      onChange={(e) =>
+                        update(loan.key, { balance: e.target.value })
+                      }
+                      className={`${input} text-right tabular-nums`}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className={caption}>Rate</span>
+                    <input
+                      value={loan.rate}
+                      placeholder="6.5%"
+                      onChange={(e) =>
+                        update(loan.key, { rate: e.target.value })
+                      }
+                      className={`${input} text-right tabular-nums`}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className={caption}>Repayment</span>
+                    <select
+                      value={loan.repayment}
+                      onChange={(e) =>
+                        update(loan.key, {
+                          repayment: e.target.value as Draft["repayment"],
+                        })
+                      }
+                      className={input}
+                    >
+                      {Object.entries(REPAYMENTS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <FrequencySelect
+                    value={loan.frequency}
+                    onChange={(frequency) => update(loan.key, { frequency })}
                   />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className={caption}>Balance</span>
-                  <input
-                    value={loan.balance}
-                    inputMode="decimal"
-                    onChange={(e) =>
-                      update(loan.key, { balance: e.target.value })
-                    }
-                    className={`${input} text-right tabular-nums`}
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className={caption}>Rate</span>
-                  <input
-                    value={loan.rate}
-                    placeholder="6.5%"
-                    onChange={(e) => update(loan.key, { rate: e.target.value })}
-                    className={`${input} text-right tabular-nums`}
-                  />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className={caption}>Repayment</span>
-                  <select
-                    value={loan.repayment}
-                    onChange={(e) =>
-                      update(loan.key, {
-                        repayment: e.target.value as Draft["repayment"],
-                      })
-                    }
-                    className={input}
-                  >
-                    {Object.entries(REPAYMENTS).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <FrequencySelect
-                  value={loan.frequency}
-                  onChange={(frequency) => update(loan.key, { frequency })}
-                />
-                <label className="flex flex-col gap-1">
-                  <span className={caption}>Years left</span>
-                  <input
-                    value={loan.repayment === "interest_only" ? "" : loan.years}
-                    disabled={loan.repayment === "interest_only"}
-                    inputMode="decimal"
-                    onChange={(e) =>
-                      update(loan.key, { years: e.target.value })
-                    }
-                    className={`${input} text-right tabular-nums`}
-                  />
-                </label>
-                <div className="flex flex-col justify-end gap-0.5 text-xs text-muted">
-                  {year ? (
-                    <>
-                      <span>Next 12 months</span>
-                      <span className="text-sm text-foreground tabular-nums">
-                        {formatFigure(
-                          String(
-                            Number(year.interest) + Number(year.principal),
-                          ),
-                          "amount",
-                        )}
-                      </span>
-                    </>
-                  ) : (
-                    <span>Save to see its debt service</span>
-                  )}
-                </div>
-                <div className="flex items-end justify-end">
-                  <button
-                    type="button"
-                    className={button.icon}
-                    title="Remove"
-                    aria-label={`Remove ${loan.name || "the loan"}`}
-                    onClick={() =>
-                      setLoans((list) => list.filter((l) => l.key !== loan.key))
-                    }
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-                <div className="col-span-full flex flex-wrap items-end gap-3">
-                  <MoratoriumFields
-                    draft={loan}
-                    left
-                    onChange={(patch) => update(loan.key, patch)}
-                  />
-                  <div className="ml-auto">
-                    {saved && schedule.asOf && unchanged ? (
-                      <LoanSchedule
-                        name={saved.name}
-                        loan={saved}
-                        start={schedule.asOf}
-                        className={button.secondary}
-                        save={(adjustments) =>
-                          saveLoanAdjustmentsAction(
-                            entityId,
-                            saved.id,
-                            adjustments,
-                          )
-                        }
-                        blocked={
-                          dirty
-                            ? "Save or undo your other changes to the existing debt first."
-                            : undefined
-                        }
-                      >
-                        Payment schedule
-                      </LoanSchedule>
+                  <label className="flex flex-col gap-1">
+                    <span className={caption}>Years left</span>
+                    <input
+                      value={
+                        loan.repayment === "interest_only" ? "" : loan.years
+                      }
+                      disabled={loan.repayment === "interest_only"}
+                      inputMode="decimal"
+                      onChange={(e) =>
+                        update(loan.key, { years: e.target.value })
+                      }
+                      className={`${input} text-right tabular-nums`}
+                    />
+                  </label>
+                  <div className="flex flex-col justify-end gap-0.5 text-xs text-muted">
+                    {year ? (
+                      <>
+                        <span>Next 12 months</span>
+                        <span className="text-sm text-foreground tabular-nums">
+                          {formatFigure(
+                            String(
+                              Number(year.interest) + Number(year.principal),
+                            ),
+                            "amount",
+                          )}
+                        </span>
+                      </>
                     ) : (
-                      <button
-                        type="button"
-                        className={button.secondary}
-                        disabled
-                        title="Save to see its schedule"
-                      >
-                        Payment schedule
-                      </button>
+                      <span>Save to see its debt service</span>
                     )}
                   </div>
-                </div>
-              </fieldset>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-end justify-end">
+                    <button
+                      type="button"
+                      className={button.icon}
+                      title="Remove"
+                      aria-label={`Remove ${loan.name || "the loan"}`}
+                      onClick={() =>
+                        setLoans((list) =>
+                          list.filter((l) => l.key !== loan.key),
+                        )
+                      }
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                  <div className="col-span-full flex flex-wrap items-end gap-3">
+                    <MoratoriumFields
+                      draft={loan}
+                      left
+                      onChange={(patch) => update(loan.key, patch)}
+                    />
+                    <div className="ml-auto">
+                      {saved && schedule.asOf && unchanged ? (
+                        <LoanSchedule
+                          name={saved.name}
+                          loan={saved}
+                          start={schedule.asOf}
+                          className={button.secondary}
+                          save={(adjustments) =>
+                            saveLoanAdjustmentsAction(
+                              entityId,
+                              saved.id,
+                              adjustments,
+                            )
+                          }
+                          blocked={
+                            dirty
+                              ? "Save or undo your other changes to the existing debt first."
+                              : undefined
+                          }
+                        >
+                          Payment schedule
+                        </LoanSchedule>
+                      ) : (
+                        <button
+                          type="button"
+                          className={button.secondary}
+                          disabled
+                          title="Save to see its schedule"
+                        >
+                          Payment schedule
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </fieldset>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface-2/40 px-4 py-3">
         <button
           type="button"
           className={button.secondary}
@@ -330,7 +347,7 @@ export function DebtScheduleEditor({
           }
         >
           <Icon name="plus" />
-          Loan
+          Add loan
         </button>
         <button
           type="button"
@@ -348,6 +365,6 @@ export function DebtScheduleEditor({
           </span>
         )}
       </div>
-    </section>
+    </Card>
   );
 }

@@ -6,6 +6,7 @@ import type {
   Statement,
   StatementQuality,
 } from "@finance/domain";
+import { ClipboardPaste } from "lucide-react";
 import Link from "next/link";
 import {
   useLayoutEffect,
@@ -15,7 +16,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import { button } from "@/components/styles";
+import { button, card } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITY_SHORT, STATEMENTS } from "@/lib/labels";
@@ -34,7 +35,8 @@ export interface GridPeriod {
 
 // The spread laid out like the scoring model: one row per item, one column per
 // period. Figures are typed in place; Enter moves down a column, as analysts
-// enter one period at a time.
+// enter one period at a time. The header row and the labels stay in view
+// while the grid scrolls, like frozen panes.
 export function SpreadGrid({
   entityId,
   items,
@@ -66,7 +68,7 @@ export function SpreadGrid({
   );
 
   return (
-    <section className="overflow-hidden rounded-lg border border-line bg-surface">
+    <section className={`${card} overflow-hidden`}>
       <div className="flex flex-wrap items-center gap-x-2 border-b border-line px-2">
         <nav className="flex overflow-x-auto" aria-label="Statements">
           {STATEMENTS.map(({ value, label }) => (
@@ -102,6 +104,9 @@ export function SpreadGrid({
 
       {periods.length === 0 ? (
         <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+          <span className="grid size-10 place-items-center rounded-full bg-surface-2 text-muted">
+            <ClipboardPaste className="size-5" aria-hidden />
+          </span>
           <p className="text-sm font-medium">No periods yet.</p>
           <p className="max-w-md text-sm text-muted">
             Paste the spread copied from the scoring system: lines match by code
@@ -126,17 +131,17 @@ export function SpreadGrid({
           </div>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="max-h-[min(78vh,64rem)] overflow-auto">
           <table className="w-full border-separate border-spacing-0 text-sm">
             <thead>
               <tr className="text-xs text-muted">
-                <th className="sticky left-0 z-10 min-w-64 border-b border-line bg-surface px-4 py-2 text-left font-medium">
+                <th className="sticky top-0 left-0 z-20 min-w-64 border-b border-line bg-surface px-4 py-2 text-left font-medium">
                   Line
                 </th>
                 {periods.map((p) => (
                   <th
                     key={p.id}
-                    className="w-36 min-w-36 border-b border-l border-line p-0 text-right font-normal"
+                    className="sticky top-0 z-10 w-36 min-w-36 border-b border-l border-line bg-surface p-0 text-right font-normal"
                   >
                     <button
                       type="button"
@@ -159,7 +164,7 @@ export function SpreadGrid({
                     </button>
                   </th>
                 ))}
-                <th className="border-b border-line" />
+                <th className="sticky top-0 border-b border-line bg-surface" />
               </tr>
             </thead>
             <tbody>

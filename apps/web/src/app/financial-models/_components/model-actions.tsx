@@ -1,11 +1,13 @@
 "use client";
 
+import { GitBranch, Pencil, Trash2 } from "lucide-react";
 import {
   startTransition,
   useActionState,
   useState,
   useTransition,
 } from "react";
+import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
@@ -15,6 +17,8 @@ import {
   updateFinancialModelAction,
 } from "../actions";
 
+// The model's less frequent actions, behind the "…" menu. Its dialogs sit
+// outside the menu: a menu's portal is inert under a modal dialog.
 export function ModelActions({
   model,
 }: {
@@ -41,6 +45,7 @@ export function ModelActions({
 
   function remove() {
     if (!confirm(`Delete ${model.name} and all its versions?`)) return;
+    setFailure(null);
     startDelete(async () => {
       const result = await deleteFinancialModelAction(model.id);
       if (!result.ok) setFailure(result.message);
@@ -48,32 +53,25 @@ export function ModelActions({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className={button.danger}
-          onClick={remove}
-          disabled={deleting}
-        >
-          {deleting ? "Deleting…" : "Delete"}
-        </button>
-        <button
-          type="button"
-          className={button.secondary}
-          onClick={() => setDialog("details")}
-        >
-          Edit details
-        </button>
-        <button
-          type="button"
-          className={button.secondary}
-          onClick={() => setDialog("variant")}
-        >
-          Duplicate as variant
-        </button>
-      </div>
+    <>
       {failure && <p className="text-xs text-danger">{failure}</p>}
+      <Menu>
+        <MenuItem icon={<Pencil />} onSelect={() => setDialog("details")}>
+          Edit details
+        </MenuItem>
+        <MenuItem icon={<GitBranch />} onSelect={() => setDialog("variant")}>
+          Duplicate as variant
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          icon={<Trash2 />}
+          danger
+          disabled={deleting}
+          onSelect={remove}
+        >
+          {deleting ? "Deleting…" : "Delete model"}
+        </MenuItem>
+      </Menu>
 
       <Modal open={dialog === "details"} onClose={close} title="Model details">
         <form onSubmit={keepFields(detailsAction)} className="flex flex-col">
@@ -152,6 +150,6 @@ export function ModelActions({
           </div>
         </form>
       </Modal>
-    </div>
+    </>
   );
 }

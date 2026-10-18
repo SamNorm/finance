@@ -2,19 +2,37 @@ import {
   balanceSheetSides,
   DomainError,
   getScoringModel,
+  listEntities,
+  listFinancialModels,
   listItems,
   validateItems,
+  type EntitySummary,
+  type FinancialModelSummary,
   type Issue,
   type ScoringModelVersion,
+  type ScoringModelWithVersions,
   type Statement,
 } from "@finance/domain";
+import { Building2, Sigma } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { IssueList } from "@/components/issue-list";
+import { IssuesSummary } from "@/components/issue-list";
+import {
+  Badge,
+  Card,
+  Page,
+  PageHeader,
+  plural,
+  VersionBadge,
+} from "@/components/page";
 import { ScoringModelSwitch } from "@/components/scoring-model-switch";
+import { rowLink, table } from "@/components/styles";
+import { Tabs } from "@/components/tabs";
 import { VersionActions } from "@/components/version-actions";
+import { VersionPicker } from "@/components/version-picker";
+import { formatDate } from "@/lib/format";
 import { inputsLabel, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
 import { ModelActions } from "../_components/create-model";
@@ -28,16 +46,16 @@ import {
 
 export const metadata: Metadata = { title: "Scoring model" };
 
-export default function Page({
+export default function ScoringModelPage({
   params,
   searchParams,
 }: PageProps<"/scoring-models/[id]">) {
   return (
-    <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6">
+    <Page wide>
       <Suspense fallback={<Loading />}>
         <ScoringModelView params={params} searchParams={searchParams} />
       </Suspense>
-    </div>
+    </Page>
   );
 }
 
@@ -57,8 +75,12 @@ async function ScoringModelView({ params: routeParams, searchParams }: Props) {
     model.versions.find((v) => String(v.number) === params.v) ??
     draft ??
     model.versions.at(-1);
-  const items = version ? await listItems(db, ctx, version.id) : [];
   const published = model.versions.findLast((v) => v.status === "published");
+  const [items, borrowers, financialModels] = await Promise.all([
+    version ? listItems(db, ctx, version.id) : [],
+    listEntities(db, ctx),
+    listFinancialModels(db, ctx),
+  ]);
   const publishedItems = published
     ? published.id === version?.id
       ? items
@@ -66,133 +88,156 @@ async function ScoringModelView({ params: routeParams, searchParams }: Props) {
     : [];
   const sides = balanceSheetSides(publishedItems);
   const issues = version?.status === "draft" ? validateItems(items) : [];
+  const errors = issues.filter((i) => i.severity === "error").length;
   const statement =
     STATEMENTS.find((s) => s.value === params.statement)?.value ??
     STATEMENTS.find((s) => items.some((item) => item.statement === s.value))
       ?.value ??
     "balance_sheet";
+  const following = borrowers.filter((b) => b.scoringModelId === model.id);
+  const builtOn = financialModels.filter((f) => f.scoringModel.id === model.id);
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium tracking-wide text-muted uppercase">
-            <Link href="/scoring-models" className="hover:text-foreground">
-              Scoring models
-            </Link>
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {model.name}
-          </h1>
-          <p className="text-sm text-muted">
-            {model.source === "mirrored"
-              ? `Mirrors ${model.sourceSystem || "an external system"}`
-              : "The organization's own input sheet, used in place of a scoring system"}
-            {model.description ? ` · ${model.description}` : ""}
-          </p>
-        </div>
-        <ModelActions
-          model={{
-            id: model.id,
-            name: model.name,
-            source: model.source,
-            sourceSystem: model.sourceSystem,
-            description: model.description,
-          }}
-        />
-      </header>
-
-      <div className="flex items-start gap-3 rounded-md bg-surface-2 p-3">
-        <ScoringModelSwitch
-          modelId={model.id}
-          source={model.source}
-          labelledBy="mirror-switch"
-        />
-        <div className="flex flex-col gap-0.5">
-          <p id="mirror-switch" className="text-sm font-medium">
-            Mirror a scoring system
-          </p>
-          <p className="text-xs text-muted">
-            {model.source === "mirrored"
-              ? `On. The inputs copy ${model.sourceSystem || "the institution's scoring system"}, so its spreads paste in with no mapping.`
-              : `Off. This is the organization's own ${inputsLabel(model.source).toLowerCase()}, for deals without a scoring system.`}{" "}
-            Switching keeps every item.
-          </p>
-        </div>
-      </div>
-
-      {published && sides.size > 0 && (
-        <FinancingItems
-          modelId={model.id}
-          values={model.financingItems}
-          items={publishedItems
-            .filter((item) => sides.has(item.code))
-            .map((item) => ({
-              code: item.code,
-              label: item.label,
-              side: sides.get(item.code)!,
-            }))}
-        />
-      )}
-
-      <div className="flex flex-wrap items-center gap-3 border-b border-line pb-3">
-        <nav className="flex flex-wrap gap-1" aria-label="Versions">
-          {model.versions.map((v) => (
-            <Link
-              key={v.id}
-              href={`?v=${v.number}`}
-              aria-current={v.id === version?.id ? "page" : undefined}
-              className="flex items-center gap-2 rounded-md border border-transparent px-2.5 py-1 text-sm hover:bg-surface-2 aria-[current=page]:border-line aria-[current=page]:bg-surface aria-[current=page]:shadow-xs"
-            >
-              <span className="font-medium">v{v.number}</span>
-              <StatusBadge status={v.status} />
-            </Link>
-          ))}
-        </nav>
-        <div className="ml-auto">
-          <VersionActions
-            key={version?.id ?? "none"}
-            version={
-              version && {
-                id: version.id,
-                number: version.number,
-                status: version.status,
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        crumbs={[{ href: "/scoring-models", label: "Scoring models" }]}
+        title={model.name}
+        badges={
+          <>
+            {model.source === "mirrored" ? (
+              <Badge tone="accent">
+                Mirrors {model.sourceSystem || "a scoring system"}
+              </Badge>
+            ) : (
+              <Badge>Input sheet</Badge>
+            )}
+            {published && (
+              <VersionBadge status="published" number={published.number} />
+            )}
+          </>
+        }
+        description={model.description}
+        actions={
+          <>
+            <VersionActions
+              key={version?.id ?? "none"}
+              version={
+                version && {
+                  id: version.id,
+                  number: version.number,
+                  status: version.status,
+                }
               }
-            }
-            draftNumber={draft?.number ?? null}
-            nextNumber={(model.versions.at(-1)?.number ?? 0) + 1}
-            publishBlocker={publishBlocker(items.length, issues)}
-            publishNote="A published version is frozen. Financial models and analyses that use it keep working exactly as they do today. Later changes go into a new draft."
-            publishAction={publishAction}
-            createDraftAction={createDraftAction.bind(null, model.id)}
-            discardDraftAction={discardDraftAction.bind(null, model.id)}
-          />
-        </div>
-      </div>
+              draftNumber={draft?.number ?? null}
+              nextNumber={(model.versions.at(-1)?.number ?? 0) + 1}
+              publishBlocker={publishBlocker(items.length, issues)}
+              publishNote="A published version is frozen. Financial models and analyses that use it keep working exactly as they do today. Later changes go into a new draft."
+              publishAction={publishAction}
+              createDraftAction={createDraftAction.bind(null, model.id)}
+              discardDraftAction={discardDraftAction.bind(null, model.id)}
+            />
+            <ModelActions
+              model={{
+                id: model.id,
+                name: model.name,
+                source: model.source,
+                sourceSystem: model.sourceSystem,
+                description: model.description,
+              }}
+            />
+          </>
+        }
+      />
 
-      {version ? (
-        <>
-          <VersionStatus
-            version={version}
-            issues={issues}
-            itemCount={items.length}
-          />
-          <ItemsWorkspace
-            key={version.id}
-            modelId={model.id}
-            version={{ id: version.id, number: version.number }}
-            editable={version.status === "draft"}
-            items={items}
-            issues={issues}
-            statement={statement}
-            counts={countByStatement(items, issues)}
-          />
-        </>
-      ) : (
-        <p className="py-16 text-center text-sm text-muted">
-          The model has no versions. Create a draft to start.
-        </p>
-      )}
+      <Tabs
+        initial={typeof params.tab === "string" ? params.tab : undefined}
+        tabs={[
+          {
+            value: "items",
+            label: "Items",
+            count: items.length,
+            alert: errors ? "error" : issues.length ? "warning" : undefined,
+            content: version ? (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <VersionPicker
+                    current={version.number}
+                    versions={model.versions.map((v) => ({
+                      number: v.number,
+                      status: v.status,
+                      publishedAt: isoDate(v.publishedAt),
+                    }))}
+                  />
+                  <VersionStatus
+                    version={version}
+                    issues={issues}
+                    itemCount={items.length}
+                  />
+                </div>
+                {issues.length > 0 && (
+                  <IssuesSummary
+                    issues={issues}
+                    note={
+                      errors
+                        ? "Fix errors before publishing."
+                        : "Warnings don't block publishing."
+                    }
+                  />
+                )}
+                <ItemsWorkspace
+                  key={version.id}
+                  modelId={model.id}
+                  version={{ id: version.id, number: version.number }}
+                  editable={version.status === "draft"}
+                  items={items}
+                  issues={issues}
+                  statement={statement}
+                  counts={countByStatement(items, issues)}
+                />
+              </div>
+            ) : (
+              <p className="py-16 text-center text-sm text-muted">
+                The model has no versions. Create a draft to start.
+              </p>
+            ),
+          },
+          {
+            value: "settings",
+            label: "Settings",
+            content: (
+              <Settings
+                model={model}
+                published={published}
+                items={publishedItems
+                  .filter((item) => sides.has(item.code))
+                  .map((item) => ({
+                    code: item.code,
+                    label: item.label,
+                    side: sides.get(item.code)!,
+                  }))}
+              />
+            ),
+          },
+          {
+            value: "versions",
+            label: "Versions",
+            count: model.versions.length,
+            content: <Versions versions={model.versions} shown={version} />,
+          },
+          {
+            value: "usage",
+            label: "Usage",
+            count: following.length + builtOn.length,
+            content: (
+              <Usage
+                model={model}
+                borrowers={following}
+                financialModels={builtOn}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -211,71 +256,238 @@ function VersionStatus({
       <p className="text-sm text-muted">
         {version.status === "published" ? "Published" : "Retired"}
         {version.publishedAt
-          ? ` ${formatDate(version.publishedAt)}`
-          : ""} · {itemCount} items · Read-only
+          ? ` ${formatDate(isoDate(version.publishedAt)!)}`
+          : ""}{" "}
+        · {plural(itemCount, "item")} · Read-only
         {version.notes ? ` · ${version.notes}` : ""}
       </p>
     );
   }
-  const errors = issues.filter((i) => i.severity === "error");
-  const warnings = issues.filter((i) => i.severity === "warning");
-  if (!issues.length) {
-    return (
-      <p className="text-sm text-muted">
-        Draft · {itemCount} items ·{" "}
-        {itemCount ? (
-          <span className="text-success">Ready to publish</span>
-        ) : (
-          "Empty"
-        )}
-      </p>
-    );
-  }
+  const errors = issues.some((i) => i.severity === "error");
   return (
-    <details className="group rounded-lg border border-line bg-surface">
-      <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-2.5 text-sm">
-        <span className="text-muted">Draft · {itemCount} items</span>
-        {errors.length > 0 && (
-          <span className="rounded bg-danger-soft px-1.5 py-0.5 font-medium text-danger">
-            {plural(errors.length, "error")}
-          </span>
-        )}
-        {warnings.length > 0 && (
-          <span className="rounded bg-warning-soft px-1.5 py-0.5 font-medium text-warning">
-            {plural(warnings.length, "warning")}
-          </span>
-        )}
-        <span className="text-muted">
-          {errors.length
-            ? "Fix errors before publishing."
-            : "Warnings don't block publishing."}
-        </span>
-        <span className="ml-auto text-xs text-muted group-open:hidden">
-          Show
-        </span>
-        <span className="ml-auto hidden text-xs text-muted group-open:inline">
-          Hide
-        </span>
-      </summary>
-      <div className="border-t border-line px-4 py-3">
-        <IssueList issues={issues} />
-      </div>
-    </details>
+    <p className="text-sm text-muted">
+      Draft · {plural(itemCount, "item")}
+      {itemCount === 0 ? (
+        " · Empty"
+      ) : !errors ? (
+        <span className="text-success"> · Ready to publish</span>
+      ) : null}
+    </p>
   );
 }
 
-function StatusBadge({ status }: { status: ScoringModelVersion["status"] }) {
-  const styles = {
-    draft: "bg-accent-soft text-accent",
-    published: "bg-success-soft text-success",
-    retired: "bg-surface-2 text-muted",
-  };
+// Where the model's inputs come from, and where new loans post.
+function Settings({
+  model,
+  published,
+  items,
+}: {
+  model: ScoringModelWithVersions;
+  published: ScoringModelVersion | undefined;
+  items: { code: string; label: string; side: "assets" | "claims" }[];
+}) {
   return (
-    <span
-      className={`rounded px-1.5 py-px text-[11px] font-medium capitalize ${styles[status]}`}
+    <div className="flex max-w-4xl flex-col gap-5">
+      <Card
+        title="Source"
+        description="Whether the inputs copy an institution's scoring system or are the organization's own."
+      >
+        <div className="flex items-start gap-3">
+          <ScoringModelSwitch
+            modelId={model.id}
+            source={model.source}
+            labelledBy="mirror-switch"
+          />
+          <div className="flex flex-col gap-0.5">
+            <p id="mirror-switch" className="text-sm font-medium">
+              Mirror a scoring system
+            </p>
+            <p className="text-sm text-muted">
+              {model.source === "mirrored"
+                ? `On. The inputs copy ${model.sourceSystem || "the institution's scoring system"}, so its spreads paste in with no mapping.`
+                : `Off. This is the organization's own ${inputsLabel(model.source).toLowerCase()}, for deals without a scoring system.`}{" "}
+              Switching keeps every item.
+            </p>
+          </div>
+        </div>
+      </Card>
+      {published && items.length > 0 ? (
+        <FinancingItems
+          modelId={model.id}
+          values={model.financingItems}
+          items={items}
+        />
+      ) : (
+        <Card
+          title="New loans post to"
+          description="Where a project's new loans land on post-project balance sheets."
+        >
+          <p className="text-sm text-muted">
+            {published
+              ? `Version ${published.number} has no balance sheet items to post to.`
+              : "Publish a version with balance sheet items first. The items to post to are picked from the published version."}
+          </p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function Versions({
+  versions,
+  shown,
+}: {
+  versions: ScoringModelVersion[];
+  shown: ScoringModelVersion | undefined;
+}) {
+  return (
+    <Card
+      flush
+      title="Versions"
+      description="Published versions are frozen; financial models and analyses keep the version they were built on."
     >
-      {status}
-    </span>
+      <div className="overflow-x-auto">
+        <table className={table.table}>
+          <thead>
+            <tr className={table.head}>
+              <th className={table.th}>Version</th>
+              <th className={table.th}>Status</th>
+              <th className={table.th}>Published</th>
+              <th className={`${table.th} w-full`}>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {versions.toReversed().map((v) => (
+              <tr key={v.id} className={table.row}>
+                <td className={table.td}>
+                  <Link href={`?v=${v.number}`} className={rowLink}>
+                    v{v.number}
+                  </Link>
+                  {v.id === shown?.id && (
+                    <span className="ml-2 text-xs text-muted">shown</span>
+                  )}
+                </td>
+                <td className={table.td}>
+                  <VersionBadge status={v.status} />
+                </td>
+                <td className={`${table.td} whitespace-nowrap text-muted`}>
+                  {v.publishedAt ? formatDate(isoDate(v.publishedAt)!) : "–"}
+                </td>
+                <td className={`${table.td} text-muted`}>{v.notes}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// Who a change to the model reaches: the borrowers whose spreads follow it
+// and the financial models built on it.
+function Usage({
+  model,
+  borrowers,
+  financialModels,
+}: {
+  model: ScoringModelWithVersions;
+  borrowers: EntitySummary[];
+  financialModels: FinancialModelSummary[];
+}) {
+  const numberOf = new Map(model.versions.map((v) => [v.id, v.number]));
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <Card
+        flush
+        title={
+          <span className="flex items-center gap-2">
+            <Building2 className="size-4 text-muted" aria-hidden />
+            Borrowers
+          </span>
+        }
+        description="Their spreads follow this model."
+      >
+        {borrowers.length ? (
+          <ul className="divide-y divide-line">
+            {borrowers.map((b) => (
+              <li
+                key={b.id}
+                className="relative flex items-center justify-between gap-3 px-4 py-2.5 text-sm hover:bg-surface-2/60"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <Link href={`/borrowers/${b.id}`} className={rowLink}>
+                    {b.name}
+                  </Link>
+                  {b.industry && (
+                    <span className="truncate text-xs text-muted">
+                      {b.industry}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-xs text-muted">
+                  {plural(b.periodCount, "period")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="px-4 py-6 text-sm text-muted">
+            No borrowers follow this model yet.
+          </p>
+        )}
+      </Card>
+      <Card
+        flush
+        title={
+          <span className="flex items-center gap-2">
+            <Sigma className="size-4 text-muted" aria-hidden />
+            Financial models
+          </span>
+        }
+        description="Built on this model, read by every analysis that uses them."
+      >
+        {financialModels.length ? (
+          <ul className="divide-y divide-line">
+            {financialModels.map((f) => {
+              const latest = f.versions.at(-1);
+              const bound = latest
+                ? numberOf.get(latest.scoringModelVersionId)
+                : undefined;
+              const live = f.versions.findLast((v) => v.status === "published");
+              return (
+                <li
+                  key={f.id}
+                  className="relative flex items-center justify-between gap-3 px-4 py-2.5 text-sm hover:bg-surface-2/60"
+                >
+                  <span className="flex min-w-0 flex-col">
+                    <Link
+                      href={`/financial-models/${f.id}`}
+                      className={rowLink}
+                    >
+                      {f.name}
+                    </Link>
+                    {bound !== undefined && (
+                      <span className="text-xs text-muted">
+                        Latest version built on v{bound}
+                      </span>
+                    )}
+                  </span>
+                  {live ? (
+                    <VersionBadge status="published" number={live.number} />
+                  ) : (
+                    <VersionBadge status="draft" />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="px-4 py-6 text-sm text-muted">
+            No financial models are built on this model yet.
+          </p>
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -308,22 +520,18 @@ function publishBlocker(itemCount: number, issues: Issue[]) {
   return errors ? `Fix ${plural(errors, "error")} before publishing.` : null;
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-const formatDate = (date: Date) =>
-  date.toLocaleDateString("en-CA", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+const isoDate = (date: Date | null) =>
+  date ? date.toISOString().slice(0, 10) : null;
 
 function Loading() {
   return (
-    <div className="flex animate-pulse flex-col gap-4" aria-label="Loading">
-      <div className="h-3 w-24 rounded bg-surface-2" />
-      <div className="h-7 w-80 rounded bg-surface-2" />
-      <div className="h-9 w-full rounded bg-surface-2" />
-      <div className="h-96 w-full rounded-lg bg-surface-2" />
+    <div className="flex animate-pulse flex-col gap-6" aria-label="Loading">
+      <div className="flex flex-col gap-2">
+        <div className="h-3 w-24 rounded bg-surface-2" />
+        <div className="h-7 w-80 rounded bg-surface-2" />
+      </div>
+      <div className="h-10 w-full rounded bg-surface-2" />
+      <div className="h-96 w-full rounded-xl bg-surface-2" />
     </div>
   );
 }

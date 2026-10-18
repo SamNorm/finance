@@ -1,29 +1,43 @@
-import { listFinancialModels, listScoringModels } from "@finance/domain";
+import {
+  listAnalyses,
+  listFinancialModels,
+  listScoringModels,
+} from "@finance/domain";
+import { Sigma, TriangleAlert } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { button } from "@/components/styles";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  Page,
+  PageHeader,
+  VersionBadge,
+} from "@/components/page";
+import { button, rowLink, table } from "@/components/styles";
 import { getContext, getDb } from "@/lib/server";
 import { NewModel } from "./_components/new-model";
 
 export const metadata: Metadata = { title: "Financial models" };
 
-export default function Page() {
+export default function FinancialModelsPage() {
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-6 sm:px-6">
+    <Page>
       <Suspense fallback={<Loading />}>
         <ModelsView />
       </Suspense>
-    </div>
+    </Page>
   );
 }
 
 async function ModelsView() {
   const db = getDb();
   const ctx = await getContext();
-  const [list, scoringModels] = await Promise.all([
+  const [list, scoringModels, analyses] = await Promise.all([
     listFinancialModels(db, ctx),
     listScoringModels(db, ctx),
+    listAnalyses(db, ctx),
   ]);
   // Financial models are built on a published scoring model.
   const published = scoringModels
@@ -33,27 +47,17 @@ async function ModelsView() {
   const names = new Map(list.map((m) => [m.id, m.name]));
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium tracking-wide text-muted uppercase">
-            Financial models
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Financial models
-          </h1>
-          <p className="text-sm text-muted">
-            Groupings, metrics, projections and covenant tests, written as
-            formulas over a scoring model&apos;s items. Build once; every
-            borrower&apos;s spread on that scoring model fills them.
-          </p>
-        </div>
-        {hasPublished && <NewModel scoringModels={published} />}
-      </header>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Financial models"
+        description="Groupings, metrics, projections and covenant tests, written as formulas over a scoring model's items. Build once; every borrower's spread on that scoring model fills them. Analysts run the published versions."
+        actions={hasPublished && <NewModel scoringModels={published} />}
+      />
 
       {!hasPublished && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm">
-          <span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm">
+          <span className="flex items-center gap-2">
+            <TriangleAlert className="size-4 text-warning" aria-hidden />
             Financial models are built on a published scoring model. Publish one
             first.
           </span>
@@ -65,68 +69,83 @@ async function ModelsView() {
 
       {list.length === 0 ? (
         hasPublished && (
-          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-line-strong px-6 py-16 text-center">
-            <p className="text-sm font-medium">No financial models yet.</p>
-            <p className="max-w-sm text-sm text-muted">
-              Start with the analysis you rebuild most often in Excel, such as
-              debt service coverage or covenant compliance.
-            </p>
-          </div>
+          <EmptyState icon={<Sigma />} title="No financial models yet.">
+            Start with the analysis you rebuild most often in Excel, such as
+            debt service coverage or covenant compliance.
+          </EmptyState>
         )
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-line text-left text-xs text-muted">
-                <th className="px-4 py-2 font-medium">Model</th>
-                <th className="px-4 py-2 font-medium">Built on</th>
-                <th className="px-4 py-2 font-medium">Published</th>
-                <th className="px-4 py-2 font-medium">Draft</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((model) => {
-                const latest = model.versions.findLast(
-                  (v) => v.status === "published",
-                );
-                const draft = model.versions.find((v) => v.status === "draft");
-                return (
-                  <tr
-                    key={model.id}
-                    className="border-b border-line/60 last:border-b-0 hover:bg-surface-2"
-                  >
-                    <td className="px-4 py-2.5">
-                      <Link
-                        href={`/financial-models/${model.id}`}
-                        className="font-medium hover:text-accent"
+        <Card flush>
+          <div className="overflow-x-auto">
+            <table className={table.table}>
+              <thead>
+                <tr className={table.head}>
+                  <th className={table.th}>Model</th>
+                  <th className={table.th}>Built on</th>
+                  <th className={table.th}>Published</th>
+                  <th className={table.th}>Draft</th>
+                  <th className={`${table.th} text-right`}>Analyses</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((model) => {
+                  const latest = model.versions.findLast(
+                    (v) => v.status === "published",
+                  );
+                  const draft = model.versions.find(
+                    (v) => v.status === "draft",
+                  );
+                  const variantOf =
+                    model.variantOfId && names.get(model.variantOfId);
+                  return (
+                    <tr key={model.id} className={table.row}>
+                      <td className={table.td}>
+                        <div className="flex flex-col gap-0.5">
+                          <Link
+                            href={`/financial-models/${model.id}`}
+                            className={rowLink}
+                          >
+                            {model.name}
+                          </Link>
+                          {(variantOf || model.description) && (
+                            <span className="line-clamp-1 max-w-xl text-xs text-muted">
+                              {variantOf
+                                ? `Variant of ${variantOf}`
+                                : model.description}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={`${table.td} text-muted`}>
+                        {model.scoringModel.name}
+                      </td>
+                      <td className={table.td}>
+                        {latest ? (
+                          <VersionBadge
+                            status="published"
+                            number={latest.number}
+                          />
+                        ) : (
+                          <span className="text-muted">Not yet</span>
+                        )}
+                      </td>
+                      <td className={table.td}>
+                        {draft && (
+                          <Badge tone="accent">v{draft.number} draft</Badge>
+                        )}
+                      </td>
+                      <td
+                        className={`${table.td} text-right text-muted tabular-nums`}
                       >
-                        {model.name}
-                      </Link>
-                      {model.variantOfId && names.has(model.variantOfId) && (
-                        <span className="ml-2 text-xs text-muted">
-                          variant of {names.get(model.variantOfId)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted">
-                      {model.scoringModel.name}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted">
-                      {latest ? `v${latest.number}` : "Not yet"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {draft && (
-                        <span className="rounded bg-accent-soft px-1.5 py-0.5 text-xs font-medium text-accent">
-                          v{draft.number} draft
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        {analyses.filter((a) => a.modelId === model.id).length}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );
@@ -134,10 +153,12 @@ async function ModelsView() {
 
 function Loading() {
   return (
-    <div className="flex animate-pulse flex-col gap-4" aria-label="Loading">
-      <div className="h-3 w-24 rounded bg-surface-2" />
-      <div className="h-7 w-64 rounded bg-surface-2" />
-      <div className="h-64 w-full rounded-lg bg-surface-2" />
+    <div className="flex animate-pulse flex-col gap-6" aria-label="Loading">
+      <div className="flex flex-col gap-2">
+        <div className="h-7 w-64 rounded bg-surface-2" />
+        <div className="h-4 w-full max-w-2xl rounded bg-surface-2" />
+      </div>
+      <div className="h-64 w-full rounded-xl bg-surface-2" />
     </div>
   );
 }

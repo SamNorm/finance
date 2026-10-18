@@ -87,3 +87,9 @@ export const PROJECTION_MODES: Record<"assumptions" | "client", string> = {
   assumptions: "From assumptions",
   client: "Client's projections",
 };
+
+// Where the analyst is with an analysis.
+export const ANALYSIS_STATUSES: Record<"in_progress" | "completed", string> = {
+  in_progress: "In progress",
+  completed: "Completed",
+};

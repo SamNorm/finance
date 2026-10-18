@@ -20,14 +20,21 @@ import {
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
 import { adjustmentFields, attempt, invalid, run, text } from "@/lib/actions";
-import { isOneOf, PROJECTION_MODES } from "@/lib/labels";
+import { ANALYSIS_STATUSES, isOneOf, PROJECTION_MODES } from "@/lib/labels";
 
+// A new scenario opens on its assumptions and project, to fill them in.
 const page = (analysisId: string, scenarioId?: string) =>
-  `/analyses/${analysisId}${scenarioId ? `?scenario=${scenarioId}` : ""}`;
+  `/analyses/${analysisId}${scenarioId ? `?scenario=${scenarioId}&tab=scenario` : ""}`;
 
 function projectionMode(value: string) {
   if (!isOneOf(PROJECTION_MODES, value))
     throw invalid(`"${value}" isn't a projection mode.`);
+  return value;
+}
+
+function status(value: string) {
+  if (!isOneOf(ANALYSIS_STATUSES, value))
+    throw invalid(`"${value}" isn't a status.`);
   return value;
 }
 
@@ -63,6 +70,7 @@ export async function updateAnalysisAction(
     projectionMode?: string;
     projectionYears?: number;
     postProjectKeys?: string[];
+    status?: string;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
@@ -85,6 +93,8 @@ export async function updateAnalysisAction(
           ? undefined
           : Number(patch.projectionYears),
       postProjectKeys: patch.postProjectKeys?.map(String),
+      status:
+        patch.status === undefined ? undefined : status(String(patch.status)),
     });
   });
 }

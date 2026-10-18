@@ -6,6 +6,8 @@ if (existsSync("../../.env")) process.loadEnvFile("../../.env");
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
+  // Out of the sidebar's corner.
+  devIndicators: { position: "bottom-right" },
   partialPrefetching: true,
   turbopack: {
     rules: {

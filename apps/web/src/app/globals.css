@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* The sidebar folds to icons when data-sidebar="collapsed" is on <html>,
+   set before first paint like the theme. */
+@custom-variant collapsed (&:where([data-sidebar="collapsed"] *));
+
 /* Themes: light by default, dark when the system asks for it, or whichever
    the viewer picks (data-theme on <html>: light, dim or dark). Dim is a
    softer dark on mid-grays, for long reading. Chart colors are validated for
@@ -139,6 +143,14 @@
   --color-success-soft: var(--success-soft);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Menus and popovers. */
+  --animate-pop: pop 120ms ease-out;
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: translateY(-2px) scale(0.98);
+    }
+  }
 }
 
 body {

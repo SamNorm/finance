@@ -51,3 +51,27 @@ const dateFormat = new Intl.DateTimeFormat("en-CA", {
 // "2024-12-31" → "Dec 31, 2024".
 export const formatDate = (iso: string) =>
   dateFormat.format(new Date(`${iso}T00:00:00Z`));
+
+const relative = new Intl.RelativeTimeFormat("en-CA", { numeric: "auto" });
+const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["year", 365 * 86400],
+  ["month", 30 * 86400],
+  ["week", 7 * 86400],
+  ["day", 86400],
+  ["hour", 3600],
+  ["minute", 60],
+];
+
+// "3 hours ago", "yesterday": how long since an edit, for activity lists.
+export function formatRelative(date: Date, now: Date) {
+  const seconds = (date.getTime() - now.getTime()) / 1000;
+  for (const [unit, size] of UNITS) {
+    if (Math.abs(seconds) >= size)
+      return relative.format(Math.round(seconds / size), unit);
+  }
+  return "just now";
+}
+
+// A timestamp's calendar date, as formatDate shows it.
+export const formatDay = (date: Date) =>
+  formatDate(date.toISOString().slice(0, 10));

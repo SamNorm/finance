@@ -1,4 +1,6 @@
 import type { Issue } from "@finance/domain";
+import { ChevronDown, CircleAlert, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
 
 // Errors first, then warnings, each pointing at its item code or file row.
 export function IssueList({
@@ -41,5 +43,52 @@ export function IssueList({
         </li>
       )}
     </ul>
+  );
+}
+
+// Error and warning counts with a note, opening onto the issues. `children`
+// replaces the plain list, for issues grouped some other way.
+export function IssuesSummary({
+  issues,
+  note,
+  children,
+}: {
+  issues: Issue[];
+  note: string;
+  children?: ReactNode;
+}) {
+  const errors = issues.filter((i) => i.severity === "error").length;
+  const warnings = issues.length - errors;
+  return (
+    <details
+      className={`group rounded-xl border bg-surface shadow-xs ${errors ? "border-danger/30" : "border-warning/30"}`}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-sm [&::-webkit-details-marker]:hidden">
+        {errors > 0 ? (
+          <CircleAlert className="size-4 text-danger" aria-hidden />
+        ) : (
+          <TriangleAlert className="size-4 text-warning" aria-hidden />
+        )}
+        {errors > 0 && (
+          <span className="font-medium text-danger">
+            {errors} {errors === 1 ? "error" : "errors"}
+          </span>
+        )}
+        {errors > 0 && warnings > 0 && <span className="text-muted">·</span>}
+        {warnings > 0 && (
+          <span className="font-medium text-warning">
+            {warnings} {warnings === 1 ? "warning" : "warnings"}
+          </span>
+        )}
+        <span className="text-muted">{note}</span>
+        <ChevronDown
+          className="ml-auto size-4 text-muted transition-transform group-open:rotate-180"
+          aria-hidden
+        />
+      </summary>
+      <div className="border-t border-line px-4 py-3">
+        {children ?? <IssueList issues={issues} />}
+      </div>
+    </details>
   );
 }

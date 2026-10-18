@@ -1,5 +1,6 @@
 "use client";
 
+import { Info } from "lucide-react";
 import { useState, useTransition } from "react";
 import { button } from "@/components/styles";
 import { repinAnalysisAction } from "../actions";
@@ -18,10 +19,13 @@ export function Repin({
   const [pending, startTransition] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-accent-soft px-4 py-3 text-sm">
-      <span>
-        Version {newer} of the model is published. This analysis stays on v
-        {pinned}, so its results don&apos;t change.
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/25 bg-accent-soft px-4 py-3 text-sm">
+      <span className="flex items-center gap-2">
+        <Info className="size-4 shrink-0 text-accent" aria-hidden />
+        <span>
+          Version {newer} of the model is published. This analysis stays on v
+          {pinned}, so its results don&apos;t change.
+        </span>
       </span>
       <div className="flex items-center gap-2">
         {failure && <span className="text-danger">{failure}</span>}
