@@ -4,7 +4,7 @@ import {
   FREQUENCIES,
   MORATORIUMS,
   PERIOD_UNITS,
-  REPAYMENTS,
+  yearsOf,
   type Amortizing,
   type Frequency,
   type Moratorium,
@@ -35,9 +35,6 @@ export const NEW_TERMS: TermsDraft = {
   moratoriumIncluded: false,
 };
 
-const yearsOf = (months: number) =>
-  String(Math.round((months / 12) * 100) / 100);
-
 export const termsDraft = (loan: Amortizing): TermsDraft => ({
   repayment: loan.repayment,
   years: loan.months ? yearsOf(loan.months) : "",
@@ -60,29 +57,6 @@ export function termsInput(draft: TermsDraft) {
     moratoriumPayments: moratorium ? draft.moratoriumPayments : "",
     moratoriumIncluded: moratorium ? draft.moratoriumIncluded : false,
   };
-}
-
-// "20 years · blended payments · every 2 weeks · moratorium of 10 two-week
-// periods on principal, included in the amortization".
-export function describeTerms(loan: Amortizing): string {
-  const parts: string[] = [];
-  if (loan.repayment !== "interest_only") {
-    const years = yearsOf(loan.months);
-    parts.push(`${years} year${years === "1" ? "" : "s"}`);
-  }
-  parts.push(REPAYMENTS[loan.repayment].toLowerCase());
-  if (loan.frequency && loan.frequency !== "monthly")
-    parts.push(FREQUENCIES[loan.frequency].toLowerCase());
-  const m = loan.moratorium;
-  if (m) {
-    const [one, many] = PERIOD_UNITS[loan.frequency ?? "monthly"];
-    parts.push(
-      `moratorium of ${m.payments} ${m.payments === 1 ? one : many} ${MORATORIUMS[m.kind].toLowerCase()}${
-        m.kind === "full" ? " (interest capitalized)" : ""
-      }, ${m.included ? "included in" : "before"} the amortization`,
-    );
-  }
-  return parts.join(" · ");
 }
 
 const caption = "text-xs font-medium text-muted";

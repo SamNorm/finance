@@ -3,6 +3,7 @@
 import {
   ADJUSTMENTS,
   amortize,
+  describeTerms,
   monthIndex,
   monthOf,
   PAYMENTS_PER_YEAR,
@@ -14,7 +15,6 @@ import { Dec } from "@finance/engine";
 import { useId, useState, useTransition, type ReactNode } from "react";
 import type { ActionResult } from "@/lib/action-result";
 import { formatDate } from "@/lib/format";
-import { describeTerms } from "./loan-terms";
 import { button, input } from "./styles";
 import { Field, Icon, Modal, Segmented } from "./ui";
 

@@ -2,6 +2,7 @@
 
 import type { Project } from "@finance/domain";
 import {
+  describeTerms,
   REPAYMENTS,
   type Adjustment,
   type Repayment,
@@ -11,7 +12,6 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { LoanSchedule } from "@/components/loan-schedule";
 import {
-  describeTerms,
   FrequencySelect,
   MoratoriumFields,
   NEW_TERMS,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
@@ -11,11 +12,13 @@ import {
 import { listLines } from "../financial-models/service";
 import type { ModelLine } from "../financial-models/types";
 import { normalizeAssumption } from "../financial-models/validate";
+import type { LoanTermsInput } from "../financing/common";
 import {
   balanceSheetSides,
   normalizeProject,
   type Project,
   type ProjectInput,
+  type ProjectLoan,
 } from "../financing/financing";
 import {
   getScoringModel,
@@ -432,7 +435,11 @@ export async function addScenario(
   return scenario!;
 }
 
-async function findScenario(db: Db, ctx: Context, scenarioId: string) {
+export async function getScenario(
+  db: Db,
+  ctx: Context,
+  scenarioId: string,
+): Promise<Scenario> {
   if (!UUID.test(scenarioId))
     throw new DomainError("not_found", "No such scenario.");
   const [row] = await db
@@ -455,7 +462,7 @@ export async function updateScenario(
   scenarioId: string,
   patch: Partial<ScenarioInput>,
 ): Promise<Scenario> {
-  const scenario = await findScenario(db, ctx, scenarioId);
+  const scenario = await getScenario(db, ctx, scenarioId);
   if (patch.name !== undefined && !patch.name.trim()) {
     throw new DomainError("invalid", "Give the scenario a name.");
   }
@@ -485,7 +492,7 @@ export async function setProjectLoanAdjustments(
   loanId: string,
   adjustments: unknown,
 ): Promise<Scenario> {
-  const { project } = await findScenario(db, ctx, scenarioId);
+  const { project } = await getScenario(db, ctx, scenarioId);
   if (!project?.sources.some((s) => s.kind === "loan" && s.id === loanId))
     throw new DomainError("not_found", "No such loan.");
   return updateScenario(db, ctx, scenarioId, {
@@ -498,6 +505,44 @@ export async function setProjectLoanAdjustments(
   });
 }
 
+// A new loan as typed, on its own rather than within its whole project.
+export interface ProjectLoanInput extends LoanTermsInput {
+  name?: unknown;
+  amount?: unknown;
+  rate?: unknown;
+  // The project's closing date, for a scenario that has no project yet.
+  closing?: unknown;
+}
+
+// Adds a new loan to a scenario's project, drawn at its closing. A scenario
+// without a project starts one, closing on the date given; one with a project
+// keeps its closing date.
+export async function addProjectLoan(
+  db: Db,
+  ctx: Context,
+  scenarioId: string,
+  input: ProjectLoanInput,
+): Promise<{ scenario: Scenario; loan: ProjectLoan }> {
+  const { project } = await getScenario(db, ctx, scenarioId);
+  const { closing: rawClosing, ...loan } = input;
+  const closing = String(rawClosing ?? "").trim();
+  if (project && closing && closing !== project.closing)
+    throw new DomainError(
+      "invalid",
+      `The project closes on ${project.closing}; its new loans are drawn then.`,
+    );
+  const id = randomUUID();
+  const scenario = await updateScenario(db, ctx, scenarioId, {
+    project: {
+      ...project,
+      closing: project?.closing ?? closing,
+      sources: [...(project?.sources ?? []), { ...loan, kind: "loan", id }],
+    } as ProjectInput,
+  });
+  const added = scenario.project!.sources.find((s) => s.id === id);
+  return { scenario, loan: added as ProjectLoan };
+}
+
 // A copy of a scenario, placed last, to vary from it.
 export async function duplicateScenario(
   db: Db,
@@ -505,7 +550,7 @@ export async function duplicateScenario(
   scenarioId: string,
   name?: string,
 ): Promise<Scenario> {
-  const source = await findScenario(db, ctx, scenarioId);
+  const source = await getScenario(db, ctx, scenarioId);
   return addScenario(db, ctx, source.analysisId, {
     name: name?.trim() || `${source.name} (copy)`,
     overrides: source.overrides,
@@ -518,7 +563,7 @@ export async function deleteScenario(
   ctx: Context,
   scenarioId: string,
 ): Promise<void> {
-  const scenario = await findScenario(db, ctx, scenarioId);
+  const scenario = await getScenario(db, ctx, scenarioId);
   await db.delete(scenarios).where(eq(scenarios.id, scenarioId));
   await touch(db, scenario.analysisId);
 }

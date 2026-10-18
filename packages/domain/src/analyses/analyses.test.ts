@@ -30,6 +30,7 @@ import {
 } from "../spreads/service";
 import { runModel, type RunInput } from "./run";
 import {
+  addProjectLoan,
   addScenario,
   createAnalysis,
   deleteAnalysis,
@@ -648,6 +649,71 @@ describe("analysis service", () => {
       periods[1]!.id,
       "projected-1",
     ]);
+  });
+
+  it("adds a new loan to a scenario's project on its own", async () => {
+    const { context, entity, scoringModel, v1 } = setup;
+    await setFinancingItems(db, context, scoringModel.id, {
+      longTermDebt: "LONG_TERM_DEBT",
+      currentDebt: "CPLTD",
+      cash: "CASH",
+    });
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v1.id,
+      name: "A",
+    });
+    const scenario = await addScenario(db, ctx, analysis.id, {
+      name: "Expansion",
+    });
+    const loan = {
+      name: "Term loan",
+      amount: "1,200,000",
+      rate: "5%",
+      repayment: "blended",
+      years: 20,
+    };
+    // The first loan starts the project, which needs a closing date.
+    await rejects(addProjectLoan(db, ctx, scenario.id, loan), "invalid");
+    const first = await addProjectLoan(db, ctx, scenario.id, {
+      ...loan,
+      closing: "2024-12-31",
+    });
+    expect(first.loan).toMatchObject({
+      kind: "loan",
+      name: "Term loan",
+      amount: "1200000",
+      rate: "0.05",
+      repayment: "blended",
+      months: 240,
+    });
+    expect(first.scenario.project).toMatchObject({
+      closing: "2024-12-31",
+      uses: [],
+    });
+    // Later loans are drawn at the same closing, after the others.
+    await rejects(
+      addProjectLoan(db, ctx, scenario.id, { ...loan, closing: "2025-06-30" }),
+      "invalid",
+    );
+    const second = await addProjectLoan(db, ctx, scenario.id, {
+      name: "Bridge",
+      amount: "300000",
+      rate: "7%",
+      repayment: "interest_only",
+      closing: "2024-12-31",
+    });
+    expect(second.loan).toMatchObject({ months: 0, rate: "0.07" });
+    expect(second.scenario.project!.sources).toEqual([first.loan, second.loan]);
+    // Terms are checked as in the scenario's editor.
+    await rejects(
+      addProjectLoan(db, ctx, scenario.id, { ...loan, rate: "" }),
+      "invalid",
+    );
+    await rejects(
+      addProjectLoan(db, { organizationId: randomUUID() }, scenario.id, loan),
+      "not_found",
+    );
   });
 
   it("keeps charts added in the analysis, checked against its version", async () => {
