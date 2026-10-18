@@ -38,12 +38,19 @@ export interface ChartSeries {
   reference?: boolean;
 }
 
+// A limit drawn across the chart, such as a covenant's: by period, as it can
+// step from one year to the next; blank where none applies.
+export interface ChartThreshold {
+  label: string;
+  values: (number | null)[];
+}
+
 export interface MetricChartProps {
   title: ReactNode;
   format: ChartFormat;
   periods: ChartPeriod[];
   series: ChartSeries[];
-  threshold?: { label: string; value: number } | null;
+  threshold?: ChartThreshold | null;
   // Buttons for the card header, such as edit and remove.
   actions?: ReactNode;
   height?: number;
@@ -97,9 +104,21 @@ export function MetricChart({
   height = 220,
 }: MetricChartProps) {
   const [asTable, setAsTable] = useState(false);
+  const limits = (threshold?.values ?? []).filter(
+    (v): v is number => v !== null,
+  );
+  // One value throughout draws as a reference line; steps draw as a line
+  // that steps with them.
+  const flat =
+    limits.length > 0 &&
+    limits.length === periods.length &&
+    limits.every((v) => v === limits[0])
+      ? limits[0]!
+      : null;
   const data = periods.map((period, p) => ({
     label: period.label,
     ...Object.fromEntries(series.map((s, i) => [`s${i}`, s.values[p] ?? null])),
+    limit: threshold?.values[p] ?? null,
   }));
   const projected = periods.filter((p) => p.projected);
   const hasLines = series.some((s) => s.mark === "line");
@@ -111,7 +130,7 @@ export function MetricChart({
     series.filter((s) => s.mark === "line" && !s.reference).length === 1;
   const ticks = niceTicks([
     ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)),
-    ...(threshold ? [threshold.value] : []),
+    ...limits,
   ]);
   // The base case draws first, behind the scenario it compares with.
   const order = series
@@ -137,7 +156,7 @@ export function MetricChart({
         </div>
       </header>
 
-      {(series.length > 1 || threshold) && (
+      {(series.length > 1 || limits.length > 0) && (
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
           {series.map((s, i) => (
             <li key={i} className="flex items-center gap-1.5">
@@ -145,7 +164,7 @@ export function MetricChart({
               {s.label}
             </li>
           ))}
-          {threshold && (
+          {threshold && limits.length > 0 && (
             <li className="flex items-center gap-1.5">
               <svg width="14" height="8" aria-hidden>
                 <line
@@ -158,7 +177,8 @@ export function MetricChart({
                   strokeDasharray="3 2"
                 />
               </svg>
-              {threshold.label} {show(threshold.value, format)}
+              {threshold.label}
+              {flat !== null ? ` ${show(flat, format)}` : ", by year"}
             </li>
           )}
         </ul>
@@ -193,6 +213,16 @@ export function MetricChart({
                   ))}
                 </tr>
               ))}
+              {threshold && limits.length > 0 && (
+                <tr className="border-t border-line text-muted">
+                  <td className="py-1 pr-3 text-left">{threshold.label}</td>
+                  {threshold.values.map((v, p) => (
+                    <td key={p} className="px-2 py-1 text-right">
+                      {show(v, format)}
+                    </td>
+                  ))}
+                </tr>
+              )}
             </tbody>
           </table>
           {projected.length > 0 && (
@@ -260,13 +290,28 @@ export function MetricChart({
               />
             )}
           />
-          {threshold && (
+          {flat !== null ? (
             <ReferenceLine
-              y={threshold.value}
+              y={flat}
               stroke="var(--foreground)"
               strokeWidth={1.5}
               strokeDasharray="4 3"
             />
+          ) : (
+            limits.length > 0 && (
+              <Line
+                dataKey="limit"
+                name={threshold!.label}
+                type="step"
+                stroke="var(--foreground)"
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                dot={false}
+                activeDot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )
           )}
           {order.map(({ s, i }) =>
             s.mark === "bar" ? (

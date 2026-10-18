@@ -5,6 +5,7 @@ import {
   eliminable,
   getSpread,
   listAnalyses,
+  listCovenantMetrics,
   listEntities,
   listScoringModels,
   nextYearDebtService,
@@ -30,7 +31,7 @@ import {
   Stat,
 } from "@/components/page";
 import { button, rowLink, table } from "@/components/styles";
-import { Tabs } from "@/components/tabs";
+import { Tabs, type Tab } from "@/components/tabs";
 import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITIES, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
@@ -40,6 +41,7 @@ import {
   Members,
   Worksheet,
 } from "../_components/consolidation";
+import { BorrowerCovenants } from "../_components/covenants";
 import { DebtScheduleEditor } from "../_components/debt-schedule";
 import { Notice } from "../_components/notice";
 import { SpreadGrid, type GridPeriod } from "../_components/spread-grid";
@@ -69,10 +71,27 @@ async function SpreadView({ params, searchParams }: Props) {
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
-  const [analyses, scoringModels] = await Promise.all([
+  const [analyses, scoringModels, metrics] = await Promise.all([
     listAnalyses(db, ctx, { entityId: id }),
     listScoringModels(db, ctx),
+    listCovenantMetrics(db, ctx, id),
   ]);
+  const covenants = {
+    value: "covenants",
+    label: "Covenants",
+    count: spread.entity.covenants.length,
+    content: (
+      <BorrowerCovenants
+        entityId={spread.entity.id}
+        covenants={spread.entity.covenants}
+        metrics={metrics.map(({ code, label, format }) => ({
+          code,
+          label,
+          format,
+        }))}
+      />
+    ),
+  };
   const items = spread.layout?.items ?? [];
   const statement =
     STATEMENTS.find((s) => s.value === query.statement)?.value ??
@@ -101,6 +120,7 @@ async function SpreadView({ params, searchParams }: Props) {
         statement={statement}
         tab={typeof query.tab === "string" ? query.tab : undefined}
         analyses={analyses}
+        covenantsTab={covenants}
         scoringModel={scoringModel}
         scoringModels={scoringModels.map((m) => ({
           id: m.id,
@@ -248,6 +268,7 @@ async function SpreadView({ params, searchParams }: Props) {
               />
             ),
           },
+          covenants,
           {
             value: "analyses",
             label: "Analyses",
@@ -275,6 +296,7 @@ async function ConsolidatedView({
   statement,
   tab,
   analyses,
+  covenantsTab,
   scoringModel,
   scoringModels,
 }: {
@@ -284,6 +306,8 @@ async function ConsolidatedView({
   statement: Statement;
   tab: string | undefined;
   analyses: AnalysisSummary[];
+  // The covenants in force, a consolidated client's own.
+  covenantsTab: Tab;
   scoringModel: { id: string; name: string };
   scoringModels: { id: string; name: string; published: boolean }[];
 }) {
@@ -471,6 +495,7 @@ async function ConsolidatedView({
             count: schedules.reduce((n, s) => n + s.loans.length, 0),
             content: <MembersDebt members={members} />,
           },
+          covenantsTab,
           {
             value: "analyses",
             label: "Analyses",

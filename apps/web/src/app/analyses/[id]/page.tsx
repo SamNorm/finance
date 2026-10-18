@@ -25,6 +25,7 @@ import { getContext, getDb } from "@/lib/server";
 import { AnalysisActions } from "../_components/analysis-actions";
 import { AnalysisCharts } from "../_components/analysis-charts";
 import { AnalysisSettings } from "../_components/analysis-settings";
+import { CovenantResults } from "../_components/covenant-results";
 import { CovenantSummary } from "../_components/covenant-summary";
 import { Repin } from "../_components/repin";
 import { ResultsTable } from "../_components/results-table";
@@ -86,6 +87,7 @@ async function AnalysisView({ params, searchParams }: Props) {
     overrides: s.overrides,
     project: s.project,
     capex: s.capex,
+    covenants: s.covenants,
     imbalance: s.project && imbalance(s.project),
   }));
   // Critical errors in the periods it analyzes, which hold completion back.
@@ -189,7 +191,11 @@ async function AnalysisView({ params, searchParams }: Props) {
             alert:
               offBalance || broken.length
                 ? "error"
-                : run.breakdowns.some((b) => !b.reconciles)
+                : run.breakdowns.some((b) => !b.reconciles) ||
+                    [
+                      ...results.covenants.run,
+                      ...(results.covenants.project ?? []),
+                    ].some((c) => c.periods.some((p) => p.pass === false))
                   ? "warning"
                   : undefined,
             content:
@@ -202,6 +208,14 @@ async function AnalysisView({ params, searchParams }: Props) {
                   )}
                   {offBalance && <ProjectImbalance message={offBalance} />}
                   <Breakdowns run={run} />
+                  <CovenantResults
+                    covenants={results.covenants}
+                    run={run}
+                    project={results.project}
+                    postProject={results.postProject}
+                    scenarioName={scenario?.name ?? null}
+                    entity={entity}
+                  />
                   <CovenantSummary
                     lines={detail.lines}
                     run={run}
@@ -239,6 +253,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                   modelCharts={detail.modelCharts}
                   charts={analysis.charts}
                   project={results.project}
+                  covenants={results.covenants.run}
                 />
               ),
           },
@@ -276,6 +291,16 @@ async function AnalysisView({ params, searchParams }: Props) {
                   defaultClosing: lastActual
                     ? nextMonthEnd(lastActual.end)
                     : "",
+                  covenantsInForce: spread.entity.covenants,
+                  // What a deal's covenants can test: this model's ratios
+                  // and figures.
+                  metrics: detail.lines.flatMap((l) =>
+                    l.kind === "calculation" &&
+                    l.format !== "flag" &&
+                    l.format !== "text"
+                      ? [{ code: l.code, label: l.label, format: l.format }]
+                      : [],
+                  ),
                 }}
               />
             ) : (

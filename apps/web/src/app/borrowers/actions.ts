@@ -13,6 +13,7 @@ import {
   previewPaste,
   removeConsolidationMember,
   setConsolidatedStatements,
+  setCovenants,
   setDebtSchedule,
   setEliminations,
   setExistingLoanAdjustments,
@@ -22,6 +23,7 @@ import {
   STATEMENT_QUALITIES,
   updateEntity,
   updatePeriod,
+  type CovenantInput,
   type ExistingLoanInput,
   type PastePreview,
   type PasteTarget,
@@ -321,6 +323,17 @@ export async function saveConsolidatedPeriodAction(
       await setEliminations(tx, ctx, id, eliminations);
       await setPeriodControls(tx, ctx, id, { reconciliation });
     });
+  });
+}
+
+// Replaces the borrower's covenants in force, each as typed.
+export async function saveCovenantsAction(
+  entityId: string,
+  covenants: CovenantInput[],
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (!Array.isArray(covenants)) throw invalid("Covenants must be a list.");
+    return setCovenants(db, ctx, String(entityId), covenants);
   });
 }
 

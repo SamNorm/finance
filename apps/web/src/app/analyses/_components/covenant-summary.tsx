@@ -3,9 +3,10 @@ import type { ReactNode } from "react";
 import { Card } from "@/components/page";
 import { formatDate } from "@/lib/format";
 
-// The model's pass/fail tests at a glance, before the full table: the latest
-// statements, post-project when the scenario finances one, and the projected
-// years, where a single failing year shows.
+// The model's own pass/fail lines at a glance, before the full table, such as
+// a borrowing base's margin test: the latest statements, post-project when
+// the scenario finances one, and the projected years, where a single failing
+// year shows. Covenants, terms of a deal, show apart (covenant-results.tsx).
 export function CovenantSummary({
   lines,
   run,
@@ -32,8 +33,8 @@ export function CovenantSummary({
 
   return (
     <Card
-      title="Covenants and tests"
-      description="Each test in the latest statements, post-project and over the projections."
+      title="Model tests"
+      description="The model's own tests in the latest statements, post-project and over the projections."
       flush
     >
       <div className="overflow-x-auto">

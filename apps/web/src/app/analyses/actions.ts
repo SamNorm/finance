@@ -15,6 +15,7 @@ import {
   updateAnalysis,
   updateScenario,
   type ChartInput,
+  type CovenantInput,
   type ProjectInput,
 } from "@finance/domain";
 import { redirect } from "next/navigation";
@@ -161,12 +162,19 @@ export async function updateScenarioAction(
     overrides?: Record<string, string>;
     project?: ProjectInput | null;
     capex?: unknown[];
+    covenants?: CovenantInput[] | null;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
-    const { overrides, project, capex } = patch;
+    const { overrides, project, capex, covenants } = patch;
     if (capex !== undefined && !Array.isArray(capex))
       throw invalid("The capex plan must be a list of purchases.");
+    if (
+      covenants !== undefined &&
+      covenants !== null &&
+      !Array.isArray(covenants)
+    )
+      throw invalid("Covenants must be a list.");
     if (
       overrides !== undefined &&
       (typeof overrides !== "object" || overrides === null)
@@ -184,6 +192,7 @@ export async function updateScenarioAction(
       overrides: overrides && textFields(overrides),
       project,
       capex,
+      covenants,
     });
   });
 }

@@ -3,6 +3,7 @@
 import type {
   AnalysisRun,
   ChartDefinition,
+  CovenantResult,
   ModelLine,
   RunPeriod,
 } from "@finance/domain";
@@ -13,6 +14,7 @@ import {
   type ChartFormat,
   type ChartPeriod,
   type ChartSeries,
+  type ChartThreshold,
 } from "@/components/metric-chart";
 import { button } from "@/components/styles";
 import { Icon } from "@/components/ui";
@@ -33,6 +35,7 @@ export function AnalysisCharts({
   modelCharts,
   charts,
   project,
+  covenants,
 }: {
   analysisId: string;
   lines: ModelLine[];
@@ -43,6 +46,9 @@ export function AnalysisCharts({
   scenarioName: string | null;
   modelCharts: ChartDefinition[];
   charts: ChartDefinition[];
+  // The covenants tested in `run`, whose thresholds charts on their lines
+  // draw.
+  covenants: CovenantResult[];
 }) {
   const [editing, setEditing] = useState<ChartDefinition | "new" | null>(null);
   const [removing, startRemove] = useTransition();
@@ -85,11 +91,27 @@ export function AnalysisCharts({
     const raw = chart.threshold
       ? run.assumptions[chart.threshold]?.value
       : null;
-    const threshold =
-      chart.threshold && raw !== null && raw !== undefined
+    // On one line a covenant tests, the covenant's threshold in each year
+    // it's tested: the deal's term, before any assumption the chart names.
+    const covenant =
+      single &&
+      covenants.find(
+        (c) =>
+          c.label !== null &&
+          c.covenant.metric.toUpperCase() ===
+            chart.series[0]!.code.toUpperCase(),
+      );
+    const threshold: ChartThreshold | null = covenant
+      ? {
+          label: covenant.covenant.name,
+          values: covenant.periods.map((p) =>
+            p.threshold === null ? null : Number(p.threshold),
+          ),
+        }
+      : chart.threshold && raw !== null && raw !== undefined
         ? {
             label: byCode.get(chart.threshold)?.label ?? chart.threshold,
-            value: Number(raw),
+            values: periods.map(() => Number(raw)),
           }
         : null;
     return { format, periods, series, threshold };

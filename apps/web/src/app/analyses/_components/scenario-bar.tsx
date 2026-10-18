@@ -3,6 +3,7 @@
 import type {
   CapexItem,
   CapexYear,
+  Covenant,
   DebtSchedule,
   ModelLine,
   Project,
@@ -12,6 +13,13 @@ import { Copy, Landmark, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
+import {
+  CovenantEditor,
+  covenantDrafts,
+  covenantInput,
+  shownThreshold,
+  type MetricOption,
+} from "@/components/covenant-editor";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
@@ -41,6 +49,8 @@ export interface ScenarioOption {
   overrides: Record<string, string>;
   project: Project | null;
   capex: CapexItem[];
+  // Proposed for its deal; null tests the borrower's in force.
+  covenants: Covenant[] | null;
   // How the project is out of balance, e.g. "Sources exceed uses by 500".
   imbalance?: string | null;
 }
@@ -58,6 +68,10 @@ export interface ProjectSetup {
   canAddLoans: boolean;
   scoringModelId: string;
   defaultClosing: string;
+  // The borrower's covenants in force, which a deal's proposal starts from,
+  // and the lines covenants can test in this model.
+  covenantsInForce: Covenant[];
+  metrics: MetricOption[];
 }
 
 // The base case, the borrower as is, and the analysis's scenarios: each
@@ -272,6 +286,10 @@ export function ScenarioEditor({
     toDraft(scenario.project),
   );
   const [capex, setCapex] = useState(() => capexDraft(scenario.capex));
+  // The deal's proposed covenants; null tests those in force.
+  const savedCovenants = () =>
+    scenario.covenants && covenantDrafts(scenario.covenants, setup.metrics);
+  const [covenants, setCovenants] = useState(savedCovenants);
   // The saved project shows as a sources and uses table until edited.
   const [editing, setEditing] = useState(!scenario.project);
   // Once saved, show the overrides as the server keeps them. Adjustments
@@ -281,6 +299,7 @@ export function ScenarioEditor({
     scenario.overrides,
     scenario.project,
     scenario.capex,
+    scenario.covenants,
   ]);
   const [synced, setSynced] = useState(saved);
   if (synced !== saved) {
@@ -288,11 +307,20 @@ export function ScenarioEditor({
     setValues(typed());
     if (!editing) setProject(toDraft(scenario.project));
     setCapex(capexDraft(scenario.capex));
+    setCovenants(savedCovenants());
   }
   const capexDirty =
     JSON.stringify(capexInput(capex)) !==
     JSON.stringify(capexInput(capexDraft(scenario.capex)));
+  const covenantsInput = covenants && covenantInput(covenants);
+  const covenantsDirty =
+    JSON.stringify(covenantsInput) !==
+    JSON.stringify(
+      scenario.covenants &&
+        covenantInput(covenantDrafts(scenario.covenants, setup.metrics)),
+    );
   const dirty =
+    covenantsDirty ||
     JSON.stringify(values) !== JSON.stringify(typed()) ||
     capexDirty ||
     (editing &&
@@ -316,6 +344,7 @@ export function ScenarioEditor({
         overrides,
         project: toInput(project),
         capex: capexInput(capex),
+        covenants: covenantsInput,
       });
       // Inside the transition, so the message lands with the refreshed results.
       startTransition(() => {
@@ -442,6 +471,73 @@ export function ScenarioEditor({
         stale={capexDirty}
         onChange={setCapex}
       />
+
+      <Card
+        title="Covenants"
+        description={
+          covenants
+            ? "Proposed for this deal, tested in this scenario instead of the borrower's in force."
+            : "This scenario tests the borrower's covenants in force. A deal can propose its own: eased, tightened, or stepping by year."
+        }
+        actions={
+          covenants ? (
+            <button
+              type="button"
+              className={button.ghost}
+              onClick={() => setCovenants(null)}
+            >
+              Test those in force instead
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={button.secondary}
+              onClick={() =>
+                setCovenants(
+                  covenantDrafts(setup.covenantsInForce, setup.metrics),
+                )
+              }
+            >
+              <Pencil />
+              Propose covenants
+            </button>
+          )
+        }
+      >
+        {covenants ? (
+          <CovenantEditor
+            drafts={covenants}
+            metrics={setup.metrics}
+            onChange={setCovenants}
+          />
+        ) : setup.covenantsInForce.length ? (
+          <ul className="flex flex-col gap-1 text-sm">
+            {setup.covenantsInForce.map((c) => {
+              const format = setup.metrics.find(
+                (m) => m.code === c.metric,
+              )?.format;
+              return (
+                <li key={c.id}>
+                  {c.name}:{" "}
+                  <span className="text-muted">
+                    {c.test === "min" ? "at least" : "at most"}{" "}
+                    {c.thresholds
+                      .map(
+                        (t) =>
+                          `${shownThreshold(t.value, format)}${t.from === null ? "" : ` from ${t.from}`}`,
+                      )
+                      .join(", then ")}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted">
+            The borrower has no covenants in force.
+          </p>
+        )}
+      </Card>
 
       <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface/95 px-4 py-3 shadow-lg backdrop-blur">
         <button
