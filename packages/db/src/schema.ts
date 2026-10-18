@@ -328,10 +328,7 @@ export const statementPeriods = pgTable(
       .references(() => scoringModelVersions.id),
     // Net income as printed on the statements, which the spread's must match.
     reportedNetIncome: numeric(),
-    reconciliation: jsonb()
-      .$type<ReconciliationLine[]>()
-      .notNull()
-      .default([]),
+    reconciliation: jsonb().$type<ReconciliationLine[]>().notNull().default([]),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
