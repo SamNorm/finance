@@ -6,6 +6,7 @@ import {
   entryId,
   parseAmount,
   parseDate,
+  parseAdjustments,
   parseRate,
   parseTerms,
   type FinancingPeriod,
@@ -28,6 +29,8 @@ export interface ExistingLoanInput extends LoanTermsInput {
   name?: unknown;
   balance?: unknown;
   rate?: unknown;
+  // Dated after the schedule's.
+  adjustments?: unknown;
 }
 
 export function normalizeDebtSchedule(input: {
@@ -46,12 +49,20 @@ export function normalizeDebtSchedule(input: {
       const what = name || `Loan ${i + 1}`;
       if (!name)
         throw new DomainError("invalid", `${what}: give the loan a name.`);
+      const terms = parseTerms(loan, what);
+      const adjustments = parseAdjustments(
+        loan.adjustments,
+        what,
+        terms.frequency ?? "monthly",
+        asOf,
+      );
       return {
         id: entryId(loan.id),
         name,
         balance: parseAmount(loan.balance, what, "balance", true),
         rate: parseRate(loan.rate, what),
-        ...parseTerms(loan, what),
+        ...terms,
+        ...(adjustments.length ? { adjustments } : {}),
       };
     }),
   };
@@ -60,6 +71,8 @@ export function normalizeDebtSchedule(input: {
 export interface ScheduleValues {
   interest: (FinancingValue | null)[];
   principal: (FinancingValue | null)[];
+  // Extra payments, apart from scheduled principal.
+  prepayments: (FinancingValue | null)[];
   balance: (FinancingValue | null)[];
 }
 
@@ -76,7 +89,12 @@ export function debtScheduleValues(
 ): ScheduleValues {
   const blank = periods.map(() => null);
   if (!schedule.asOf || !schedule.loans.length)
-    return { interest: blank, principal: blank, balance: blank };
+    return {
+      interest: blank,
+      principal: blank,
+      prepayments: blank,
+      balance: blank,
+    };
   const { asOf } = schedule;
   const start = monthIndex(asOf);
   const loans = schedule.loans.map((loan) => ({
@@ -86,6 +104,7 @@ export function debtScheduleValues(
   const result: ScheduleValues = {
     interest: [],
     principal: [],
+    prepayments: [],
     balance: [],
   };
   for (const period of periods) {
@@ -105,12 +124,14 @@ export function debtScheduleValues(
     } else {
       result.interest.push(null);
       result.principal.push(null);
+      result.prepayments.push(null);
       result.balance.push(null);
       continue;
     }
     const cells = {
       interest: { value: new Dec(0), parts: [] as FinancingValue["parts"] },
       principal: { value: new Dec(0), parts: [] as FinancingValue["parts"] },
+      prepayments: { value: new Dec(0), parts: [] as FinancingValue["parts"] },
       balance: { value: new Dec(0), parts: [] as FinancingValue["parts"] },
     };
     for (const { loan, schedule: s } of loans) {
@@ -118,6 +139,7 @@ export function debtScheduleValues(
       for (const [key, amount] of [
         ["interest", flows.interest.times(share)],
         ["principal", flows.principal.times(share)],
+        ["prepayments", flows.extra.times(share)],
         ["balance", s.balanceAt(at)],
       ] as const) {
         cells[key].value = cells[key].value!.plus(amount);
@@ -131,6 +153,7 @@ export function debtScheduleValues(
     }
     result.interest.push(cells.interest);
     result.principal.push(cells.principal);
+    result.prepayments.push(cells.prepayments);
     result.balance.push(cells.balance);
   }
   return result;

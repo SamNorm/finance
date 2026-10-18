@@ -463,6 +463,27 @@ export async function updateScenario(
   return updated!;
 }
 
+// Replaces one of a scenario's new loans' schedule adjustments, as typed.
+export async function setProjectLoanAdjustments(
+  db: Db,
+  ctx: Context,
+  scenarioId: string,
+  loanId: string,
+  adjustments: unknown,
+): Promise<Scenario> {
+  const { project } = await findScenario(db, ctx, scenarioId);
+  if (!project?.sources.some((s) => s.kind === "loan" && s.id === loanId))
+    throw new DomainError("not_found", "No such loan.");
+  return updateScenario(db, ctx, scenarioId, {
+    project: {
+      ...project,
+      sources: project.sources.map((s) =>
+        s.id === loanId ? { ...s, adjustments } : s,
+      ),
+    } as ProjectInput,
+  });
+}
+
 // A copy of a scenario, placed last, to vary from it.
 export async function duplicateScenario(
   db: Db,

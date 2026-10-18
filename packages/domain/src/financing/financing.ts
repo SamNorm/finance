@@ -7,6 +7,7 @@ import {
   entryId,
   parseAmount,
   parseDate,
+  parseAdjustments,
   parseRate,
   parseTerms,
   type Amount,
@@ -57,6 +58,12 @@ export const FINANCING_INPUTS = [
       "Scheduled principal on the new loans, less principal no longer paid on subordinated debt. In actual periods, the first twelve months after closing.",
   },
   {
+    code: "PROFORMA_PREPAYMENTS",
+    label: "Post-project extra payments",
+    description:
+      "Extra payments of principal on the new loans, from their schedule adjustments. Apart from scheduled principal, so a model chooses whether its debt service counts them. In actual periods, the first twelve months after closing.",
+  },
+  {
     code: "PROFORMA_LINE_INTEREST",
     label: "Line of credit interest",
     description:
@@ -79,6 +86,12 @@ export const FINANCING_INPUTS = [
     label: "Existing loans: principal",
     description:
       "Scheduled principal on the borrower's existing loans, from its debt schedule. Blank in actual periods except post-project.",
+  },
+  {
+    code: "DEBT_SCHEDULE_PREPAYMENTS",
+    label: "Existing loans: extra payments",
+    description:
+      "Extra payments of principal on the borrower's existing loans, from their schedule adjustments. Apart from scheduled principal, so a model chooses whether its debt service counts them. Blank in actual periods except post-project.",
   },
   {
     code: "DEBT_SCHEDULE_BALANCE",
@@ -192,13 +205,21 @@ export function normalizeProject(
       const name = named(s.name, `Source ${i + 1}`);
       const amount = parseAmount(s.amount, name, "amount", true);
       if (s.kind === "loan") {
+        const terms = parseTerms(s, name);
+        const adjustments = parseAdjustments(
+          s.adjustments,
+          name,
+          terms.frequency ?? "monthly",
+          closing,
+        );
         return {
           kind: "loan",
           id: entryId(s.id),
           name,
           amount,
           rate: parseRate(s.rate, name),
-          ...parseTerms(s, name),
+          ...terms,
+          ...(adjustments.length ? { adjustments } : {}),
         };
       }
       if (s.kind !== "funds")
@@ -354,6 +375,7 @@ export function projectValues(
       );
       add("PROFORMA_INTEREST", p, loan, flows.interest.times(w.share));
       add("PROFORMA_PRINCIPAL", p, loan, flows.principal.times(w.share));
+      add("PROFORMA_PREPAYMENTS", p, loan, flows.extra.times(w.share));
     }
     const open = new Dec(w.open).div(12).times(w.share);
     for (const line of project.lines) {

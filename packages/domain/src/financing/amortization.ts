@@ -106,6 +106,14 @@ export function paymentDate(
   );
 }
 
+export type Adjustment = schema.ScheduleAdjustment;
+
+export const ADJUSTMENTS: Record<Adjustment["kind"], string> = {
+  extra: "Extra payment",
+  payment: "Payment change",
+  skip: "Skipped payments",
+};
+
 export interface Amortizing {
   balance: string;
   // Annual rate, e.g. "0.065".
@@ -118,6 +126,8 @@ export interface Amortizing {
   frequency?: Frequency;
   // Starting with the first payment.
   moratorium?: Moratorium;
+  // Changes to the schedule after its start, in any order.
+  adjustments?: Adjustment[];
 }
 
 export interface Payment {
@@ -125,35 +135,80 @@ export interface Payment {
   // The month it counts in.
   month: number;
   interest: Amount;
+  // Principal the schedule calls for.
   principal: Amount;
-  // Interest added to the balance instead of paid, in a moratorium on
-  // principal and interest.
+  // Principal paid on top, by extra payments.
+  extra: Amount;
+  // Interest added to the balance instead of paid: in a moratorium or skip on
+  // principal and interest, or when a changed payment doesn't cover it.
   capitalized: Amount;
   // The balance after the payment.
   after: Amount;
-  // Whether it falls in the moratorium.
+  // Whether it falls in the moratorium, is skipped, or is at a changed amount.
   moratorium: boolean;
+  skipped: boolean;
+  changed: boolean;
 }
 
 export interface Schedule {
-  // Interest and principal paid in the months after `from`, up to and
-  // including `to`.
-  flows(from: number, to: number): { interest: Amount; principal: Amount };
+  // Interest, scheduled principal and extra principal paid in the months
+  // after `from`, up to and including `to`.
+  flows(
+    from: number,
+    to: number,
+  ): { interest: Amount; principal: Amount; extra: Amount };
   // What's owed at the end of a month.
   balanceAt(month: number): Amount;
-  // The payments after the start: all of them, or for a loan that never
-  // matures (interest only), those in the `horizon` months after its month.
+  // The payments after the start, until the loan is repaid; for an
+  // interest-only loan, those in the `horizon` months after the start's.
   payments(horizon?: number): Payment[];
 }
 
 const MAX_HISTORY = 120;
+// Payments stop after this many years, for a loan its payments never repay.
+const MAX_YEARS_PAID = 100;
+// What decimals leave owed on a repaid loan.
+const PAID = new Dec("1e-6");
 const zero = new Dec(0);
+
+interface Regular {
+  // A blended payment, or equal principal; neither for interest only.
+  level: Amount | null;
+  step: Amount | null;
+}
+
+// The regular payment that repays `owed` over `payments` payments.
+function regularPayment(
+  repayment: Repayment,
+  owed: Amount,
+  rate: Amount,
+  payments: number,
+): Regular {
+  if (repayment === "equal_principal")
+    return { level: null, step: owed.div(payments) };
+  if (repayment === "blended")
+    return {
+      level: rate.isZero()
+        ? owed.div(payments)
+        : owed.times(rate).div(new Dec(1).minus(rate.plus(1).pow(-payments))),
+      step: null,
+    };
+  return { level: null, step: null };
+}
 
 // The loan's payments after `start`, the date its balance is known at. With
 // `history`, the same payments run back before it, for periods that began
 // earlier (an existing loan known at a date); without, nothing is owed before
-// it (a new loan drawn that day). A moratorium comes first; when the
-// amortization includes it, the principal is repaid over what's left.
+// it (a new loan drawn that day).
+//
+// A moratorium comes first; when the amortization includes it, the principal
+// is repaid over what's left. Adjustments then apply in date order, each to
+// the first payment on or after its date, on the balance as it stands. For a
+// payment, a skip wins over a payment change, which wins over the
+// moratorium. "Keeping the end" repays what's owed by the loan's maturity,
+// which skips that keep the payment push back. An extra payment during the
+// moratorium that keeps the payment leaves the payment after it as it would
+// have been.
 export function amortize(
   loan: Amortizing,
   start: string,
@@ -165,7 +220,6 @@ export function amortize(
   const rate = new Dec(loan.rate).div(perYear);
   const startMonth = monthIndex(start);
   const moratorium = loan.moratorium;
-  const full = moratorium?.kind === "full";
   // Payments in the moratorium, then payments that repay principal.
   const held = moratorium?.payments ?? 0;
   const repaying =
@@ -176,78 +230,144 @@ export function amortize(
           paymentCount(loan.months, frequency) -
             (moratorium?.included ? held : 0),
         );
-  const count = held + repaying;
   const when = (k: number) => ({
     date: paymentDate(start, frequency, k),
     month: startMonth + Math.ceil((12 * k) / perYear),
   });
+  // The terms the loan starts on, which payments before the start follow.
+  const initial = regularPayment(loan.repayment, balance, rate, repaying);
+  const sorted = [...(loan.adjustments ?? [])].sort((a, b) =>
+    a.date.localeCompare(b.date),
+  );
 
-  // The level payment or equal principal, set on the balance the
-  // amortization starts from: the known one, or the one the moratorium
-  // leaves.
-  let level: Amount | null = null;
-  let step: Amount | null = null;
-  const settle = (owed: Amount) => {
-    if (loan.repayment === "equal_principal") step = owed.div(repaying);
-    if (loan.repayment === "blended")
-      level = rate.isZero()
-        ? owed.div(repaying)
-        : owed.times(rate).div(new Dec(1).minus(rate.plus(1).pow(-repaying)));
-  };
-  if (!held) settle(balance);
+  // Interest and principal on a payment of `amount`, principal and interest
+  // together; interest it doesn't cover is capitalized.
+  const blended = (amount: Amount, interest: Amount) =>
+    amount.gte(interest)
+      ? { paid: interest, principal: amount.minus(interest), capitalized: zero }
+      : { paid: amount, principal: zero, capitalized: interest.minus(amount) };
 
-  // forward[k - 1] is the k-th payment after start.
-  const forward: Payment[] = [];
-  const paymentAfter = (k: number): Payment | null => {
-    if (k < 1 || k > count) return null;
-    while (forward.length < k) {
-      const n = forward.length + 1;
-      const owed = forward.at(-1)?.after ?? balance;
-      const interest = owed.times(rate);
-      if (n <= held) {
-        forward.push(
-          full
-            ? {
-                ...when(n),
-                interest: zero,
-                principal: zero,
-                capitalized: interest,
-                after: owed.plus(interest),
-                moratorium: true,
-              }
-            : {
-                ...when(n),
-                interest,
-                principal: zero,
-                capitalized: zero,
-                after: owed,
-                moratorium: true,
-              },
-        );
-        continue;
+  // The k-th payment after start, for a set of adjustments. Payments are
+  // worked out in order, carrying the loan's state from one to the next.
+  const forwardOf = (adjustments: readonly Adjustment[]) => {
+    const list: Payment[] = [];
+    let owed = balance;
+    let regular: Regular = held ? { level: null, step: null } : initial;
+    // The payment the loan is due to end with.
+    let end = held + repaying;
+    let skip: {
+      left: number;
+      suspends: Moratorium["kind"];
+      keep: "payment" | "end";
+    } | null = null;
+    let change: { amount: Amount; until: string | null } | null = null;
+    let next = 0;
+    let keptInMoratorium = false;
+    let repaid = false;
+
+    const step = () => {
+      const n = list.length + 1;
+      const at = when(n);
+      let extra = zero;
+      let reamortize = false;
+      while (next < adjustments.length && adjustments[next]!.date <= at.date) {
+        const a = adjustments[next++]!;
+        if (a.kind === "extra") {
+          extra = extra.plus(a.amount);
+          if (a.keep === "end") reamortize = true;
+          else if (n <= held) keptInMoratorium = true;
+        } else if (a.kind === "payment") {
+          change = { amount: new Dec(a.amount), until: a.until };
+        } else {
+          skip = { left: a.payments, suspends: a.suspends, keep: a.keep };
+          if (a.keep === "payment") end += a.payments;
+        }
       }
-      if (n === held + 1 && held) settle(owed);
-      const principal =
-        loan.repayment === "interest_only"
-          ? zero
-          : n === count
-            ? owed
-            : Dec.min(step ?? level!.minus(interest), owed);
-      forward.push({
-        ...when(n),
-        interest,
+      if (change?.until && at.date > change.until) change = null;
+
+      const interest = owed.times(rate);
+      let paid = interest;
+      let principal = zero;
+      let capitalized = zero;
+      const suspends = skip
+        ? skip.suspends
+        : !change && n <= held
+          ? moratorium!.kind
+          : null;
+      if (suspends === "full") {
+        paid = zero;
+        capitalized = interest;
+      } else if (suspends === null) {
+        const amount = change?.amount ?? regular.level;
+        if (loan.repayment === "blended" && amount)
+          ({ paid, principal, capitalized } = blended(amount, interest));
+        else principal = change?.amount ?? regular.step ?? zero;
+      }
+      const owing = owed.plus(capitalized);
+      principal = Dec.min(principal, owing);
+      extra = Dec.min(extra, owing.minus(principal));
+      let after = owing.minus(principal).minus(extra);
+      if (after.lt(PAID)) {
+        principal = principal.plus(after);
+        after = zero;
+        repaid = true;
+      }
+      list.push({
+        ...at,
+        interest: paid,
         principal,
-        capitalized: zero,
-        after: owed.minus(principal),
-        moratorium: false,
+        extra,
+        capitalized,
+        after,
+        moratorium: n <= held,
+        skipped: skip !== null,
+        changed: !skip && change !== null,
       });
-    }
-    return forward[k - 1]!;
+      owed = after;
+
+      if (skip && --skip.left === 0) {
+        if (skip.keep === "end") reamortize = true;
+        skip = null;
+      }
+      // The moratorium's over: the regular payment starts.
+      if (n === held)
+        regular = regularPayment(
+          loan.repayment,
+          keptInMoratorium
+            ? forwardOf(
+                adjustments.filter(
+                  (a) => !(a.kind === "extra" && a.keep === "payment"),
+                ),
+              )(held)!.after
+            : after,
+          rate,
+          end - held,
+        );
+      else if (reamortize && n > held)
+        regular = regularPayment(
+          loan.repayment,
+          after,
+          rate,
+          Math.max(1, end - n),
+        );
+    };
+
+    return (k: number): Payment | null => {
+      while (
+        list.length < k &&
+        !repaid &&
+        list.length < MAX_YEARS_PAID * perYear
+      )
+        step();
+      return list[k - 1] ?? null;
+    };
   };
+  const paymentAfter = forwardOf(sorted);
 
   // backward[j] is the payment j periods before start (j = 0 is a payment on
-  // the start date, which left the known balance), back ten years. A loan in
-  // a moratorium at its date has been in it all along.
+  // the start date, which left the known balance), back ten years, on the
+  // terms the loan starts with. A loan in a moratorium at its date has been
+  // in it all along.
   const backward: Payment[] = [];
   const paymentBefore = (j: number): Payment | null => {
     if (!history) return null;
@@ -258,10 +378,12 @@ export function amortize(
       const after = later
         ? later.after.plus(later.principal).minus(later.capitalized)
         : balance;
-      if (held && full) {
+      const flags = { extra: zero, skipped: false, changed: false };
+      if (held && moratorium!.kind === "full") {
         const owed = after.div(rate.plus(1));
         backward.push({
           ...at,
+          ...flags,
           interest: zero,
           principal: zero,
           capitalized: after.minus(owed),
@@ -273,11 +395,12 @@ export function amortize(
       const owed =
         held || loan.repayment === "interest_only"
           ? after
-          : step
-            ? after.plus(step)
-            : after.plus(level!).div(rate.plus(1));
+          : initial.step
+            ? after.plus(initial.step)
+            : after.plus(initial.level!).div(rate.plus(1));
       backward.push({
         ...at,
+        ...flags,
         interest: owed.times(rate),
         principal: owed.minus(after),
         capitalized: zero,
@@ -292,13 +415,15 @@ export function amortize(
     flows(from, to) {
       let interest = zero;
       let principal = zero;
+      let extra = zero;
       const add = (payment: Payment) => {
         interest = interest.plus(payment.interest);
         principal = principal.plus(payment.principal);
+        extra = extra.plus(payment.extra);
       };
-      for (let k = 1; k <= count; k++) {
-        const payment = paymentAfter(k)!;
-        if (payment.month > to) break;
+      for (let k = 1; ; k++) {
+        const payment = paymentAfter(k);
+        if (!payment || payment.month > to) break;
         if (payment.month > from) add(payment);
       }
       for (let j = 0; ; j++) {
@@ -306,14 +431,14 @@ export function amortize(
         if (!payment || payment.month <= from) break;
         if (payment.month <= to) add(payment);
       }
-      return { interest, principal };
+      return { interest, principal, extra };
     },
     balanceAt(month) {
       if (month >= startMonth) {
         let owed = balance;
-        for (let k = 1; k <= count; k++) {
-          const payment = paymentAfter(k)!;
-          if (payment.month > month) break;
+        for (let k = 1; ; k++) {
+          const payment = paymentAfter(k);
+          if (!payment || payment.month > month) break;
           owed = payment.after;
         }
         return owed;
@@ -328,9 +453,13 @@ export function amortize(
     },
     payments(horizon = MAX_HISTORY) {
       const list: Payment[] = [];
-      for (let k = 1; k <= count; k++) {
-        const payment = paymentAfter(k)!;
-        if (!Number.isFinite(count) && payment.month > startMonth + horizon)
+      for (let k = 1; ; k++) {
+        const payment = paymentAfter(k);
+        if (!payment) break;
+        if (
+          loan.repayment === "interest_only" &&
+          payment.month > startMonth + horizon
+        )
           break;
         list.push(payment);
       }

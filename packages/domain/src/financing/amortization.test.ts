@@ -295,3 +295,187 @@ describe("moratoriums and payment frequencies", () => {
     for (const terms of bad) expect(() => parseTerms(terms, "Loan")).toThrow();
   });
 });
+
+describe("schedule adjustments", () => {
+  const date = "2025-09-30";
+  const start = monthIndex(date);
+  const term = {
+    balance: "120000",
+    rate: "0.06",
+    repayment: "equal_principal" as const,
+    months: 120,
+  };
+
+  it("applies an extra payment and finishes sooner, or keeps the end", () => {
+    const sooner = amortize(
+      {
+        ...term,
+        adjustments: [
+          {
+            id: "a",
+            kind: "extra",
+            date: "2026-03-15",
+            amount: "30000",
+            keep: "payment",
+          },
+        ],
+      },
+      date,
+    );
+    const payments = sooner.payments();
+    // With the March payment: 120,000 less six payments of 1,000 and 30,000.
+    expect(payments[5]!.date).toBe("2026-03-31");
+    expect(round(payments[5]!.extra)).toBe("30000.00");
+    expect(round(payments[5]!.after)).toBe("84000.00");
+    expect(payments).toHaveLength(90);
+    // Extra payments stay apart from the scheduled principal.
+    const year = sooner.flows(start, start + 12);
+    expect(round(year.principal)).toBe("12000.00");
+    expect(round(year.extra)).toBe("30000.00");
+
+    const sameEnd = amortize(
+      {
+        ...term,
+        adjustments: [
+          {
+            id: "a",
+            kind: "extra",
+            date: "2026-03-15",
+            amount: "30000",
+            keep: "end",
+          },
+        ],
+      },
+      date,
+    ).payments();
+    expect(sameEnd).toHaveLength(120);
+    // 84,000 over the 114 payments left.
+    expect(round(sameEnd[6]!.principal)).toBe("736.84");
+  });
+
+  it("changes the payment for a while, then goes back to it", () => {
+    const loan = amortize(
+      {
+        balance: "100000",
+        rate: "0.12",
+        repayment: "blended",
+        months: 60,
+        adjustments: [
+          {
+            id: "a",
+            kind: "payment",
+            date: "2025-10-01",
+            amount: "3000",
+            until: "2026-09-30",
+          },
+        ],
+      },
+      date,
+    ).payments();
+    const total = (i: number) =>
+      round(loan[i]!.interest.plus(loan[i]!.principal));
+    expect(total(0)).toBe("3000.00");
+    expect(loan.filter((p) => p.changed)).toHaveLength(12);
+    // Back to the level payment, so the loan ends sooner.
+    expect(total(12)).toBe("2224.44");
+    expect(loan.length).toBeLessThan(60);
+
+    // A payment short of the interest capitalizes the rest.
+    const short = amortize(
+      {
+        balance: "100000",
+        rate: "0.12",
+        repayment: "blended",
+        months: 60,
+        adjustments: [
+          {
+            id: "a",
+            kind: "payment",
+            date: "2025-10-01",
+            amount: "500",
+            until: null,
+          },
+        ],
+      },
+      date,
+    ).payments(24);
+    expect(round(short[0]!.interest)).toBe("500.00");
+    expect(round(short[0]!.capitalized)).toBe("500.00");
+    expect(round(short[0]!.after)).toBe("100500.00");
+  });
+
+  it("skips payments, then ends later or keeps the end", () => {
+    const later = amortize(
+      {
+        ...term,
+        adjustments: [
+          {
+            id: "a",
+            kind: "skip",
+            date: "2026-01-01",
+            payments: 3,
+            suspends: "principal",
+            keep: "payment",
+          },
+        ],
+      },
+      date,
+    ).payments();
+    expect(later).toHaveLength(123);
+    expect(later.filter((p) => p.skipped).map((p) => p.date)).toEqual([
+      "2026-01-31",
+      "2026-02-28",
+      "2026-03-31",
+    ]);
+    // Interest is still paid while principal is skipped.
+    expect(round(later[3]!.interest)).toBe("585.00");
+    expect(round(later[3]!.principal)).toBe("0.00");
+
+    const sameEnd = amortize(
+      {
+        ...term,
+        adjustments: [
+          {
+            id: "a",
+            kind: "skip",
+            date: "2025-10-01",
+            payments: 2,
+            suspends: "full",
+            keep: "end",
+          },
+        ],
+      },
+      date,
+    ).payments();
+    // 120,000 with two months of interest capitalized, over 118 payments.
+    expect(round(sameEnd[1]!.after)).toBe("121203.00");
+    expect(round(sameEnd[2]!.principal)).toBe("1027.14");
+    expect(sameEnd).toHaveLength(120);
+  });
+
+  it("keeps the payment a moratorium would have led to after an extra payment in it", () => {
+    const loan = amortize(
+      {
+        balance: "100000",
+        rate: "0.12",
+        repayment: "blended",
+        months: 12,
+        moratorium: { kind: "full", payments: 3, included: false },
+        adjustments: [
+          {
+            id: "a",
+            kind: "extra",
+            date: "2025-11-30",
+            amount: "50000",
+            keep: "payment",
+          },
+        ],
+      },
+      date,
+    ).payments();
+    expect(round(loan[2]!.after)).toBe("52530.10");
+    // The 9,154.10 the loan pays without the extra payment.
+    expect(round(loan[3]!.interest.plus(loan[3]!.principal))).toBe("9154.10");
+    expect(loan.length).toBeLessThan(15);
+  });
+});

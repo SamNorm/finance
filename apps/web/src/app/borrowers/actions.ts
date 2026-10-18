@@ -8,6 +8,7 @@ import {
   pasteSpread,
   previewPaste,
   setDebtSchedule,
+  setExistingLoanAdjustments,
   setValue,
   STATEMENT_QUALITIES,
   updateEntity,
@@ -20,7 +21,7 @@ import {
 } from "@finance/domain";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
-import { attempt, invalid, run, text } from "@/lib/actions";
+import { adjustmentFields, attempt, invalid, run, text } from "@/lib/actions";
 
 function quality(value: unknown): StatementQuality {
   if (!STATEMENT_QUALITIES.includes(value as StatementQuality)) {
@@ -146,9 +147,28 @@ export async function saveDebtScheduleAction(
       asOf: String(schedule.asOf ?? ""),
       loans: schedule.loans.map((loan) =>
         Object.fromEntries(
-          Object.entries(loan ?? {}).map(([k, v]) => [k, String(v ?? "")]),
+          Object.entries(loan ?? {}).map(([k, v]) => [
+            k,
+            k === "adjustments" ? adjustmentFields(v ?? []) : String(v ?? ""),
+          ]),
         ),
       ),
     });
   });
+}
+
+export async function saveLoanAdjustmentsAction(
+  entityId: string,
+  loanId: string,
+  adjustments: unknown[],
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    setExistingLoanAdjustments(
+      db,
+      ctx,
+      String(entityId),
+      String(loanId),
+      adjustmentFields(adjustments),
+    ),
+  );
 }

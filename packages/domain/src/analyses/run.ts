@@ -201,6 +201,9 @@ export function runModel(input: RunInput): AnalysisRun {
   const blank = { value: null, parts: [] };
   financing.DEBT_SCHEDULE_INTEREST = schedule.interest.map((v) => v ?? blank);
   financing.DEBT_SCHEDULE_PRINCIPAL = schedule.principal.map((v) => v ?? blank);
+  financing.DEBT_SCHEDULE_PREPAYMENTS = schedule.prepayments.map(
+    (v) => v ?? blank,
+  );
   financing.DEBT_SCHEDULE_BALANCE = schedule.balance.map((v) => v ?? blank);
   const isFinancing = (code: string): code is FinancingCode =>
     FINANCING_CODES.includes(code);

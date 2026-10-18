@@ -1,7 +1,11 @@
 "use client";
 
 import type { Project } from "@finance/domain";
-import { REPAYMENTS, type Repayment } from "@finance/domain/amortization";
+import {
+  REPAYMENTS,
+  type Adjustment,
+  type Repayment,
+} from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -18,6 +22,7 @@ import {
 import { button, input } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
+import { saveProjectLoanAdjustmentsAction } from "../actions";
 
 // A scenario's project: a sources and uses table at closing, plus line of
 // credit increases and subordinations, which move no funds at closing.
@@ -28,7 +33,8 @@ export interface BalanceSheetItem {
   side: "assets" | "claims";
 }
 
-// A loan's terms are kept on other funds too, unused.
+// A loan's terms are kept on other funds too, unused. Adjustments are edited
+// in the loan's schedule, and kept as saved here.
 interface SourceDraft extends TermsDraft {
   key: string;
   id?: string;
@@ -37,6 +43,7 @@ interface SourceDraft extends TermsDraft {
   amount: string;
   rate: string;
   item: string;
+  adjustments: Adjustment[];
 }
 interface UseDraft {
   key: string;
@@ -98,6 +105,7 @@ export function toDraft(project: Project | null): ProjectDraft {
             rate: percent(s.rate),
             ...termsDraft({ ...s, balance: s.amount }),
             item: "",
+            adjustments: s.adjustments ?? [],
           }
         : {
             key: s.id,
@@ -108,6 +116,7 @@ export function toDraft(project: Project | null): ProjectDraft {
             rate: "",
             ...NEW_TERMS,
             item: s.item,
+            adjustments: [],
           },
     ),
     uses: project.uses.map((u) => ({
@@ -155,6 +164,7 @@ export function toInput(draft: ProjectDraft) {
             amount: s.amount,
             rate: s.rate,
             ...termsInput(s),
+            adjustments: s.adjustments,
           }
         : {
             kind: s.kind,
@@ -195,13 +205,16 @@ const typed = (raw: string) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-// The project at a glance: what funds it and what it pays for.
+// The project at a glance: what funds it and what it pays for. Each new loan
+// opens its schedule, where the scenario's adjustments to it are saved.
 export function SourcesUses({
   project,
   items,
+  scenarioId,
 }: {
   project: Project;
   items: BalanceSheetItem[];
+  scenarioId: string;
 }) {
   const label = (code: string) =>
     items.find((i) => i.code === code)?.label ?? code;
@@ -282,6 +295,13 @@ export function SourcesUses({
                   loan={{ ...s, balance: s.amount }}
                   start={project.closing}
                   className="text-left text-accent hover:underline"
+                  save={(adjustments) =>
+                    saveProjectLoanAdjustmentsAction(
+                      scenarioId,
+                      s.id,
+                      adjustments,
+                    )
+                  }
                 >
                   {s.name}
                 </LoanSchedule>
@@ -575,6 +595,7 @@ export function ProjectEditor({
                       ...NEW_TERMS,
                       years: "10",
                       item: "",
+                      adjustments: [],
                     },
                   ],
                 })
@@ -598,6 +619,7 @@ export function ProjectEditor({
                       rate: "",
                       ...NEW_TERMS,
                       item: "",
+                      adjustments: [],
                     },
                   ],
                 })

@@ -11,6 +11,7 @@ import {
   repinAnalysis,
   setAnalysisCharts,
   setModelInput,
+  setProjectLoanAdjustments,
   updateAnalysis,
   updateScenario,
   type ChartInput,
@@ -18,7 +19,7 @@ import {
 } from "@finance/domain";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
-import { attempt, invalid, run, text } from "@/lib/actions";
+import { adjustmentFields, attempt, invalid, run, text } from "@/lib/actions";
 import { isOneOf, PROJECTION_MODES } from "@/lib/labels";
 
 const page = (analysisId: string, scenarioId?: string) =>
@@ -171,6 +172,22 @@ export async function updateScenarioAction(
       project,
     });
   });
+}
+
+export async function saveProjectLoanAdjustmentsAction(
+  scenarioId: string,
+  loanId: string,
+  adjustments: unknown[],
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    setProjectLoanAdjustments(
+      db,
+      ctx,
+      String(scenarioId),
+      String(loanId),
+      adjustmentFields(adjustments),
+    ),
+  );
 }
 
 export async function duplicateScenarioAction(

@@ -161,6 +161,25 @@ export async function setDebtSchedule(
   return entity!;
 }
 
+// Replaces one existing loan's schedule adjustments, as typed.
+export async function setExistingLoanAdjustments(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  loanId: string,
+  adjustments: unknown,
+): Promise<Entity> {
+  const { debtSchedule } = await getEntity(db, ctx, entityId);
+  if (!debtSchedule.loans.some((loan) => loan.id === loanId))
+    throw new DomainError("not_found", "No such loan.");
+  return setDebtSchedule(db, ctx, entityId, {
+    asOf: debtSchedule.asOf,
+    loans: debtSchedule.loans.map((loan) =>
+      loan.id === loanId ? { ...loan, adjustments } : loan,
+    ),
+  });
+}
+
 export async function updateEntity(
   db: Db,
   ctx: Context,

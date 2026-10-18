@@ -158,4 +158,52 @@ describe("debt schedule", () => {
     expect(round(post.principal[1]!.value)).toBe("90000.00");
     expect(round(post.balance[0]!.value)).toBe("1490000.00");
   });
+
+  it("reports extra payments apart from principal, after the schedule's date", () => {
+    const loan = {
+      name: "Term loan",
+      balance: "1,200,000",
+      rate: "6%",
+      repayment: "equal_principal",
+      years: "10",
+    };
+    const withExtra = normalizeDebtSchedule({
+      asOf: "2025-09-30",
+      loans: [
+        {
+          ...loan,
+          adjustments: [
+            { kind: "extra", date: "2025-11-15", amount: "100,000" },
+          ],
+        },
+      ],
+    });
+    expect(withExtra.loans[0]!.adjustments).toEqual([
+      {
+        id: expect.any(String),
+        kind: "extra",
+        date: "2025-11-15",
+        amount: "100000",
+        keep: "payment",
+      },
+    ]);
+    const values = debtScheduleValues(withExtra, [
+      { end: "2025-12-31", months: 12, mode: "projected" },
+    ]);
+    expect(round(values.principal[0]!.value)).toBe("120000.00");
+    expect(round(values.prepayments[0]!.value)).toBe("100000.00");
+    expect(round(values.balance[0]!.value)).toBe("1070000.00");
+
+    expect(() =>
+      normalizeDebtSchedule({
+        asOf: "2025-09-30",
+        loans: [
+          {
+            ...loan,
+            adjustments: [{ kind: "extra", date: "2025-09-30", amount: "1" }],
+          },
+        ],
+      }),
+    ).toThrow(/must come after 2025-09-30/);
+  });
 });

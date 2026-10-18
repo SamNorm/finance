@@ -25,6 +25,7 @@ import {
   addPeriod,
   createEntity,
   setDebtSchedule,
+  setExistingLoanAdjustments,
   setValue,
 } from "../spreads/service";
 import { runModel, type RunInput } from "./run";
@@ -715,7 +716,7 @@ describe("analysis service", () => {
       }),
       "invalid",
     );
-    await setDebtSchedule(db, ctx, entity.id, {
+    const saved = await setDebtSchedule(db, ctx, entity.id, {
       asOf: "2024-12-31",
       loans: [
         {
@@ -737,6 +738,19 @@ describe("analysis service", () => {
     });
     // Actual years still read the statements.
     expect(base.cells.DEBT_SERVICE![1]!.value).toBe("200");
+
+    // An extra payment of 300 with June's: less interest after it, and the
+    // same scheduled principal, since debt service leaves extra payments out.
+    const loanId = saved.debtSchedule.loans[0]!.id;
+    await setExistingLoanAdjustments(db, ctx, entity.id, loanId, [
+      { kind: "extra", date: "2025-06-15", amount: "300" },
+    ]);
+    ({ base } = await runAnalysis(db, ctx, analysis.id));
+    expect(base.cells.DEBT_SERVICE![2]!.value).toBe("179.7");
+    await rejects(
+      setExistingLoanAdjustments(db, ctx, entity.id, "nope", []),
+      "not_found",
+    );
   });
 
   it("uses the client's projections instead of assumptions when asked", async () => {

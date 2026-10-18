@@ -12,6 +12,7 @@ import {
   projectTotals,
   projectValues,
   type FinancingItems,
+  type ProjectInput,
 } from "./financing";
 
 const { items } = parseItemTable(fixture("commercial-banking.csv"));
@@ -191,6 +192,31 @@ describe("projectValues", () => {
       "Equipment loan",
       "Shareholder advances",
     ]);
+  });
+
+  it("reports extra payments on new loans apart from principal", () => {
+    const withExtra = (date: string) =>
+      normalizeProject(
+        {
+          ...project,
+          sources: project.sources.map((s) =>
+            s.kind === "loan"
+              ? {
+                  ...s,
+                  adjustments: [{ kind: "extra", date, amount: "200,000" }],
+                }
+              : s,
+          ),
+        } as ProjectInput,
+        { sides, items: mapping },
+      )!;
+    const values = projectValues(withExtra("2025-06-15"), periods);
+    expect(round(values.PROFORMA_PRINCIPAL[2]!.value)).toBe("120000.00");
+    expect(round(values.PROFORMA_PREPAYMENTS[2]!.value)).toBe("200000.00");
+    expect(round(values.PROFORMA_DEBT[2]!.value)).toBe("880000.00");
+    // Pro forma at closing: the first twelve months, extra payment included.
+    expect(round(values.PROFORMA_PREPAYMENTS[0]!.value)).toBe("200000.00");
+    expect(() => withExtra("2024-12-31")).toThrow(/must come after 2024-12-31/);
   });
 
   it("applies nothing to projected years before closing", () => {

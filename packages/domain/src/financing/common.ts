@@ -3,12 +3,14 @@ import { Dec } from "@finance/engine";
 import { DomainError } from "../errors";
 import { parseValue } from "../spreads/values";
 import {
+  ADJUSTMENTS,
   FREQUENCIES,
   MORATORIUMS,
   paymentCount,
   PAYMENTS_PER_YEAR,
   PERIOD_UNITS,
   REPAYMENTS,
+  type Adjustment,
   type Amortizing,
   type Frequency,
   type Moratorium,
@@ -146,6 +148,73 @@ export function parseTerms(
     frequency,
     moratorium: { kind: kind as Moratorium["kind"], payments, included },
   };
+}
+
+export const MAX_ADJUSTMENTS = 500;
+
+// A loan's schedule adjustments as typed, each dated after `start`, the
+// loan's closing or its schedule's date. Amounts are typed as text; a skip's
+// payments are counted in the loan's payment periods.
+export function parseAdjustments(
+  raw: unknown,
+  what: string,
+  frequency: Frequency,
+  start: string,
+): Adjustment[] {
+  if (raw === undefined || raw === null || raw === "") return [];
+  if (!Array.isArray(raw) || raw.length > MAX_ADJUSTMENTS)
+    throw invalid(
+      `${what}: adjustments must be a list of up to ${MAX_ADJUSTMENTS}.`,
+    );
+  return raw.map((entry: Record<string, unknown> | null) => {
+    const kind = String(entry?.kind ?? "") as Adjustment["kind"];
+    if (!entry || !Object.hasOwn(ADJUSTMENTS, kind))
+      throw invalid(`${what}: "${kind}" isn't a kind of adjustment.`);
+    const label = ADJUSTMENTS[kind].toLowerCase();
+    const date = parseDate(entry.date, what, `${label}'s date`);
+    if (date <= start)
+      throw invalid(
+        `${what}: the ${label} on ${date} must come after ${start}, when the schedule starts.`,
+      );
+    const id = entryId(entry.id);
+    const keep = entry.keep === "end" ? "end" : "payment";
+    if (kind === "extra")
+      return {
+        id,
+        kind,
+        date,
+        amount: parseAmount(entry.amount, what, `${label}'s amount`, true),
+        keep,
+      };
+    if (kind === "payment") {
+      const until = String(entry.until ?? "").trim()
+        ? parseDate(entry.until, what, "payment change's end")
+        : null;
+      if (until && until < date)
+        throw invalid(
+          `${what}: the payment change from ${date} must end after it starts.`,
+        );
+      return {
+        id,
+        kind,
+        date,
+        amount: parseAmount(entry.amount, what, "new payment", true),
+        until,
+      };
+    }
+    const payments = Number(String(entry.payments ?? "").trim());
+    const most = MAX_MORATORIUM_YEARS * PAYMENTS_PER_YEAR[frequency];
+    if (!Number.isInteger(payments) || payments < 1 || payments > most)
+      throw invalid(`${what}: skip 1 to ${most} payments.`);
+    return {
+      id,
+      kind,
+      date,
+      payments,
+      suspends: entry.suspends === "full" ? "full" : "principal",
+      keep,
+    };
+  });
 }
 
 export function parseDate(raw: unknown, what: string, field: string): string {

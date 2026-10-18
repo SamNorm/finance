@@ -36,6 +36,16 @@ export async function run(
 
 export const invalid = (message: string) => new DomainError("invalid", message);
 
+// A loan's schedule adjustments, each a set of fields as text.
+export function adjustmentFields(list: unknown): Record<string, string>[] {
+  if (!Array.isArray(list)) throw invalid("Adjustments must be a list.");
+  return list.map((entry) =>
+    Object.fromEntries(
+      Object.entries(entry ?? {}).map(([k, v]) => [k, String(v ?? "")]),
+    ),
+  );
+}
+
 export function text(form: FormData, name: string) {
   const value = form.get(name);
   return typeof value === "string" ? value.trim() : "";

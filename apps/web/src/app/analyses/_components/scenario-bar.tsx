@@ -174,6 +174,14 @@ function ScenarioEditor({
   );
   // The saved project shows as a sources and uses table until edited.
   const [editing, setEditing] = useState(!scenario.project);
+  // Adjustments saved from a loan's schedule change the saved project; while
+  // it isn't being edited, the draft follows.
+  const savedProject = JSON.stringify(scenario.project);
+  const [synced, setSynced] = useState(savedProject);
+  if (synced !== savedProject) {
+    setSynced(savedProject);
+    if (!editing) setProject(toDraft(scenario.project));
+  }
   const [pending, startTransition] = useTransition();
   const [deleting, startDelete] = useTransition();
   const [copying, startCopy] = useTransition();
@@ -244,7 +252,11 @@ function ScenarioEditor({
       <div className="flex flex-col gap-3 border-t border-line pt-3">
         {scenario.project && !editing ? (
           <>
-            <SourcesUses project={scenario.project} items={setup.items} />
+            <SourcesUses
+              project={scenario.project}
+              items={setup.items}
+              scenarioId={scenario.id}
+            />
             <div>
               <button
                 type="button"

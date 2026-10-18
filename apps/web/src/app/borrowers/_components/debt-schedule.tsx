@@ -1,7 +1,7 @@
 "use client";
 
 import type { DebtSchedule } from "@finance/domain";
-import { REPAYMENTS } from "@finance/domain/amortization";
+import { REPAYMENTS, type Adjustment } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import { useState, useTransition } from "react";
 import { LoanSchedule } from "@/components/loan-schedule";
@@ -16,15 +16,17 @@ import {
 import { button, input } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
-import { saveDebtScheduleAction } from "../actions";
+import { saveDebtScheduleAction, saveLoanAdjustmentsAction } from "../actions";
 
 // Amortization and any moratorium are what's left at the schedule's date.
+// Adjustments are edited in the loan's schedule, and kept as saved here.
 interface Draft extends TermsDraft {
   key: string;
   id?: string;
   name: string;
   balance: string;
   rate: string;
+  adjustments: Adjustment[];
 }
 
 const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
@@ -36,6 +38,7 @@ const toDraft = (loan: DebtSchedule["loans"][number]): Draft => ({
   balance: grouped.format(Number(loan.balance)),
   rate: `${new Dec(loan.rate).times(100).toString()}%`,
   ...termsDraft(loan),
+  adjustments: loan.adjustments ?? [],
 });
 
 // The fields the server reads.
@@ -45,6 +48,7 @@ const toInput = (loan: Draft) => ({
   balance: loan.balance,
   rate: loan.rate,
   ...termsInput(loan),
+  adjustments: loan.adjustments,
 });
 
 // The borrower's existing loans as of a date. Analyses read their actual
@@ -71,6 +75,11 @@ export function DebtScheduleEditor({
     setAsOf(schedule.asOf ?? "");
     setLoans(schedule.loans.map(toDraft));
   }
+  // Changes not saved yet, which saving a loan's adjustments would lose.
+  const dirty =
+    asOf !== (schedule.asOf ?? "") ||
+    JSON.stringify(loans.map(toInput)) !==
+      JSON.stringify(schedule.loans.map(toDraft).map(toInput));
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{
     ok: boolean;
@@ -269,6 +278,18 @@ export function DebtScheduleEditor({
                         loan={saved}
                         start={schedule.asOf}
                         className={button.secondary}
+                        save={(adjustments) =>
+                          saveLoanAdjustmentsAction(
+                            entityId,
+                            saved.id,
+                            adjustments,
+                          )
+                        }
+                        blocked={
+                          dirty
+                            ? "Save or undo your other changes to the existing debt first."
+                            : undefined
+                        }
                       >
                         Payment schedule
                       </LoanSchedule>
@@ -303,6 +324,7 @@ export function DebtScheduleEditor({
                 balance: "",
                 rate: "",
                 ...NEW_TERMS,
+                adjustments: [],
               },
             ])
           }

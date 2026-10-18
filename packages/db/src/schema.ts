@@ -203,6 +203,27 @@ export interface Moratorium {
   included: boolean;
 }
 
+// A change to a loan's schedule, applied on top of its terms to the first
+// payment on or after its date. Amounts are canonical decimal strings.
+// - "extra": a lump sum of principal. Then the loan keeps its payment and
+//   finishes sooner, or keeps its end and lowers the payment.
+// - "payment": the regular payment becomes `amount` from the date until
+//   `until` (to the end when null): principal and interest on blended loans,
+//   principal on the others.
+// - "skip": `payments` payments are skipped, on principal or on principal and
+//   interest (capitalized). Then the loan keeps its payment and ends later, or
+//   keeps its end and raises the payment.
+export type ScheduleAdjustment = { id: string; date: string } & (
+  | { kind: "extra"; amount: string; keep: "payment" | "end" }
+  | { kind: "payment"; amount: string; until: string | null }
+  | {
+      kind: "skip";
+      payments: number;
+      suspends: Moratorium["kind"];
+      keep: "payment" | "end";
+    }
+);
+
 // The borrower's existing loans as of a date, so analyses can use their
 // actual future debt service. Amounts and rates are canonical decimal strings.
 export interface DebtSchedule {
@@ -219,6 +240,8 @@ export interface DebtSchedule {
     frequency?: PaymentFrequency;
     // What's left of a moratorium at the schedule's date.
     moratorium?: Moratorium;
+    // After the schedule's date.
+    adjustments?: ScheduleAdjustment[];
   }[];
 }
 
@@ -537,6 +560,8 @@ export interface Project {
         frequency?: PaymentFrequency;
         // Starting at closing.
         moratorium?: Moratorium;
+        // After closing.
+        adjustments?: ScheduleAdjustment[];
       }
     | { kind: "funds"; id: string; name: string; amount: string; item: string }
   )[];

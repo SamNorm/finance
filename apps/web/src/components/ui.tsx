@@ -22,18 +22,21 @@ export function keepFields(dispatch: (form: FormData) => void) {
 }
 
 // A native <dialog>, opened as a modal while `open` is true. Escape and the
-// close button call onClose. `side` turns it into a full-height panel.
+// close button call onClose. `side` turns it into a full-height panel; `wide`
+// gives a centered one more room.
 export function Modal({
   open,
   onClose,
   title,
   side = false,
+  wide = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
   side?: boolean;
+  wide?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -50,7 +53,7 @@ export function Modal({
       className={
         side
           ? "fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-none w-[min(460px,100vw)] max-w-none border-l border-line bg-surface p-0 text-foreground shadow-2xl"
-          : "m-auto w-[min(720px,calc(100vw-2rem))] max-w-none rounded-xl border border-line bg-surface p-0 text-foreground shadow-2xl"
+          : `m-auto ${wide ? "w-[min(1040px,calc(100vw-2rem))]" : "w-[min(720px,calc(100vw-2rem))]"} max-w-none rounded-xl border border-line bg-surface p-0 text-foreground shadow-2xl`
       }
     >
       {open && (
