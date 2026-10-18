@@ -36,13 +36,20 @@ export async function respond(
 
 export const invalid = (message: string) => new DomainError("invalid", message);
 
-// Tools that only read, and tools that add without changing what's there.
-// Every tool works within the app, so none is open-world.
+// Tools that only read, tools that add without changing what's there, and
+// tools that change or remove it, which clients should confirm. Every tool
+// works within the app, so none is open-world.
 export const READ = { readOnlyHint: true, openWorldHint: false } as const;
 export const ADD = {
   readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: false,
+  openWorldHint: false,
+} as const;
+export const CHANGE = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
   openWorldHint: false,
 } as const;
 

@@ -3,6 +3,7 @@ import {
   addScenario,
   getAnalysis,
   getEntity,
+  imbalance,
   listAnalyses,
   runAnalysis,
   type Context,
@@ -12,13 +13,10 @@ import {
 } from "@finance/domain";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
+import { analysisId } from "../fields";
 import { figure } from "../format";
-import { describeProject } from "../loans";
+import { describeProject, imbalanceWarning } from "../loans";
 import { ADD, invalid, matches, READ, respond } from "../respond";
-
-const analysisId = z
-  .string()
-  .describe("The analysis's id, from list_analyses or get_borrower.");
 
 const value = (cell: ResultCell | undefined, line: ModelLine) =>
   cell?.error
@@ -181,12 +179,13 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
         const assumptions = detail.lines.filter(
           (l) => l.kind === "assumption" && (!codes || codes.includes(l.code)),
         );
+        const scenario = detail.scenarios.find((s) => s.id === scenarioId);
+        const off = scenario?.project && imbalance(scenario.project);
         return {
           analysis: detail.analysis.name,
           borrower: detail.entity.name,
-          scenario:
-            detail.scenarios.find((s) => s.id === scenarioId)?.name ??
-            "Base case",
+          scenario: scenario?.name ?? "Base case",
+          ...(off ? { warning: imbalanceWarning(off) } : {}),
           periods: run.periods.map(describePeriod),
           // Each line's values follow the periods' order; postProject is
           // null where it doesn't apply.

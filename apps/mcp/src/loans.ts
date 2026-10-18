@@ -2,6 +2,7 @@ import {
   ADJUSTMENTS,
   amortize,
   describeTerms,
+  imbalance,
   monthIndex,
   monthOf,
   projectTotals,
@@ -108,6 +109,7 @@ export function loanPayments(loan: Amortizing, start: string) {
 // subordinations, and whether sources cover uses.
 export function describeProject(project: Project) {
   const totals = projectTotals(project);
+  const off = imbalance(project);
   return {
     closing: project.closing,
     sources: project.sources.map((s) =>
@@ -152,9 +154,14 @@ export function describeProject(project: Project) {
       uses: money(totals.uses),
       // Sources less uses; the post-project balance sheet balances at zero.
       difference: money(totals.difference),
+      balanced: !off,
     },
+    ...(off ? { warning: imbalanceWarning(off) } : {}),
   };
 }
+
+export const imbalanceWarning = (off: string) =>
+  `${off}, so the post-project balance sheet doesn't balance and post-project figures can't be relied on. The analysis can't be completed until sources and uses match.`;
 
 export function describeDebtSchedule(schedule: DebtSchedule) {
   return {

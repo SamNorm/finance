@@ -189,22 +189,37 @@ describe("MCP server", () => {
     }
   });
 
-  it("marks which tools only read", async () => {
+  it("marks which tools read, add, or change what's there", async () => {
     await connect();
     const { tools } = await clients[0]!.listTools();
-    const readOnly = Object.fromEntries(
-      tools.map((t) => [t.name, t.annotations?.readOnlyHint]),
+    const hints = Object.fromEntries(
+      tools.map((t) => [
+        t.name,
+        t.annotations?.readOnlyHint
+          ? "reads"
+          : t.annotations?.destructiveHint
+            ? "changes"
+            : "adds",
+      ]),
     );
-    expect(readOnly).toEqual({
-      list_borrowers: true,
-      get_borrower: true,
-      get_spread: true,
-      list_analyses: true,
-      get_analysis: true,
-      run_analysis: true,
-      add_scenario: false,
-      add_project_loan: false,
-      get_loan_schedule: true,
+    expect(hints).toEqual({
+      list_borrowers: "reads",
+      get_borrower: "reads",
+      get_spread: "reads",
+      list_analyses: "reads",
+      get_analysis: "reads",
+      run_analysis: "reads",
+      add_scenario: "adds",
+      list_balance_sheet_items: "reads",
+      add_project_loan: "adds",
+      add_project_funds: "adds",
+      add_project_use: "adds",
+      add_line_of_credit_increase: "adds",
+      add_subordination: "adds",
+      update_project_entry: "changes",
+      remove_project_entry: "changes",
+      set_project_closing: "changes",
+      get_loan_schedule: "reads",
     });
   });
 
@@ -292,7 +307,7 @@ describe("MCP server", () => {
       ...loan,
       closing: "2024-12-31",
     });
-    expect(value.added).toMatchObject({
+    expect(value.entry).toMatchObject({
       kind: "new loan",
       name: "Term loan",
       amount: "1,200,000.00",
@@ -307,11 +322,15 @@ describe("MCP server", () => {
       sources: "1,200,000.00",
       uses: "0.00",
       difference: "1,200,000.00",
+      balanced: false,
     });
+    expect(value.project.warning).toMatch(
+      /^Sources exceed uses by 1,200,000, so the post-project balance sheet/,
+    );
 
     const { value: schedule } = await call("get_loan_schedule", {
       scenarioId: ids.scenario,
-      loanId: value.added.id,
+      loanId: value.entry.id,
     });
     expect(schedule.years).toHaveLength(20);
     expect(schedule.years.at(-1).balance).toBe("0.00");
@@ -326,6 +345,114 @@ describe("MCP server", () => {
     expect(dscr.values).toEqual(["2.14x", "2.50x"]);
     expect(dscr.postProject[0]).toBeNull();
     expect(dscr.postProject[1]).not.toBe("2.50x");
+  });
+
+  it("builds a project an entry at a time, flagging it until it balances", async () => {
+    const call = await connect();
+    const { value: items } = await call("list_balance_sheet_items", {
+      analysisId: ids.analysis,
+    });
+    expect(items.assets.map((i: { code: string }) => i.code)).toEqual([
+      "CASH",
+      "MACHINERY",
+    ]);
+    expect(items.newLoans).toEqual({
+      longTermDebt: "LONG_TERM_DEBT",
+      currentDebt: "CPLTD",
+      cash: "CASH",
+    });
+
+    const { value: scenario } = await call("add_scenario", {
+      analysisId: ids.analysis,
+      name: "Equipment",
+    });
+    const { value: use } = await call("add_project_use", {
+      scenarioId: scenario.id,
+      name: "New press",
+      amount: "1,000,000",
+      postsTo: "MACHINERY",
+      closing: "2024-12-31",
+    });
+    expect(use.entry).toMatchObject({
+      name: "New press",
+      postsTo: "MACHINERY",
+    });
+    expect(use.project.warning).toMatch(
+      /^Sources fall short of uses by 1,000,000/,
+    );
+    const { value: loan } = await call("add_project_loan", {
+      scenarioId: scenario.id,
+      name: "Equipment loan",
+      amount: 800000,
+      rate: "6%",
+      repayment: "equal_principal",
+      years: 10,
+    });
+    // Until the equity comes in, results say they can't be relied on.
+    const { value: results } = await call("run_analysis", {
+      analysisId: ids.analysis,
+      scenarioId: scenario.id,
+      lines: ["DSCR"],
+    });
+    expect(results.warning).toMatch(/^Sources fall short of uses by 200,000/);
+    const { value: equity } = await call("add_project_funds", {
+      scenarioId: scenario.id,
+      name: "Equity injection",
+      amount: "200,000",
+      postsTo: "EQUITY",
+    });
+    expect(equity.project.totals).toMatchObject({
+      sources: "1,000,000.00",
+      uses: "1,000,000.00",
+      balanced: true,
+    });
+    expect(equity.project).not.toHaveProperty("warning");
+    await call("add_line_of_credit_increase", {
+      scenarioId: scenario.id,
+      name: "Operating line increase",
+      increase: "250,000",
+      averageUsage: "40%",
+      rate: "7%",
+    });
+    const { value: sub } = await call("add_subordination", {
+      scenarioId: scenario.id,
+      name: "Shareholder loans postponed",
+      amount: "100,000",
+    });
+    expect(sub.project.subordinations).toMatchObject([
+      { amount: "100,000.00", interestSaved: "0.00" },
+    ]);
+
+    // Changes keep what isn't given, and only fit the entry's kind.
+    const { value: longer } = await call("update_project_entry", {
+      scenarioId: scenario.id,
+      entryId: loan.entry.id,
+      years: 12,
+    });
+    expect(longer.entry).toMatchObject({
+      amount: "800,000.00",
+      terms: "12 years · equal principal",
+    });
+    expect(
+      await call("update_project_entry", {
+        scenarioId: scenario.id,
+        entryId: equity.entry.id,
+        rate: "5%",
+      }),
+    ).toEqual({
+      error:
+        "A funds source has no rate; its fields are name, amount, postsTo.",
+    });
+    const { value: moved } = await call("set_project_closing", {
+      scenarioId: scenario.id,
+      closing: "2025-01-31",
+    });
+    expect(moved.project.closing).toBe("2025-01-31");
+    const { value: removed } = await call("remove_project_entry", {
+      scenarioId: scenario.id,
+      entryId: sub.entry.id,
+    });
+    expect(removed.project.subordinations).toEqual([]);
   });
 
   it("explains what's wrong rather than failing", async () => {

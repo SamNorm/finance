@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { analysisTools } from "./tools/analyses";
 import { borrowerTools } from "./tools/borrowers";
 import { loanTools } from "./tools/loans";
+import { projectTools } from "./tools/projects";
 
 // The app's MCP server, acting for `ctx`. Its tools are business tasks over
 // the domain package, as the web app's server actions are: inputs are
@@ -25,6 +26,7 @@ export function createServer(db: Db, ctx: Context): McpServer {
   );
   borrowerTools(server, db, ctx);
   analysisTools(server, db, ctx);
+  projectTools(server, db, ctx);
   loanTools(server, db, ctx);
   return server;
 }

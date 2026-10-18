@@ -9,13 +9,10 @@ import {
 } from "@finance/domain";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
+import { borrowerId } from "../fields";
 import { figure } from "../format";
 import { describeDebtSchedule } from "../loans";
 import { invalid, matches, READ, respond } from "../respond";
-
-const borrowerId = z
-  .string()
-  .describe("The borrower's id, from list_borrowers.");
 
 export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
   server.registerTool(
