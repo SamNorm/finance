@@ -214,6 +214,15 @@ describe("MCP server", () => {
       list_borrowers: "reads",
       get_borrower: "reads",
       get_spread: "reads",
+      list_scoring_models: "reads",
+      create_borrower: "adds",
+      update_borrower: "changes",
+      add_period: "adds",
+      update_period: "changes",
+      remove_period: "changes",
+      set_spread_values: "changes",
+      preview_spread_paste: "reads",
+      import_spread_paste: "changes",
       list_analyses: "reads",
       get_analysis: "reads",
       run_analysis: "reads",
@@ -648,6 +657,117 @@ describe("MCP server", () => {
     expect(await call("repin_analysis", { analysisId: analysis.id })).toEqual({
       error: "The analysis already uses the latest published version.",
     });
+  });
+
+  it("spreads a new borrower from a paste, once it's confirmed", async () => {
+    const call = await connect();
+    const { value: models } = await call("list_scoring_models");
+    expect(models).toMatchObject([{ name: "Commercial", publishedVersion: 1 }]);
+    // With one scoring model, it's the borrower's.
+    const { value: borrower } = await call("create_borrower", {
+      name: "Laurentide Tools",
+      industry: "Hand tools",
+    });
+    const text = [
+      "\tFY2023\tFY2024",
+      "Cash\t200\t250",
+      "Machinery and equipment\t800\t750",
+      "Long-term debt\t600\t500",
+      "Equity\t400\t500",
+      "Revenue\t3,000\t3,300",
+      "Order book\t1\t2",
+    ].join("\n");
+    const { value: preview } = await call("preview_spread_paste", {
+      borrowerId: borrower.id,
+      text,
+    });
+    expect(preview).toMatchObject({
+      canImport: true,
+      confirmation: expect.stringMatching(/^[0-9a-f]{12}$/),
+      matchedRows: 5,
+      unmatchedRows: [{ row: 7, label: "Order book" }],
+      columns: [
+        {
+          column: 1,
+          periodEnd: "2023-12-31",
+          months: 12,
+          existingPeriodId: null,
+          checks: [],
+        },
+        {
+          column: 2,
+          periodEnd: "2024-12-31",
+          months: 12,
+          existingPeriodId: null,
+          checks: [],
+        },
+      ],
+    });
+    expect(preview.columns[1].totals).toContainEqual({
+      label: "Total assets",
+      value: "1,000",
+    });
+
+    const columns = [
+      { column: 1, periodEnd: "2023-12-31", quality: "audited" },
+      { column: 2, periodEnd: "2024-12-31", quality: "review" },
+    ];
+    // Only the text previewed imports: a figure changed since is refused.
+    expect(
+      await call("import_spread_paste", {
+        borrowerId: borrower.id,
+        text: text.replace("3,300", "3,800"),
+        confirmation: preview.confirmation,
+        columns,
+      }),
+    ).toEqual({
+      error:
+        "This isn't the text that was previewed. Preview it again, show the user, then import with the new confirmation.",
+    });
+    const { value: imported } = await call("import_spread_paste", {
+      borrowerId: borrower.id,
+      text: `${text}\n`,
+      confirmation: preview.confirmation,
+      columns,
+    });
+    expect(imported).toMatchObject({
+      figures: 10,
+      periods: [
+        { period: { end: "2023-12-31" }, checks: [] },
+        { period: { end: "2024-12-31" }, checks: [] },
+      ],
+    });
+
+    // Corrections show their effect on the checks.
+    const fy2024 = imported.periods[1].period.id;
+    const { value: corrected } = await call("set_spread_values", {
+      borrowerId: borrower.id,
+      periodId: fy2024,
+      figures: { CASH: "300", REVENUE: "3,350" },
+    });
+    expect(corrected.set).toEqual({ CASH: "300", REVENUE: "3,350" });
+    expect(corrected.checks).toEqual([
+      "error: The balance sheet doesn't balance: Total assets 1,050 vs Total liabilities and equity 1,000 (difference 50).",
+    ]);
+    const { value: period } = await call("update_period", {
+      periodId: fy2024,
+      quality: "audited",
+    });
+    expect(period).toMatchObject({ end: "2024-12-31", quality: "audited" });
+    const { value: ytd } = await call("add_period", {
+      borrowerId: borrower.id,
+      periodEnd: "2025-06-30",
+      months: 6,
+      quality: "internal",
+    });
+    expect(await call("remove_period", { periodId: ytd.id })).toEqual({
+      value: { removed: ytd.id },
+    });
+    const { value: rated } = await call("update_borrower", {
+      borrowerId: borrower.id,
+      riskRating: "4",
+    });
+    expect(rated).toMatchObject({ name: "Laurentide Tools", riskRating: "4" });
   });
 
   it("explains what's wrong rather than failing", async () => {
