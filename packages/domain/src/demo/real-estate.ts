@@ -1,4 +1,5 @@
 import type { ScenarioInput } from "../analyses/service";
+import type { CovenantInput } from "../covenants/covenants";
 import type { ChartDefinition } from "../financial-models/charts";
 import type { DebtSchedule } from "../financing/debt-schedule";
 import type { DemoPeriod } from "./companies";
@@ -268,29 +269,6 @@ export const REAL_ESTATE_MODEL = {
       "Existing payments plus the project's new loans and line of credit.",
     ),
     calc("DSCR", "Debt service coverage", "ratio", "NOI / DEBT_SERVICE"),
-
-    header("SEC_COVENANTS", "Covenants"),
-    assumption(
-      "MIN_DSCR",
-      "Minimum debt service coverage",
-      "ratio",
-      "1.2",
-      "Covenant threshold.",
-    ),
-    assumption(
-      "MAX_LTV",
-      "Maximum loan to value",
-      "percent",
-      "0.75",
-      "Covenant threshold.",
-    ),
-    calc(
-      "DSCR_TEST",
-      "Debt service coverage covenant",
-      "flag",
-      "DSCR >= MIN_DSCR",
-    ),
-    calc("LTV_TEST", "Loan to value covenant", "flag", "LTV <= MAX_LTV"),
   ]),
   charts: [
     {
@@ -306,16 +284,34 @@ export const REAL_ESTATE_MODEL = {
       id: "dscr",
       title: "Debt service coverage",
       series: [{ code: "DSCR", mark: "line" }],
-      threshold: "MIN_DSCR",
+      threshold: null,
     },
     {
       id: "ltv",
       title: "Loan to value",
       series: [{ code: "LTV", mark: "line" }],
-      threshold: "MAX_LTV",
+      threshold: null,
     },
   ] satisfies ChartDefinition[],
 };
+
+// The property's mortgage covenants, kept on the borrower.
+export const REAL_ESTATE_COVENANTS: CovenantInput[] = [
+  {
+    name: "Debt service coverage",
+    metric: "DSCR",
+    test: "min",
+    threshold: "1.20",
+    note: "Net operating income over mortgage payments.",
+  },
+  {
+    name: "Loan to value",
+    metric: "LTV",
+    test: "max",
+    threshold: "75%",
+    note: "Mortgages over the property's value at the market cap rate.",
+  },
+];
 
 export const REAL_ESTATE_SCENARIOS: ScenarioInput[] = [
   { name: "Cap rate 7%", overrides: { CAP_RATE: "0.07" } },

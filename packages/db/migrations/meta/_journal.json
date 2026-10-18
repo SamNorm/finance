@@ -127,6 +127,13 @@
       "when": 1792349885575,
       "tag": "0017_index_consolidated_members",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792351286334,
+      "tag": "0018_covenants",
+      "breakpoints": true
     }
   ]
 }

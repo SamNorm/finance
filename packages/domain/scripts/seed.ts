@@ -8,6 +8,7 @@
 // - Three financial models with charts: debt service, a borrowing base on
 //   inventory by type, and income property value.
 // - Analyses with stress and post-project scenarios.
+// - Covenants in force on each borrower; the equipment deal proposes its own.
 // Leaves existing data alone; --reset deletes the dev organization's data
 // first.
 import { readFileSync } from "node:fs";
@@ -33,6 +34,7 @@ import {
   replaceItems,
   replaceLines,
   setCheckItems,
+  setCovenants,
   setDebtSchedule,
   setEliminations,
   setFinancialModelCharts,
@@ -56,11 +58,13 @@ import { demoCompanies, demoReconciliation } from "../src/demo/companies";
 import { demoPropertyCompany, GROUP_ELIMINATIONS } from "../src/demo/group";
 import {
   DEMO_CAPEX_SCENARIO,
+  DEMO_COVENANTS,
   DEMO_MODEL,
   demoScenarios,
 } from "../src/demo/model";
 import {
   demoProperty,
+  REAL_ESTATE_COVENANTS,
   REAL_ESTATE_MODEL,
   REAL_ESTATE_SCENARIOS,
 } from "../src/demo/real-estate";
@@ -227,8 +231,11 @@ async function seed() {
   );
   const companies = demoCompanies();
   const borrowers = [];
-  for (const company of companies)
-    borrowers.push(await borrower(commercial.id, company));
+  for (const company of companies) {
+    const added = await borrower(commercial.id, company);
+    await setCovenants(db, ctx, added.entity.id, DEMO_COVENANTS);
+    borrowers.push(added);
+  }
 
   const debtService = await financialModel(commercial.id, DEMO_MODEL);
   const borrowingBase = await financialModel(
@@ -284,6 +291,7 @@ async function seed() {
       "Laurentian Foods and Laurentian Properties, under the same shareholders. No consolidated statements from the accountant.",
     memberIds: [foods.entity.id, landlord.entity.id],
   });
+  await setCovenants(db, ctx, group.id, DEMO_COVENANTS);
   for (const [i, year] of foods.periods.entries()) {
     const period = await addConsolidatedPeriod(db, ctx, group.id, {
       periodEnd: year.periodEnd,
@@ -352,6 +360,7 @@ async function seed() {
     },
   );
   const property = await borrower(realEstate.id, demoProperty());
+  await setCovenants(db, ctx, property.entity.id, REAL_ESTATE_COVENANTS);
   const propertyModel = await financialModel(realEstate.id, REAL_ESTATE_MODEL);
   await analysis(
     {

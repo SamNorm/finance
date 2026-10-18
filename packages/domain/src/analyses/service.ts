@@ -1,6 +1,12 @@
 import { and, asc, desc, eq, inArray, schema, type Db } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
+import {
+  normalizeCovenants,
+  testCovenants,
+  type CovenantInput,
+  type CovenantResult,
+} from "../covenants/covenants";
 import { DomainError, type Issue } from "../errors";
 import {
   checkCharts,
@@ -487,6 +493,8 @@ export interface ScenarioInput {
   project?: ProjectInput | null;
   // Purchases planned in projected years, as typed or as saved.
   capex?: unknown;
+  // The covenants proposed for its deal; null tests the borrower's.
+  covenants?: readonly CovenantInput[] | null;
 }
 
 // What a project's items are checked against: the balance sheet of the
@@ -591,6 +599,7 @@ export async function addScenario(
       overrides: normalizeOverrides(detail.lines, input.overrides ?? {}),
       project: await checkProject(db, ctx, detail, input.project),
       capex: normalizeCapex(input.capex),
+      covenants: input.covenants ? normalizeCovenants(input.covenants) : null,
     })
     .returning();
   await touch(db, analysisId);
@@ -641,6 +650,10 @@ export async function updateScenario(
           : await checkProject(db, ctx, detail, patch.project),
       capex:
         patch.capex === undefined ? undefined : normalizeCapex(patch.capex),
+      covenants:
+        patch.covenants === undefined
+          ? undefined
+          : patch.covenants && normalizeCovenants(patch.covenants),
     })
     .where(eq(scenarios.id, scenarioId))
     .returning();
@@ -682,6 +695,7 @@ export async function duplicateScenario(
     overrides: source.overrides,
     project: source.project,
     capex: source.capex,
+    covenants: source.covenants,
   });
 }
 
@@ -711,6 +725,14 @@ export interface AnalysisResults {
   project: AnalysisRun | null;
   // The periods shown with a post-project column, by key.
   postProject: string[];
+  // The covenants tested: the scenario's proposed for its deal, or else the
+  // borrower's in force; in the run shown (the scenario's, or the base case)
+  // and post-project.
+  covenants: {
+    source: "borrower" | "scenario";
+    run: CovenantResult[];
+    project: CovenantResult[] | null;
+  };
 }
 
 export async function runAnalysis(
@@ -783,6 +805,10 @@ export async function runAnalysis(
   const scenarioRun = scenario
     ? run(scenario.overrides, null, scenario.capex)
     : null;
+  const projectRun = scenario?.project
+    ? run(scenario.overrides, scenario.project, scenario.capex)
+    : null;
+  const covenants = scenario?.covenants ?? spread.entity.covenants;
   return {
     capex: scenarioRun
       ? capexYears(
@@ -796,12 +822,15 @@ export async function runAnalysis(
       : [],
     base,
     scenario: scenarioRun,
-    project: scenario?.project
-      ? run(scenario.overrides, scenario.project, scenario.capex)
-      : null,
+    project: projectRun,
     postProject: (
       detail.analysis.postProjectKeys ?? (lastYear ? [lastYear.key] : [])
     ).filter((key) => keys.has(key)),
+    covenants: {
+      source: scenario?.covenants ? "scenario" : "borrower",
+      run: testCovenants(covenants, scenarioRun ?? base, detail.lines),
+      project: projectRun && testCovenants(covenants, projectRun, detail.lines),
+    },
   };
 }
 
@@ -983,6 +1012,7 @@ export async function repinAnalysis(
         ),
         project: scenario.project,
         capex: scenario.capex,
+        covenants: scenario.covenants,
       });
     }
     return copy;

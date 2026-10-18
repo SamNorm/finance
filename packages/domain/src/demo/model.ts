@@ -1,4 +1,5 @@
 import type { ScenarioInput } from "../analyses/service";
+import type { CovenantInput } from "../covenants/covenants";
 import type { ChartDefinition } from "../financial-models/charts";
 import { assumption, calc, complete, header, type Line } from "./lines";
 
@@ -150,65 +151,24 @@ const LINES: Line[] = [
     "PREV(TNW) + EBITDA - DA - INTEREST - CASH_TAXES",
     "Equity less intangibles and amounts due from related parties, plus debt subordinated to the lender.",
   ),
-
-  header("SEC_COVENANTS", "Covenants"),
-  assumption(
-    "MIN_DSCR",
-    "Minimum debt service coverage",
-    "ratio",
-    "1.25",
-    "Covenant threshold.",
-  ),
-  assumption(
-    "MAX_DEBT_TO_EBITDA",
-    "Maximum funded debt to EBITDA",
-    "ratio",
-    "3.5",
-    "Covenant threshold.",
-  ),
-  assumption(
-    "MIN_CURRENT_RATIO",
-    "Minimum current ratio",
-    "ratio",
-    "1.2",
-    "Covenant threshold.",
-  ),
-  calc(
-    "DSCR_TEST",
-    "Debt service coverage covenant",
-    "flag",
-    "DSCR >= MIN_DSCR",
-  ),
-  calc(
-    "LEVERAGE_TEST",
-    "Leverage covenant",
-    "flag",
-    "DEBT_TO_EBITDA <= MAX_DEBT_TO_EBITDA",
-  ),
-  calc(
-    "LIQUIDITY_TEST",
-    "Current ratio covenant",
-    "flag",
-    "CURRENT_RATIO >= MIN_CURRENT_RATIO",
-  ),
 ];
 
 export const DEMO_MODEL = {
   name: "Annual review: debt service",
   description:
-    "Debt service coverage, leverage and liquidity with covenant tests, a two-year projection and post-project financing.",
+    "Debt service coverage, leverage and liquidity, the ratios borrowers' covenants test, with a two-year projection and post-project financing.",
   charts: [
     {
       id: "dscr",
       title: "Debt service coverage",
       series: [{ code: "DSCR", mark: "line" }],
-      threshold: "MIN_DSCR",
+      threshold: null,
     },
     {
       id: "leverage",
       title: "Funded debt to EBITDA",
       series: [{ code: "DEBT_TO_EBITDA", mark: "line" }],
-      threshold: "MAX_DEBT_TO_EBITDA",
+      threshold: null,
     },
     {
       id: "revenue",
@@ -222,6 +182,30 @@ export const DEMO_MODEL = {
   ] satisfies ChartDefinition[],
   lines: complete(LINES),
 };
+
+// The covenants of each demo borrower's credit agreement, kept on the
+// borrower: coverage, leverage stepping down after 2025, and liquidity.
+export const DEMO_COVENANTS: CovenantInput[] = [
+  {
+    name: "Debt service coverage",
+    metric: "DSCR",
+    test: "min",
+    threshold: "1.25",
+    note: "Cash flow available for debt service over interest and scheduled principal, at each fiscal year end.",
+  },
+  {
+    name: "Funded debt to EBITDA",
+    metric: "DEBT_TO_EBITDA",
+    test: "max",
+    thresholds: [{ value: "3.5" }, { from: "2026", value: "3.0" }],
+  },
+  {
+    name: "Current ratio",
+    metric: "CURRENT_RATIO",
+    test: "min",
+    threshold: "1.2",
+  },
+];
 
 // Northwind's capex plan: a second machining line in mid-2026, 75% on a
 // ten-year loan, and warehouse racking before that, paid from cash.
@@ -247,7 +231,9 @@ export const DEMO_CAPEX_SCENARIO: ScenarioInput = {
 
 // Scenarios added to each demo analysis: two stresses, and new equipment
 // financed by a term loan and an equity injection, with a larger operating
-// line and the shareholders' loans postponed in favour of the lender.
+// line and the shareholders' loans postponed in favour of the lender. The
+// deal proposes covenants of its own: coverage eased, and leverage given
+// room until the new line pays off.
 export function demoScenarios(shareholderLoans: string): ScenarioInput[] {
   return [
     { name: "Revenue −15%", overrides: { REVENUE_GROWTH: "-0.15" } },
@@ -300,6 +286,14 @@ export function demoScenarios(shareholderLoans: string): ScenarioInput[] {
               ]
             : [],
       },
+      covenants: [
+        { ...DEMO_COVENANTS[0]!, threshold: "1.20" },
+        {
+          ...DEMO_COVENANTS[1]!,
+          thresholds: [{ value: "4.0" }, { from: "2027", value: "3.5" }],
+        },
+        DEMO_COVENANTS[2]!,
+      ],
     },
   ];
 }

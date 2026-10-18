@@ -31,12 +31,19 @@ import {
 } from "./companies";
 import { consolidateFigures } from "../spreads/consolidation";
 import { demoPropertyCompany, GROUP_ELIMINATIONS } from "./group";
-import { DEMO_CAPEX_SCENARIO, DEMO_MODEL, demoScenarios } from "./model";
+import {
+  DEMO_CAPEX_SCENARIO,
+  DEMO_COVENANTS,
+  DEMO_MODEL,
+  demoScenarios,
+} from "./model";
 import {
   demoProperty,
+  REAL_ESTATE_COVENANTS,
   REAL_ESTATE_MODEL,
   REAL_ESTATE_SCENARIOS,
 } from "./real-estate";
+import { normalizeCovenants, testCovenants } from "../covenants/covenants";
 
 const commercial = parseItemTable(fixture("commercial-banking.csv")).items;
 const realEstate = parseItemTable(fixture("real-estate.csv")).items;
@@ -256,6 +263,32 @@ describe("demo data", () => {
         [],
       );
       expect(checkCharts(model.charts, model.lines), model.name).toEqual([]);
+    }
+  });
+
+  it("covenants test lines their models have", () => {
+    const deal = demoScenarios("0").find((s) => s.covenants)!;
+    for (const [covenants, model, company] of [
+      [DEMO_COVENANTS, DEMO_MODEL, companies[0]!],
+      [deal.covenants!, DEMO_MODEL, companies[0]!],
+      [REAL_ESTATE_COVENANTS, REAL_ESTATE_MODEL, property],
+    ] as const) {
+      const results = testCovenants(
+        normalizeCovenants(covenants),
+        run(
+          model === DEMO_MODEL ? commercial : realEstate,
+          company.periods,
+          model.lines,
+        ),
+        model.lines,
+      );
+      for (const result of results) {
+        expect(result.label, result.covenant.name).not.toBeNull();
+        expect(
+          result.periods.some((p) => p.pass !== null),
+          result.covenant.name,
+        ).toBe(true);
+      }
     }
   });
 

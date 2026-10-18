@@ -148,6 +148,12 @@ Each financial model version contains:
 
   A model takes new principal either from the current portion or from `PROFORMA_PRINCIPAL`, never both. Lineage shows each source's share.
 
+- **Covenants** are terms of a credit agreement, not of a model: a firm reuses its models across deals, but chooses covenants case by case and sometimes year by year.
+  - **Where they're kept:** the covenants in force are kept on the borrower, like its existing loans, and every analysis of it tests them. A scenario can propose its deal's own, starting from those in force, like a project's new loans.
+  - **What each is:** a financial model line by its code (e.g. `DSCR`), at least or at most a threshold that can step from a fiscal year (3.5x, then 3.0x from 2026), with a note for the agreement's wording. An analysis whose model lacks the line says so.
+  - **What each fiscal year shows**, projected and post-project included: the figure against its threshold and the margin. When the line divides two others (`CFADS / DEBT_SERVICE`), it also shows the room in the numerator's dollars and how far the line it rests on can fall before a breach.
+  - **On charts**, a chart of a covenant's line draws its threshold by year.
+  - A model's own pass/fail lines remain model tests, such as a borrowing base's margin test.
 - **Consolidated clients** add up other borrowers' spreads on the same scoring model, when there are no consolidated statements from the accountant (for those, spread the accountant's version as one borrower). Analyses, projects and MCP work on them as on any borrower.
   - **Computed, never copied:** the spread is the members' as they stand, so it follows them as they change. Its figures and existing loans can't be entered on it, only on the members.
   - **Each period** takes one set of statements per member, which may end on another date (a December year with the March one that follows). All are on one version of the scoring model. The period's quality is the weakest statements'.

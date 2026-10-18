@@ -257,6 +257,24 @@ export interface DebtSchedule {
   }[];
 }
 
+// A covenant of a credit agreement: a financial model line, by its code,
+// tested against a threshold that can step by fiscal year. Covenants are
+// terms of a deal, not of a model: they're kept on the borrower (in force)
+// and on a scenario (proposed for its deal), and tested in any analysis
+// whose model has the line. Thresholds are canonical decimals.
+export interface Covenant {
+  id: string;
+  name: string;
+  metric: string;
+  // At least ("min", e.g. coverage) or at most ("max", e.g. leverage).
+  test: "min" | "max";
+  // By fiscal year: the first from the start (null), then each from the
+  // year it names, in order.
+  thresholds: { from: number | null; value: string }[];
+  // The agreement's wording, for reference.
+  note?: string;
+}
+
 // borrower: spread from its own statements. consolidated: a client whose
 // spread adds up other borrowers' statements, less eliminations.
 export const entityKind = pgEnum("entity_kind", ["borrower", "consolidated"]);
@@ -286,6 +304,9 @@ export const entities = pgTable(
       .$type<DebtSchedule>()
       .notNull()
       .default({ asOf: null, loans: [] }),
+    // The covenants of its credit agreement in force, which every analysis
+    // of it tests.
+    covenants: jsonb().$type<Covenant[]>().notNull().default([]),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -746,6 +767,9 @@ export const analysisScenarios = pgTable(
     project: jsonb().$type<Project>(),
     // Purchases planned in projected years, and their financing.
     capex: jsonb().$type<CapexItem[]>().notNull().default([]),
+    // The covenants proposed for its deal, tested instead of the borrower's
+    // in force; null tests the borrower's.
+    covenants: jsonb().$type<Covenant[]>(),
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],
