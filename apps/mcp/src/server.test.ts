@@ -255,6 +255,9 @@ describe("MCP server", () => {
       update_scenario: "changes",
       duplicate_scenario: "adds",
       remove_scenario: "changes",
+      add_capex_item: "adds",
+      update_capex_item: "changes",
+      remove_capex_item: "changes",
       get_loan_schedule: "reads",
       add_existing_loan: "adds",
       update_existing_loan: "changes",
@@ -915,6 +918,85 @@ describe("MCP server", () => {
       netIncomeAsPrinted: "300",
       retainedEarningsReconciliation: [{ forced: true }],
     });
+  });
+
+  it("plans capex in a scenario, with the debt service it adds", async () => {
+    const call = await connect();
+    const { value: analysis } = await call("create_analysis", {
+      borrowerId: ids.acme,
+      financialModelId: (await call("list_financial_models")).value[0].id,
+      name: "With capex",
+      projectionYears: 2,
+    });
+    const { value: scenario } = await call("add_scenario", {
+      analysisId: analysis.id,
+      name: "Second press in 2026",
+    });
+    // A share financed takes its percent sign.
+    const press = {
+      scenarioId: scenario.id,
+      name: "Second press",
+      date: "2026-06-30",
+      amount: "1,200,000",
+      financed: "75",
+      rate: "7%",
+      repayment: "blended",
+      years: 10,
+    };
+    expect(await call("add_capex_item", press)).toMatchObject({
+      error: expect.stringMatching(/share financed is 0% to 100%/),
+    });
+    const { value: added } = await call("add_capex_item", {
+      ...press,
+      financed: "75%",
+    });
+    expect(added.purchase).toMatchObject({
+      amount: "1,200,000.00",
+      financed: "75%",
+      loan: {
+        amount: "900,000.00",
+        terms: "10 years · blended payments",
+        firstPayment: "2026-07-31",
+      },
+    });
+    expect(added.byYear.map((y: { end: string }) => y.end)).toEqual([
+      "2025-12-31",
+      "2026-12-31",
+    ]);
+    expect(added.byYear[1]).toMatchObject({
+      capex: "1,200,000.00",
+      financedByLoans: "900,000.00",
+      paidFromCash: "300,000.00",
+    });
+    const before = Number(added.byYear[1].debtServiceAdded.replace(/,/g, ""));
+    expect(before).toBeGreaterThan(0);
+
+    // Longer amortization, less debt service.
+    const { value: longer } = await call("update_capex_item", {
+      scenarioId: scenario.id,
+      itemId: added.purchase.id,
+      years: 15,
+    });
+    expect(
+      Number(longer.byYear[1].debtServiceAdded.replace(/,/g, "")),
+    ).toBeLessThan(before);
+    const { value: results } = await call("run_analysis", {
+      analysisId: analysis.id,
+      scenarioId: scenario.id,
+      lines: ["DSCR"],
+    });
+    expect(results.capexByYear).toEqual(longer.byYear);
+    const { value: detail } = await call("get_analysis", {
+      analysisId: analysis.id,
+    });
+    expect(detail.scenarios[0].capexPlan).toMatchObject([
+      { name: "Second press" },
+    ]);
+    const { value: removed } = await call("remove_capex_item", {
+      scenarioId: scenario.id,
+      itemId: added.purchase.id,
+    });
+    expect(removed).toMatchObject({ capexPlan: [], byYear: [] });
   });
 
   it("explains what's wrong rather than failing", async () => {

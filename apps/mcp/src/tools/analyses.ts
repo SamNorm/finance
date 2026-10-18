@@ -25,6 +25,7 @@ import { analysisId, borrowerId } from "../fields";
 import { figure } from "../format";
 import { imbalanceWarning } from "../loans";
 import { ADD, CHANGE, invalid, matches, READ, respond } from "../respond";
+import { describeCapexYears } from "./capex";
 import { describeScenario } from "./scenarios";
 
 const value = (cell: ResultCell | undefined, line: ModelLine) =>
@@ -188,7 +189,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Run an analysis",
       description:
-        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. Values are rounded as the app shows them; flags read Pass or Fail.",
+        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Values are rounded as the app shows them; flags read Pass or Fail.",
       inputSchema: z.object({
         analysisId,
         scenarioId: z
@@ -243,6 +244,10 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
           borrower: detail.entity.name,
           scenario: scenario?.name ?? "Base case",
           ...(warnings.length ? { warnings } : {}),
+          // The scenario's capex plan year by year, when it has one.
+          ...(results.capex.length
+            ? { capexByYear: describeCapexYears(results.capex) }
+            : {}),
           periods: run.periods.map(describePeriod),
           // Each line's values follow the periods' order; postProject is
           // null where it doesn't apply.

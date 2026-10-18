@@ -2,6 +2,7 @@ import type { Db } from "@finance/db";
 import type { Context } from "@finance/domain";
 import { McpServer } from "@modelcontextprotocol/server";
 import { analysisTools } from "./tools/analyses";
+import { capexTools } from "./tools/capex";
 import { borrowerTools } from "./tools/borrowers";
 import { loanTools } from "./tools/loans";
 import { projectTools } from "./tools/projects";
@@ -16,7 +17,7 @@ import { spreadTools } from "./tools/spreads";
 // What the client's model reads first, to know what it's working with.
 const INSTRUCTIONS = `Credit analysis for commercial lending.
 - Borrowers have spreads: financial statements by period, entered against one of the organization's scoring models.
-- An analysis runs a published financial model version over a borrower's periods. Its base case is the borrower as is. Its scenarios stress assumptions and can finance a project: sources and uses at closing (new loans, other funds), line of credit increases and subordinations. A project's effect shows in post-project values.
+- An analysis runs a published financial model version over a borrower's periods. Its base case is the borrower as is. Its scenarios stress assumptions and can finance a project: sources and uses at closing (new loans, other funds), line of credit increases, subordinations and adjustments. A project's effect shows in post-project values. A scenario can also plan capex in projected years, partly financed by loans whose debt service the model reads.
 - A project's sources must equal its uses before the analysis can be completed. Projects are built a piece at a time, so tell the user when totals don't match yet.
 - Spreads come from the institution's scoring system. To enter one the user pastes, preview it, show the user what was read and get their confirmation, then import it.
 - A spread's critical errors (a balance sheet that doesn't balance, net income that isn't the one printed on the statements) keep its periods out of analyses until fixed. Retained earnings that don't roll forward are a warning; force them only when the user asks.
@@ -34,6 +35,7 @@ export function createServer(db: Db, ctx: Context): McpServer {
   analysisTools(server, db, ctx);
   scenarioTools(server, db, ctx);
   projectTools(server, db, ctx);
+  capexTools(server, db, ctx);
   loanTools(server, db, ctx);
   return server;
 }

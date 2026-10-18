@@ -15,6 +15,7 @@ import * as z from "zod";
 import { analysisId, scenarioId } from "../fields";
 import { figure } from "../format";
 import { describeProject } from "../loans";
+import { describeCapex } from "./capex";
 import { ADD, CHANGE, invalid, respond } from "../respond";
 
 // An analysis's scenarios: each overrides some of the model's assumptions
@@ -34,6 +35,7 @@ export function describeScenario(s: Scenario, lines: readonly ModelLine[]) {
       value: figure(raw, byCode.get(code)?.format ?? "text"),
     })),
     project: s.project ? describeProject(s.project) : null,
+    capexPlan: describeCapex(s.capex),
   };
 }
 
