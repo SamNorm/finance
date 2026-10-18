@@ -1,6 +1,12 @@
 "use client";
 
-import type { CapexItem, CapexYear, ModelLine, Project } from "@finance/domain";
+import type {
+  CapexItem,
+  CapexYear,
+  DebtSchedule,
+  ModelLine,
+  Project,
+} from "@finance/domain";
 import { Dec } from "@finance/engine";
 import { Copy, Landmark, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -44,6 +50,10 @@ export interface ProjectSetup {
   items: BalanceSheetItem[];
   // What adjustments can change: any statement's numeric inputs.
   adjustable: AdjustableItem[];
+  // The borrower's existing loans, which a project can consolidate, and
+  // where a use repaying one posts by default.
+  debtSchedule: DebtSchedule;
+  repayItem: string;
   canAddLoans: boolean;
   scoringModelId: string;
   defaultClosing: string;
@@ -387,7 +397,7 @@ export function ScenarioEditor({
 
       <Card
         title="Project"
-        description="Sources and uses at closing, plus line of credit increases, subordinations and adjustments. Results show it in post-project columns."
+        description="Sources and uses at closing, plus line of credit increases, subordinations, existing loans consolidated and adjustments. Results show it in post-project columns."
         actions={
           scenario.project &&
           !editing && (
@@ -407,6 +417,7 @@ export function ScenarioEditor({
             project={scenario.project}
             items={setup.items}
             adjustable={setup.adjustable}
+            debtSchedule={setup.debtSchedule}
             scenarioId={scenario.id}
           />
         ) : (
@@ -414,6 +425,8 @@ export function ScenarioEditor({
             draft={project}
             items={setup.items}
             adjustable={setup.adjustable}
+            debtSchedule={setup.debtSchedule}
+            repayItem={setup.repayItem}
             canAddLoans={setup.canAddLoans}
             scoringModelId={setup.scoringModelId}
             defaultClosing={setup.defaultClosing}

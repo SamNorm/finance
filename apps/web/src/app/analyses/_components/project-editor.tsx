@@ -1,8 +1,10 @@
 "use client";
 
-import type { Project, Statement } from "@finance/domain";
+import type { DebtSchedule, Project, Statement } from "@finance/domain";
 import {
+  amortize,
   describeTerms,
+  monthIndex,
   REPAYMENTS,
   type Adjustment,
   type Repayment,
@@ -94,7 +96,17 @@ export interface ProjectDraft {
   lines: LineDraft[];
   subordinations: SubordinationDraft[];
   adjustments: AdjustmentDraft[];
+  // The borrower's existing loans repaid or refinanced at closing, by id.
+  consolidatedLoans: string[];
 }
+
+// What an existing loan owes at a date, from the borrower's debt schedule.
+const owedAt = (
+  schedule: DebtSchedule,
+  loan: DebtSchedule["loans"][number],
+  date: string,
+) =>
+  amortize(loan, schedule.asOf!, true).balanceAt(monthIndex(date)).toFixed(2);
 
 type List = "sources" | "uses" | "lines" | "subordinations" | "adjustments";
 
@@ -113,6 +125,7 @@ export function toDraft(project: Project | null): ProjectDraft {
       lines: [],
       subordinations: [],
       adjustments: [],
+      consolidatedLoans: [],
     };
   return {
     closing: project.closing,
@@ -171,6 +184,7 @@ export function toDraft(project: Project | null): ProjectDraft {
       item: a.item,
       amount: amount(a.amount),
     })),
+    consolidatedLoans: project.consolidatedLoans ?? [],
   };
 }
 
@@ -181,7 +195,8 @@ export function toInput(draft: ProjectDraft) {
     !draft.uses.length &&
     !draft.lines.length &&
     !draft.subordinations.length &&
-    !draft.adjustments.length;
+    !draft.adjustments.length &&
+    !draft.consolidatedLoans.length;
   if (empty) return null;
   return {
     closing: draft.closing,
@@ -232,6 +247,7 @@ export function toInput(draft: ProjectDraft) {
       item,
       amount,
     })),
+    consolidatedLoans: draft.consolidatedLoans,
   };
 }
 
@@ -278,13 +294,18 @@ export function SourcesUses({
   project,
   items,
   adjustable,
+  debtSchedule,
   scenarioId,
 }: {
   project: Project;
   items: BalanceSheetItem[];
   adjustable: AdjustableItem[];
+  debtSchedule: DebtSchedule;
   scenarioId: string;
 }) {
+  const consolidated = debtSchedule.loans.filter((l) =>
+    project.consolidatedLoans?.includes(l.id),
+  );
   const label = (code: string) =>
     (
       items.find((i) => i.code === code) ??
@@ -443,6 +464,27 @@ export function SourcesUses({
           ))}
         </ul>
       )}
+      {consolidated.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium">Existing loans consolidated</p>
+          <ul className="flex flex-col gap-1 text-sm">
+            {consolidated.map((loan) => (
+              <li key={loan.id}>
+                {loan.name}: repaid at closing
+                <span className="text-muted">
+                  {" "}
+                  · owes{" "}
+                  {formatFigure(
+                    owedAt(debtSchedule, loan, project.closing),
+                    "amount",
+                  )}{" "}
+                  then; post-project, its debt service stops
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {adjustments.length > 0 && (
         <div className="flex flex-col gap-1">
           <p className="text-sm font-medium">Adjustments</p>
@@ -566,6 +608,8 @@ export function ProjectEditor({
   draft,
   items,
   adjustable,
+  debtSchedule,
+  repayItem,
   canAddLoans,
   scoringModelId,
   defaultClosing,
@@ -574,6 +618,10 @@ export function ProjectEditor({
   draft: ProjectDraft;
   items: BalanceSheetItem[];
   adjustable: AdjustableItem[];
+  // The borrower's existing loans, which the project can consolidate.
+  debtSchedule: DebtSchedule;
+  // Where a use repaying one posts by default: the long-term debt item.
+  repayItem: string;
   // Whether the scoring model says where new loans post.
   canAddLoans: boolean;
   scoringModelId: string;
@@ -1019,6 +1067,76 @@ export function ProjectEditor({
           </button>
         </div>
       </fieldset>
+
+      {debtSchedule.loans.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-2 text-sm font-medium">
+            Existing loans consolidated
+            <span className="ml-2 text-xs font-normal text-muted">
+              Repaid or refinanced at closing: post-project, their debt service
+              stops. The borrower keeps them for its other scenarios.
+            </span>
+          </legend>
+          {debtSchedule.loans.map((loan) => {
+            const checked = draft.consolidatedLoans.includes(loan.id);
+            const closing = draft.closing || defaultClosing;
+            const owed = closing ? owedAt(debtSchedule, loan, closing) : null;
+            const repay = `Repay ${loan.name}`;
+            return (
+              <div
+                key={loan.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-line p-2.5 text-sm"
+              >
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) =>
+                      set({
+                        consolidatedLoans: e.target.checked
+                          ? [...draft.consolidatedLoans, loan.id]
+                          : draft.consolidatedLoans.filter(
+                              (id) => id !== loan.id,
+                            ),
+                      })
+                    }
+                  />
+                  <span className="font-medium">{loan.name}</span>
+                </label>
+                <span className="text-muted">
+                  {describeTerms(loan)}
+                  {owed !== null &&
+                    ` · owes ${formatFigure(owed, "amount")} at closing`}
+                </span>
+                {checked &&
+                  owed !== null &&
+                  !draft.uses.some((u) => u.name === repay) && (
+                    <button
+                      type="button"
+                      className={`${button.ghost} ml-auto`}
+                      onClick={() =>
+                        set({
+                          uses: [
+                            ...draft.uses,
+                            {
+                              key: newKey(),
+                              name: repay,
+                              amount: amount(owed),
+                              item: repayItem,
+                            },
+                          ],
+                        })
+                      }
+                    >
+                      <Icon name="plus" />
+                      Add a use to repay it
+                    </button>
+                  )}
+              </div>
+            );
+          })}
+        </fieldset>
+      )}
 
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-2 text-sm font-medium">

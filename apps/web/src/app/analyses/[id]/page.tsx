@@ -267,6 +267,8 @@ async function AnalysisView({ params, searchParams }: Props) {
                       statement: item.statement,
                       side: sides.get(item.code) ?? null,
                     })),
+                  debtSchedule: spread.entity.debtSchedule,
+                  repayItem: longTermDebt ?? "",
                   canAddLoans: Boolean(longTermDebt && currentDebt && cash),
                   scoringModelId: scoringModel.id,
                   defaultClosing: lastActual
