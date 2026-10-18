@@ -18,6 +18,7 @@ import { analysisId, scenarioId } from "../fields";
 import { figure } from "../format";
 import { describeProject } from "../loans";
 import { describeCapex } from "./capex";
+import { describeCovenants } from "./covenants";
 import { ADD, CHANGE, invalid, respond } from "../respond";
 
 // An analysis's scenarios: each overrides some of the model's assumptions
@@ -42,6 +43,8 @@ export function describeScenario(
     })),
     project: s.project ? describeProject(s.project, debtSchedules) : null,
     capexPlan: describeCapex(s.capex),
+    // The deal's own covenants; null tests the borrower's in force.
+    proposedCovenants: s.covenants && describeCovenants(s.covenants),
   };
 }
 

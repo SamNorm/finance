@@ -27,6 +27,7 @@ import { figure } from "../format";
 import { imbalanceWarning } from "../loans";
 import { ADD, CHANGE, invalid, matches, READ, respond } from "../respond";
 import { describeCapexYears } from "./capex";
+import { describeCovenantResults } from "./covenants";
 import { describeScenario } from "./scenarios";
 
 const value = (cell: ResultCell | undefined, line: ModelLine) =>
@@ -193,7 +194,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Run an analysis",
       description:
-        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Values are rounded as the app shows them; flags read Pass or Fail.",
+        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested each fiscal year (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. Values are rounded as the app shows them; flags read Pass or Fail.",
       inputSchema: z.object({
         analysisId,
         scenarioId: z
@@ -278,6 +279,9 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
               ...(a?.overridden ? { base: figure(a.base, line.format) } : {}),
             };
           }),
+          // Each covenant's test in each fiscal year, in the periods' order;
+          // null where it isn't tested, such as a year to date.
+          covenants: describeCovenantResults(results.covenants, run, eligible),
         };
       }),
   );

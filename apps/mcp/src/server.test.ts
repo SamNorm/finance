@@ -241,6 +241,10 @@ describe("MCP server", () => {
       update_elimination: "changes",
       remove_elimination: "changes",
       get_consolidation_worksheet: "reads",
+      add_covenant: "adds",
+      update_covenant: "changes",
+      remove_covenant: "changes",
+      use_covenants_in_force: "changes",
       list_analyses: "reads",
       get_analysis: "reads",
       run_analysis: "reads",
@@ -1081,6 +1085,100 @@ describe("MCP server", () => {
     await call("remove_existing_loan", {
       borrowerId: ids.acme,
       loanId: mortgage.loan.id,
+    });
+  });
+
+  it("keeps covenants on the borrower, and a deal's own on its scenario", async () => {
+    const call = await connect();
+    // Coverage of at least 1.25x, rising to 2.6x from 2024.
+    const { value: added } = await call("add_covenant", {
+      borrowerId: ids.acme,
+      name: "Debt service coverage",
+      line: "DSCR",
+      test: "minimum",
+      threshold: "1.25",
+      steps: [{ fromYear: 2024, threshold: "2.6" }],
+    });
+    expect(added.covenantsInForce).toEqual([
+      {
+        id: added.covenant,
+        name: "Debt service coverage",
+        line: "DSCR",
+        test: "at least",
+        thresholds: [{ value: "1.25" }, { fromYear: 2024, value: "2.6" }],
+      },
+    ]);
+    const { value: results } = await call("run_analysis", {
+      analysisId: ids.analysis,
+      lines: ["DSCR"],
+    });
+    expect(results.covenants.tested).toBe("the borrower's in force");
+    // 2.14x against 1.25x; then 2.50x against 2.60x: 40,000 of EBITDA short.
+    expect(results.covenants.covenants[0].years).toEqual([
+      expect.objectContaining({
+        threshold: "1.25x",
+        actual: "2.14x",
+        result: "Pass",
+        margin: "0.89x",
+        canFall: "EBITDA can fall 41.67% before a breach",
+      }),
+      expect.objectContaining({
+        actual: "2.50x",
+        result: "Fail",
+        margin: "-0.10x",
+        room: "40,000 of EBITDA short of what the minimum needs",
+      }),
+    ]);
+
+    // The deal proposes its own, starting from those in force.
+    const { value: proposed } = await call("add_covenant", {
+      scenarioId: ids.scenario,
+      name: "Minimum coverage",
+      line: "DSCR",
+      test: "minimum",
+      threshold: "2",
+    });
+    expect(
+      proposed.proposedCovenants.map((c: { name: string }) => c.name),
+    ).toEqual(["Debt service coverage", "Minimum coverage"]);
+    await call("remove_covenant", {
+      scenarioId: ids.scenario,
+      covenantId: added.covenant,
+    });
+    const { value: deal } = await call("run_analysis", {
+      analysisId: ids.analysis,
+      scenarioId: ids.scenario,
+      lines: ["DSCR"],
+    });
+    expect(deal.covenants.tested).toBe("proposed for the scenario's deal");
+    expect(
+      deal.covenants.covenants[0].years.map(
+        (y: { result: string }) => y.result,
+      ),
+    ).toEqual(["Pass", "Pass"]);
+    expect(
+      (
+        await call("update_covenant", {
+          borrowerId: ids.acme,
+          covenantId: added.covenant,
+          steps: [],
+        })
+      ).error,
+    ).toBe("Give the threshold from the start with its steps.");
+
+    // Back to those in force, which the borrower keeps.
+    await call("use_covenants_in_force", { scenarioId: ids.scenario });
+    const { value: analysis } = await call("get_analysis", {
+      analysisId: ids.analysis,
+    });
+    expect(analysis.scenarios[0].proposedCovenants).toBeNull();
+    const { value: borrower } = await call("get_borrower", {
+      borrowerId: ids.acme,
+    });
+    expect(borrower.covenants).toHaveLength(1);
+    await call("remove_covenant", {
+      borrowerId: ids.acme,
+      covenantId: added.covenant,
     });
   });
 

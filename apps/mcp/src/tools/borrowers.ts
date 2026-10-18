@@ -13,6 +13,7 @@ import * as z from "zod";
 import { borrowerId } from "../fields";
 import { figure } from "../format";
 import { describeDebtSchedule } from "../loans";
+import { describeCovenants } from "./covenants";
 import { describeControls } from "./spreads";
 import { invalid, matches, READ, respond } from "../respond";
 
@@ -98,6 +99,9 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
                 ...describeDebtSchedule(schedule),
               }))
             : describeDebtSchedule(entity.debtSchedule),
+          // The credit agreement's covenants in force, which every analysis
+          // tests.
+          covenants: describeCovenants(entity.covenants),
           analyses: analyses.map((a) => ({
             id: a.id,
             name: a.name,
