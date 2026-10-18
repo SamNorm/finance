@@ -88,9 +88,9 @@ export function AnalysisCharts({
         reference: true,
       });
     }
-    const raw = chart.threshold
-      ? run.assumptions[chart.threshold]?.value
-      : null;
+    // An assumption's value in each period, which a scenario can set year
+    // by year.
+    const assumed = chart.threshold ? valuesOf(run, chart.threshold) : [];
     // On one line a covenant tests, the covenant's threshold in each year
     // it's tested: the deal's term, before any assumption the chart names.
     const covenant =
@@ -108,10 +108,10 @@ export function AnalysisCharts({
             p.threshold === null ? null : Number(p.threshold),
           ),
         }
-      : chart.threshold && raw !== null && raw !== undefined
+      : chart.threshold && assumed.some((v) => v !== null)
         ? {
             label: byCode.get(chart.threshold)?.label ?? chart.threshold,
-            values: periods.map(() => Number(raw)),
+            values: assumed,
           }
         : null;
     return { format, periods, series, threshold };

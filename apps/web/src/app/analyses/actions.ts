@@ -160,13 +160,14 @@ export async function updateScenarioAction(
   patch: {
     name?: string;
     overrides?: Record<string, string>;
+    periodOverrides?: Record<string, Record<string, string>>;
     project?: ProjectInput | null;
     capex?: unknown[];
     covenants?: CovenantInput[] | null;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
-    const { overrides, project, capex, covenants } = patch;
+    const { overrides, periodOverrides, project, capex, covenants } = patch;
     if (capex !== undefined && !Array.isArray(capex))
       throw invalid("The capex plan must be a list of purchases.");
     if (
@@ -181,6 +182,14 @@ export async function updateScenarioAction(
     ) {
       throw invalid("Overrides must be assumption values.");
     }
+    const isObject = (value: unknown): value is object =>
+      typeof value === "object" && value !== null;
+    if (
+      periodOverrides !== undefined &&
+      (!isObject(periodOverrides) ||
+        !Object.values(periodOverrides).every(isObject))
+    )
+      throw invalid("Values by year must be assumption values by period.");
     if (
       project !== undefined &&
       project !== null &&
@@ -190,6 +199,14 @@ export async function updateScenarioAction(
     return updateScenario(db, ctx, scenarioId, {
       name: patch.name === undefined ? undefined : String(patch.name),
       overrides: overrides && textFields(overrides),
+      periodOverrides:
+        periodOverrides &&
+        Object.fromEntries(
+          Object.entries(periodOverrides).map(([code, values]) => [
+            code,
+            textFields(values),
+          ]),
+        ),
       project,
       capex,
       covenants,

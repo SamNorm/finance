@@ -25,7 +25,7 @@ import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
-import { formatFigure } from "@/lib/format";
+import { formatDate, formatFigure } from "@/lib/format";
 import {
   addScenarioAction,
   deleteScenarioAction,
@@ -47,12 +47,21 @@ export interface ScenarioOption {
   id: string;
   name: string;
   overrides: Record<string, string>;
+  // Assumption code → period end → value, entered year by year.
+  periodOverrides: Record<string, Record<string, string>>;
   project: Project | null;
   capex: CapexItem[];
   // Proposed for its deal; null tests the borrower's in force.
   covenants: Covenant[] | null;
   // How the project is out of balance, e.g. "Sources exceed uses by 500".
   imbalance?: string | null;
+}
+
+// A period an assumption can take its own value in: projected, or
+// post-project from the last fiscal year on.
+export interface AssumptionYear {
+  end: string;
+  label: string;
 }
 
 // What the project editor needs from the analysis.
@@ -258,18 +267,30 @@ export function BaseCase({
   );
 }
 
+// Values by year as typed, blanks left out, to save and compare.
+const filled = (byYear: Record<string, Record<string, string>>) =>
+  Object.fromEntries(
+    Object.entries(byYear).flatMap(([code, values]) => {
+      const kept = Object.entries(values).filter(([, v]) => v.trim());
+      return kept.length ? [[code, Object.fromEntries(kept)]] : [];
+    }),
+  );
+
 // A scenario's assumption overrides, project and capex plan, saved
 // together.
 export function ScenarioEditor({
   analysisId,
   scenario,
   assumptions,
+  years,
   setup,
   capexYears,
 }: {
   analysisId: string;
   scenario: ScenarioOption;
   assumptions: ModelLine[];
+  // The periods assumptions can take a value of their own in.
+  years: AssumptionYear[];
   setup: ProjectSetup;
   // The saved capex plan year by year.
   capexYears: CapexYear[];
@@ -281,7 +302,22 @@ export function ScenarioEditor({
         display(scenario.overrides[a.code], a.format),
       ]),
     );
+  // Every value saved by year, including periods the analysis no longer
+  // shows, which are kept.
+  const typedByYear = () =>
+    Object.fromEntries(
+      assumptions.map((a) => [
+        a.code,
+        Object.fromEntries(
+          Object.entries(scenario.periodOverrides[a.code] ?? {}).map(
+            ([end, raw]) => [end, display(raw, a.format)],
+          ),
+        ),
+      ]),
+    );
   const [values, setValues] = useState<Record<string, string>>(typed);
+  const [byYear, setByYear] =
+    useState<Record<string, Record<string, string>>>(typedByYear);
   const [project, setProject] = useState<ProjectDraft>(() =>
     toDraft(scenario.project),
   );
@@ -297,6 +333,7 @@ export function ScenarioEditor({
   // being edited, the draft follows.
   const saved = JSON.stringify([
     scenario.overrides,
+    scenario.periodOverrides,
     scenario.project,
     scenario.capex,
     scenario.covenants,
@@ -305,6 +342,7 @@ export function ScenarioEditor({
   if (synced !== saved) {
     setSynced(saved);
     setValues(typed());
+    setByYear(typedByYear());
     if (!editing) setProject(toDraft(scenario.project));
     setCapex(capexDraft(scenario.capex));
     setCovenants(savedCovenants());
@@ -322,6 +360,7 @@ export function ScenarioEditor({
   const dirty =
     covenantsDirty ||
     JSON.stringify(values) !== JSON.stringify(typed()) ||
+    JSON.stringify(filled(byYear)) !== JSON.stringify(filled(typedByYear())) ||
     capexDirty ||
     (editing &&
       JSON.stringify(toInput(project)) !==
@@ -342,6 +381,7 @@ export function ScenarioEditor({
     startTransition(async () => {
       const result = await updateScenarioAction(scenario.id, {
         overrides,
+        periodOverrides: filled(byYear),
         project: toInput(project),
         capex: capexInput(capex),
         covenants: covenantsInput,
@@ -358,13 +398,19 @@ export function ScenarioEditor({
     });
   }
 
-  const overridden = assumptions.filter((a) => values[a.code]?.trim()).length;
+  const overridden = assumptions.filter(
+    (a) =>
+      values[a.code]?.trim() ||
+      years.some((y) => byYear[a.code]?.[y.end]?.trim()),
+  ).length;
+  const changed = (value: string | undefined) =>
+    value?.trim() ? "border-accent/50 bg-accent-soft/40" : "";
 
   return (
     <div className="flex flex-col gap-5">
       <Card
         title="Assumptions"
-        description={`Override what changes in ${scenario.name}. Blank keeps the base case.${overridden ? ` ${overridden} overridden.` : ""}`}
+        description={`Override what changes in ${scenario.name}. Blank keeps the base case.${years.length ? " A year's own value applies in that year alone: projected, or post-project from the last fiscal year on." : ""}${overridden ? ` ${overridden} overridden.` : ""}`}
         actions={
           <Menu label="Scenario actions">
             <MenuItem
@@ -405,24 +451,93 @@ export function ScenarioEditor({
           </Menu>
         }
       >
-        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-          {assumptions.map((a) => (
-            <label key={a.code} className="flex flex-col gap-1">
-              <span className="flex items-baseline justify-between gap-2 text-xs">
-                <span className="font-medium">{a.label}</span>
-                <span className="text-muted">base {baseValue(a)}</span>
-              </span>
-              <input
-                value={values[a.code] ?? ""}
-                onChange={(e) =>
-                  setValues((v) => ({ ...v, [a.code]: e.target.value }))
-                }
-                placeholder="Base case"
-                className={`${input} ${values[a.code]?.trim() ? "border-accent/50 bg-accent-soft/40" : ""}`}
-              />
-            </label>
-          ))}
-        </div>
+        {!assumptions.length ? (
+          <p className="text-sm text-muted">The model has no assumptions.</p>
+        ) : (
+          <div className="-mx-1 overflow-x-auto px-1">
+            <table className="w-full border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr className="text-xs text-muted">
+                  <th className="sticky left-0 z-10 bg-surface py-1.5 pr-3 text-left font-medium">
+                    Assumption
+                  </th>
+                  <th className="px-2 py-1.5 text-right font-medium">Base</th>
+                  <th className="px-1 py-1.5 text-left font-medium">
+                    Every year
+                  </th>
+                  {years.map((y) => (
+                    <th
+                      key={y.end}
+                      className="px-1 py-1.5 text-left font-normal whitespace-nowrap"
+                    >
+                      <span className="block font-medium text-foreground">
+                        {formatDate(y.end)}
+                      </span>
+                      {y.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {assumptions.map((a) => {
+                  const every = values[a.code] ?? "";
+                  return (
+                    <tr key={a.code}>
+                      <td
+                        title={a.code}
+                        className="sticky left-0 z-10 min-w-48 border-t border-line/60 bg-surface py-1.5 pr-3 font-medium"
+                      >
+                        {a.label}
+                      </td>
+                      <td className="border-t border-line/60 px-2 py-1.5 text-right whitespace-nowrap text-muted tabular-nums">
+                        {baseValue(a)}
+                      </td>
+                      <td className="min-w-32 border-t border-line/60 px-1 py-1">
+                        <input
+                          aria-label={`${a.label}, every year`}
+                          value={every}
+                          onChange={(e) =>
+                            setValues((v) => ({
+                              ...v,
+                              [a.code]: e.target.value,
+                            }))
+                          }
+                          placeholder="Base case"
+                          className={`${input} ${changed(every)}`}
+                        />
+                      </td>
+                      {years.map((y) => {
+                        const value = byYear[a.code]?.[y.end] ?? "";
+                        return (
+                          <td
+                            key={y.end}
+                            className="min-w-28 border-t border-line/60 px-1 py-1"
+                          >
+                            <input
+                              aria-label={`${a.label}, ${formatDate(y.end)}`}
+                              value={value}
+                              onChange={(e) =>
+                                setByYear((v) => ({
+                                  ...v,
+                                  [a.code]: {
+                                    ...v[a.code],
+                                    [y.end]: e.target.value,
+                                  },
+                                }))
+                              }
+                              placeholder={every.trim() || baseValue(a)}
+                              className={`${input} ${changed(value)}`}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       <Card

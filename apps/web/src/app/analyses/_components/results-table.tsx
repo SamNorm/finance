@@ -361,9 +361,18 @@ export function ResultsTable({
                         className={`border-b border-l border-line/60 p-0 text-right tabular-nums ${shade(column)}`}
                       >
                         {assumption ? (
-                          <span className="block px-3 py-1.5">
+                          <span
+                            className={`block px-3 py-1.5 ${source.assumptions[line.code]?.byPeriod.includes(p.key) ? "text-accent" : ""}`}
+                            title={
+                              source.assumptions[line.code]?.byPeriod.includes(
+                                p.key,
+                              )
+                                ? `${scenarioName}'s value for this year`
+                                : undefined
+                            }
+                          >
                             {formatFigure(
-                              flag(assumption.value, line.format),
+                              flag(cell?.value ?? null, line.format),
                               line.format,
                             )}
                           </span>

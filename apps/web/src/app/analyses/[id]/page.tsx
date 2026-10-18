@@ -91,11 +91,38 @@ async function AnalysisView({ params, searchParams }: Props) {
     id: s.id,
     name: s.name,
     overrides: s.overrides,
+    periodOverrides: s.periodOverrides,
     project: s.project,
     capex: s.capex,
     covenants: s.covenants,
     imbalance: s.project && imbalance(s.project),
   }));
+  // Where the open scenario's assumptions can take a value by year:
+  // projected periods, and post-project from the last fiscal year on.
+  const lastYear = run.periods.findLastIndex(
+    (p) => !p.projection && p.months === 12,
+  );
+  const assumptionYears = run.periods.flatMap((p, i) =>
+    p.projection
+      ? [
+          {
+            end: p.end,
+            label:
+              p.projection === "client" ? "Client projection" : "Projected",
+          },
+        ]
+      : scenario?.project && i >= lastYear
+        ? [
+            {
+              end: p.end,
+              label:
+                p.months === 12
+                  ? "Post-project"
+                  : `${p.months} mo · Post-project`,
+            },
+          ]
+        : [],
+  );
   // Critical errors in the periods it analyzes, which hold completion back.
   const broken = spreadErrors(spread, detail.analysis);
   // The open scenario's project, when it's out of balance.
@@ -273,6 +300,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                 analysisId={analysis.id}
                 scenario={scenarios.find((s) => s.id === scenario.id)!}
                 assumptions={assumptions}
+                years={assumptionYears}
                 capexYears={results.capex}
                 setup={{
                   items: scoringItems

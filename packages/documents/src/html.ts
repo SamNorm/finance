@@ -373,9 +373,9 @@ function chartsBlock(
             c.covenant.metric.toUpperCase() === first.toUpperCase(),
         )
       : undefined;
-    const assumption = chart.threshold
-      ? data.run.assumptions[chart.threshold]?.value
-      : null;
+    // An assumption's value in each period, which a scenario can set year
+    // by year.
+    const assumed = chart.threshold ? values(data.run, chart.threshold) : [];
     const input: ChartInput = {
       format,
       periods,
@@ -387,10 +387,10 @@ function chartsBlock(
               p.threshold === null ? null : Number(p.threshold),
             ),
           }
-        : chart.threshold && assumption !== null && assumption !== undefined
+        : chart.threshold && assumed.some((v) => v !== null)
           ? {
               label: byCode.get(chart.threshold)?.label ?? chart.threshold,
-              values: periods.map(() => Number(assumption)),
+              values: assumed,
             }
           : null,
     };
