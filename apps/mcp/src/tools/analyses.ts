@@ -2,6 +2,7 @@ import type { Db } from "@finance/db";
 import {
   createAnalysis,
   getAnalysis,
+  getDebtSchedules,
   getEntity,
   getFinancialModel,
   getSpread,
@@ -142,7 +143,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
-        const { debtSchedule } = await getEntity(db, ctx, detail.entity.id);
+        const debtSchedules = await getDebtSchedules(db, ctx, detail.entity.id);
         const warnings = await spreadWarnings(
           db,
           ctx,
@@ -181,7 +182,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
                 : {}),
             })),
           scenarios: detail.scenarios.map((s) =>
-            describeScenario(s, lines, debtSchedule),
+            describeScenario(s, lines, debtSchedules),
           ),
         };
       }),

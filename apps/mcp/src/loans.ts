@@ -8,6 +8,7 @@ import {
   projectTotals,
   type Amortizing,
   type DebtSchedule,
+  type OwnedDebtSchedule,
   type Payment,
   type Project,
 } from "@finance/domain";
@@ -107,10 +108,11 @@ export function loanPayments(loan: Amortizing, start: string) {
 
 // A scenario's sources and uses at closing, its line of credit increases,
 // subordinations, consolidated loans and adjustments, and whether it
-// balances. The borrower's debt schedule names the loans consolidated.
+// balances. The borrower's debt schedules (a consolidated client's
+// members') name the loans consolidated.
 export function describeProject(
   project: Project,
-  debtSchedule: DebtSchedule = { asOf: null, loans: [] },
+  debtSchedules: readonly OwnedDebtSchedule[] = [],
 ) {
   const totals = projectTotals(project);
   const off = imbalance(project);
@@ -155,17 +157,19 @@ export function describeProject(
     })),
     // The borrower's existing loans repaid or refinanced at closing: their
     // debt service stops then, post-project.
-    consolidatedLoans: debtSchedule.loans
-      .filter((loan) => project.consolidatedLoans?.includes(loan.id))
-      .map((loan) => ({
-        id: loan.id,
-        name: loan.name,
-        owedAtClosing: money(
-          amortize(loan, debtSchedule.asOf!, true).balanceAt(
-            monthIndex(project.closing),
+    consolidatedLoans: debtSchedules.flatMap(({ schedule }) =>
+      schedule.loans
+        .filter((loan) => project.consolidatedLoans?.includes(loan.id))
+        .map((loan) => ({
+          id: loan.id,
+          name: loan.name,
+          owedAtClosing: money(
+            amortize(loan, schedule.asOf!, true).balanceAt(
+              monthIndex(project.closing),
+            ),
           ),
-        ),
-      })),
+        })),
+    ),
     // Changes that move no funds, added to an item post-project: balance
     // sheet ones from closing on, others yearly.
     adjustments: (project.adjustments ?? []).map((a) => ({

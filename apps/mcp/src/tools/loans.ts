@@ -2,7 +2,7 @@ import type { Db } from "@finance/db";
 import {
   addExistingLoan,
   DomainError,
-  getEntity,
+  getDebtSchedules,
   getScenario,
   removeExistingLoan,
   setDebtScheduleDate,
@@ -91,11 +91,16 @@ export function loanTools(server: McpServer, db: Db, ctx: Context) {
           loan = { ...found, balance: found.amount };
           start = project.closing;
         } else {
-          const { debtSchedule } = await getEntity(db, ctx, borrowerId!);
-          const found = debtSchedule.loans.find((l) => l.id === loanId);
+          // A consolidated client's are its members', as its analyses name
+          // them.
+          const found = (await getDebtSchedules(db, ctx, borrowerId!))
+            .flatMap(({ schedule }) =>
+              schedule.loans.map((l) => ({ loan: l, asOf: schedule.asOf! })),
+            )
+            .find(({ loan }) => loan.id === loanId);
           if (!found) throw noLoan();
-          loan = found;
-          start = debtSchedule.asOf!;
+          loan = found.loan;
+          start = found.asOf;
         }
         return {
           name: loan.name,

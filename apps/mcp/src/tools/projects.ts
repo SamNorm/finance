@@ -3,7 +3,7 @@ import {
   addProjectEntry,
   addProjectLoan,
   getAnalysis,
-  getEntity,
+  getDebtSchedules,
   getProjectSetup,
   getScenario,
   removeProjectEntry,
@@ -75,12 +75,15 @@ function kindOf(project: Project | null, id: string) {
 
 export function projectTools(server: McpServer, db: Db, ctx: Context) {
   // The project after an edit, and the entry it was about; the borrower's
-  // debt schedule names the loans it consolidates.
+  // debt schedules name the loans it consolidates.
   const edited = async (scenario: Scenario, id?: string) => {
     const { entity } = await getAnalysis(db, ctx, scenario.analysisId);
-    const { debtSchedule } = await getEntity(db, ctx, entity.id);
     const project =
-      scenario.project && describeProject(scenario.project, debtSchedule);
+      scenario.project &&
+      describeProject(
+        scenario.project,
+        await getDebtSchedules(db, ctx, entity.id),
+      );
     const entry =
       id && project
         ? [

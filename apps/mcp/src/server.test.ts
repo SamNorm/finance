@@ -232,6 +232,15 @@ describe("MCP server", () => {
       force_retained_earnings: "changes",
       preview_spread_paste: "reads",
       import_spread_paste: "changes",
+      create_consolidated_client: "adds",
+      add_consolidation_member: "adds",
+      remove_consolidation_member: "changes",
+      add_consolidated_period: "adds",
+      set_consolidated_statements: "changes",
+      add_elimination: "adds",
+      update_elimination: "changes",
+      remove_elimination: "changes",
+      get_consolidation_worksheet: "reads",
       list_analyses: "reads",
       get_analysis: "reads",
       run_analysis: "reads",
@@ -1072,6 +1081,118 @@ describe("MCP server", () => {
     await call("remove_existing_loan", {
       borrowerId: ids.acme,
       loanId: mortgage.loan.id,
+    });
+  });
+
+  it("consolidates two borrowers, less what they owe each other", async () => {
+    const call = await connect();
+    const { value: props } = await call("create_borrower", {
+      name: "Acme Properties",
+    });
+    const { value: march } = await call("add_period", {
+      borrowerId: props.id,
+      periodEnd: "2025-03-31",
+      quality: "review",
+    });
+    await call("set_spread_values", {
+      borrowerId: props.id,
+      periodId: march.id,
+      figures: {
+        CASH: "200,000",
+        LONG_TERM_DEBT: "150,000",
+        EQUITY: "50,000",
+        REVENUE: "120,000",
+      },
+    });
+    const { value: group } = await call("create_consolidated_client", {
+      name: "Acme group",
+      memberIds: [ids.acme, props.id],
+    });
+    const acme2024 = group.members[0].periods.find(
+      (p: { end: string }) => p.end === "2024-12-31",
+    );
+    const { value: period } = await call("add_consolidated_period", {
+      consolidatedClientId: group.id,
+      periodEnd: "2024-12-31",
+      statements: [
+        { borrowerId: ids.acme, periodId: acme2024.id },
+        { borrowerId: props.id, periodId: march.id },
+      ],
+    });
+    expect(period).toMatchObject({
+      period: { end: "2024-12-31", quality: "review" },
+      statements: [
+        { borrower: "Acme Fabrication", end: "2024-12-31" },
+        { borrower: "Acme Properties", end: "2025-03-31" },
+      ],
+      checks: [],
+    });
+
+    // Half of an advance between them: flagged until both sides are out.
+    const { value: half } = await call("add_elimination", {
+      consolidatedClientId: group.id,
+      periodId: period.period.id,
+      name: "Advance to Acme",
+      item: "CASH",
+      amount: "-50,000",
+    });
+    expect(half.checks[0]).toBe(
+      "error: Eliminations change assets by -50,000 but liabilities and equity by 0, so the balance sheet can't balance.",
+    );
+    const { value: whole } = await call("add_elimination", {
+      consolidatedClientId: group.id,
+      periodId: period.period.id,
+      name: "Advance to Acme",
+      item: "LONG_TERM_DEBT",
+      amount: "-50,000",
+    });
+    expect(whole.checks).toEqual([]);
+    const { value: sheet } = await call("get_consolidation_worksheet", {
+      consolidatedClientId: group.id,
+      periodId: period.period.id,
+      codes: ["CASH", "REVENUE"],
+    });
+    expect(sheet.rows).toEqual([
+      {
+        code: "CASH",
+        label: "Cash",
+        members: [null, "200,000"],
+        eliminations: "-50,000",
+        consolidated: "150,000",
+      },
+      {
+        code: "REVENUE",
+        label: "Revenue",
+        members: ["5,500,000", "120,000"],
+        eliminations: null,
+        consolidated: "5,620,000",
+      },
+    ]);
+
+    // Its figures are the members'; they stay while it adds them up.
+    expect(
+      await call("set_spread_values", {
+        borrowerId: group.id,
+        periodId: period.period.id,
+        figures: { CASH: "1" },
+      }),
+    ).toEqual({
+      error:
+        "Acme group is a consolidated client: its figures add up its members' statements. Change them on the members' spreads.",
+    });
+    expect((await call("remove_period", { periodId: march.id })).error).toBe(
+      "Acme Properties's statements ending 2025-03-31 are in Acme group's period ending 2024-12-31. Choose other statements there first.",
+    );
+    const { value: borrower } = await call("get_borrower", {
+      borrowerId: group.id,
+    });
+    expect(borrower).toMatchObject({
+      kind: "consolidated",
+      members: [{ name: "Acme Fabrication" }, { name: "Acme Properties" }],
+      existingLoans: [
+        { member: "Acme Fabrication", loans: [] },
+        { member: "Acme Properties", loans: [] },
+      ],
     });
   });
 

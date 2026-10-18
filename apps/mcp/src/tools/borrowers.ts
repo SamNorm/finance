@@ -1,5 +1,6 @@
 import type { Db } from "@finance/db";
 import {
+  getDebtSchedules,
   getEntity,
   getScoringModel,
   getSpread,
@@ -21,7 +22,7 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "List borrowers",
       description:
-        "Lists the organization's borrowers (and acquisition targets) with their scoring model and how many statement periods are spread. Use it to find a borrower's id by name.",
+        "Lists the organization's borrowers (and acquisition targets) with their scoring model and how many statement periods are spread. Use it to find a borrower's id by name. Kind \"consolidated\" is a consolidated client, whose spread adds up other borrowers'.",
       inputSchema: z.object({
         search: z
           .string()
@@ -37,6 +38,7 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
           .map((e) => ({
             id: e.id,
             name: e.name,
+            kind: e.kind,
             industry: e.industry,
             riskRating: e.riskRating,
             scoringModel: e.scoringModelName,
@@ -52,21 +54,32 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get a borrower",
       description:
-        "A borrower's profile, its spread periods, its existing loans (the debt schedule, with each loan's payment and maturity) and its analyses.",
+        "A borrower's profile, its spread periods, its existing loans (the debt schedule, with each loan's payment and maturity) and its analyses. For a consolidated client, its members and their loans, each member's debt schedule as of its own date.",
       inputSchema: z.object({ borrowerId }),
       annotations: READ,
     },
     ({ borrowerId }) =>
       respond(async () => {
         const entity = await getEntity(db, ctx, borrowerId);
-        const [spread, scoringModel, analyses] = await Promise.all([
+        const [spread, scoringModel, analyses, debt] = await Promise.all([
           getSpread(db, ctx, entity.id),
           getScoringModel(db, ctx, entity.scoringModelId),
           listAnalyses(db, ctx, { entityId: entity.id }),
+          getDebtSchedules(db, ctx, entity.id),
         ]);
+        const { consolidation } = spread;
         return {
           id: entity.id,
           name: entity.name,
+          kind: entity.kind,
+          ...(consolidation
+            ? {
+                members: consolidation.members.map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                })),
+              }
+            : {}),
           industry: entity.industry,
           naicsCode: entity.naicsCode,
           // As rated in the institution's own system; the app never rates.
@@ -79,7 +92,12 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
             months: p.months,
             quality: p.quality,
           })),
-          existingLoans: describeDebtSchedule(entity.debtSchedule),
+          existingLoans: consolidation
+            ? debt.map(({ member, schedule }) => ({
+                member: member!.name,
+                ...describeDebtSchedule(schedule),
+              }))
+            : describeDebtSchedule(entity.debtSchedule),
           analyses: analyses.map((a) => ({
             id: a.id,
             name: a.name,
@@ -96,7 +114,7 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get a borrower's spread",
       description:
-        "A borrower's financial statements as spread, by scoring model item and period: figures entered, and subtotals summed from their lines. Items with no figure in any period are left out. Each period also has its net income as printed on the statements, its retained earnings reconciliation, and its failed checks. Errors (a balance sheet that doesn't balance, net income that isn't the statements') keep the period out of analyses until fixed; warnings (retained earnings that don't roll forward) only flag.",
+        "A borrower's financial statements as spread, by scoring model item and period: figures entered, and subtotals summed from their lines. Items with no figure in any period are left out. Each period also has its net income as printed on the statements, its retained earnings reconciliation, and its failed checks. Errors (a balance sheet that doesn't balance, net income that isn't the statements') keep the period out of analyses until fixed; warnings (retained earnings that don't roll forward) only flag. A consolidated client's periods add up its members' statements, listed with each period, less its eliminations.",
       inputSchema: z.object({
         borrowerId,
         codes: z
@@ -135,6 +153,10 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
             ),
           }))
           .filter((row) => codes || row.values.some((v) => v !== null));
+        const consolidated = spread.consolidation?.periods;
+        const member = new Map(
+          spread.consolidation?.members.map((m) => [m.id, m.name]),
+        );
         return {
           borrower: spread.entity.name,
           periods: spread.periods.map((p) => ({
@@ -144,6 +166,22 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
             quality: p.quality,
             // What the statements say beyond the figures, for the checks.
             ...describeControls(p),
+            ...(consolidated?.[p.id]
+              ? {
+                  statements: consolidated[p.id]!.statements.map((s) => ({
+                    borrower: member.get(s.memberId),
+                    periodId: s.periodId,
+                    end: s.periodEnd,
+                    months: s.months,
+                  })),
+                  eliminations: consolidated[p.id]!.eliminations.map((e) => ({
+                    id: e.id,
+                    name: e.name,
+                    item: e.item,
+                    amount: figure(e.amount, "amount"),
+                  })),
+                }
+              : {}),
             checks: (spread.checks[p.id] ?? []).map(
               (c) => `${c.severity}: ${c.message}`,
             ),

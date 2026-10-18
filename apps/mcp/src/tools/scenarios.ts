@@ -4,12 +4,12 @@ import {
   deleteScenario,
   duplicateScenario,
   getAnalysis,
-  getEntity,
+  getDebtSchedules,
   getScenario,
   updateScenario,
   type Context,
-  type DebtSchedule,
   type ModelLine,
+  type OwnedDebtSchedule,
   type Scenario,
 } from "@finance/domain";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -29,7 +29,7 @@ const VALUES =
 export function describeScenario(
   s: Scenario,
   lines: readonly ModelLine[],
-  debtSchedule?: DebtSchedule,
+  debtSchedules?: readonly OwnedDebtSchedule[],
 ) {
   const byCode = new Map(lines.map((l) => [l.code, l]));
   return {
@@ -40,15 +40,18 @@ export function describeScenario(
       label: byCode.get(code)?.label ?? code,
       value: figure(raw, byCode.get(code)?.format ?? "text"),
     })),
-    project: s.project ? describeProject(s.project, debtSchedule) : null,
+    project: s.project ? describeProject(s.project, debtSchedules) : null,
     capexPlan: describeCapex(s.capex),
   };
 }
 
 async function described(db: Db, ctx: Context, scenario: Scenario) {
   const { lines, entity } = await getAnalysis(db, ctx, scenario.analysisId);
-  const { debtSchedule } = await getEntity(db, ctx, entity.id);
-  return describeScenario(scenario, lines, debtSchedule);
+  return describeScenario(
+    scenario,
+    lines,
+    await getDebtSchedules(db, ctx, entity.id),
+  );
 }
 
 export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
