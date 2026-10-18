@@ -411,29 +411,58 @@ export async function setValue(
   code: string,
   raw: string,
 ): Promise<string | null> {
+  return (await setValues(db, ctx, periodId, { [code]: raw }))[code] ?? null;
+}
+
+// Enters, changes or clears (blank) several figures of one period, by item
+// code. Every figure is read and checked before any is written, so a batch
+// is saved whole or not at all.
+export async function setValues(
+  db: Db,
+  ctx: Context,
+  periodId: string,
+  figures: Record<string, string>,
+): Promise<Record<string, string | null>> {
   const period = await findPeriod(db, ctx, periodId);
   const items = await listItems(db, ctx, period.scoringModelVersionId);
-  const item = items.find((i) => i.code === code);
-  if (!item)
-    throw new DomainError(
-      "invalid",
-      `"${code}" isn't in this period's scoring model.`,
-    );
-  if (item.kind === "header")
-    throw new DomainError(
-      "invalid",
-      `${item.label} is a header and holds no figure.`,
-    );
-  const parsed = parseValue(raw, item.dataType);
-  if ("error" in parsed) throw new DomainError("invalid", parsed.error);
-  if (parsed.value === null) {
-    await db
-      .delete(values)
-      .where(and(eq(values.periodId, periodId), eq(values.code, item.code)));
-  } else {
-    await upsertValues(db, [figureRow(periodId, item, parsed.value)]);
+  const entries = Object.entries(figures);
+  if (!entries.length)
+    throw new DomainError("invalid", "Give at least one figure.");
+  const result: Record<string, string | null> = {};
+  const rows: ReturnType<typeof figureRow>[] = [];
+  const cleared: string[] = [];
+  for (const [code, raw] of entries) {
+    const item = items.find((i) => i.code === code);
+    if (!item)
+      throw new DomainError(
+        "invalid",
+        `"${code}" isn't in this period's scoring model.`,
+      );
+    if (item.kind === "header")
+      throw new DomainError(
+        "invalid",
+        `${item.label} is a header and holds no figure.`,
+      );
+    const parsed = parseValue(raw, item.dataType);
+    if ("error" in parsed)
+      throw new DomainError(
+        "invalid",
+        entries.length > 1 ? `${item.label}: ${parsed.error}` : parsed.error,
+      );
+    result[code] = parsed.value;
+    if (parsed.value === null) cleared.push(code);
+    else rows.push(figureRow(periodId, item, parsed.value));
   }
-  return parsed.value;
+  await db.transaction(async (tx) => {
+    if (cleared.length)
+      await tx
+        .delete(values)
+        .where(
+          and(eq(values.periodId, periodId), inArray(values.code, cleared)),
+        );
+    await upsertValues(tx, rows);
+  });
+  return result;
 }
 
 export interface Spread {
@@ -523,7 +552,13 @@ export async function getSpread(
 }
 
 export interface PastePreview {
-  columns: (PasteColumn & { existingPeriodId: string | null })[];
+  columns: (PasteColumn & {
+    existingPeriodId: string | null;
+    // Each statement's top-level totals in the period once pasted, and the
+    // spread's checks on it, such as a balance sheet that doesn't balance.
+    totals: { code: string; label: string; value: string | null }[];
+    checks: Issue[];
+  })[];
   matched: number;
   figures: number;
   unmatched: Pick<PasteRow, "row" | "label">[];
@@ -545,16 +580,51 @@ export async function previewPaste(
     .select()
     .from(periods)
     .where(eq(periods.entityId, entityId));
+  const existingFigures = existing.length
+    ? await db
+        .select()
+        .from(values)
+        .where(
+          inArray(
+            values.periodId,
+            existing.map((p) => p.id),
+          ),
+        )
+    : [];
+  const byCode = new Map(items.map((item) => [item.code, item]));
+  const totals = items.filter(
+    (item) => item.parentCode === null && item.kind === "subtotal",
+  );
   return {
-    columns: parsed.columns.map((column) => ({
-      ...column,
-      existingPeriodId:
+    // What each column leaves in its period: the figures already there, with
+    // those pasted in their place. Checked as the spread is, so a figure
+    // mistyped on its way here shows, as totals that don't tie.
+    columns: parsed.columns.map((column, position) => {
+      const existingPeriodId =
         existing.find(
           (p) =>
             p.periodEnd === column.periodEnd &&
             p.months === (column.months ?? 12),
-        )?.id ?? null,
-    })),
+        )?.id ?? null;
+      const entered = new Map(
+        existingFigures
+          .filter((v) => v.periodId === existingPeriodId)
+          .map((v) => [v.code, (v.amount ?? v.text)!]),
+      );
+      for (const { item, value } of columnFigures(parsed, position, byCode))
+        entered.set(item.code, value);
+      const { amounts } = effectiveAmounts(items, entered);
+      return {
+        ...column,
+        existingPeriodId,
+        totals: totals.map((item) => ({
+          code: item.code,
+          label: item.label,
+          value: amounts.get(item.code)?.toFixed() ?? null,
+        })),
+        checks: checkPeriod(items, entered),
+      };
+    }),
     matched: parsed.matched.length,
     figures: parsed.matched.reduce(
       (n, r) => n + r.cells.filter((c) => c.trim()).length,
@@ -564,6 +634,22 @@ export async function previewPaste(
     issues: parsed.issues,
     canImport: parsed.matched.length > 0 && !hasErrors(parsed.issues),
   };
+}
+
+// The figures in one of a paste's columns, by its position among them, read
+// as their items' data types. Blank cells and unreadable ones are left out.
+function columnFigures(
+  parsed: ReturnType<typeof parseSpreadPaste>,
+  position: number,
+  byCode: ReadonlyMap<string, ScoringItem>,
+) {
+  return parsed.matched.flatMap((row) => {
+    const item = byCode.get(row.code!)!;
+    const result = parseValue(row.cells[position] ?? "", item.dataType);
+    return "error" in result || result.value === null || item.kind === "header"
+      ? []
+      : [{ item, value: result.value }];
+  });
 }
 
 export interface PasteTarget {
@@ -615,18 +701,9 @@ export async function pasteSpread(
       const periodId =
         (await findDuplicate(tx, entityId, target.periodEnd, target.months)) ??
         (await addPeriod(tx, ctx, entityId, target)).id;
-      const rows = [];
-      for (const row of parsed.matched) {
-        const item = byCode.get(row.code!)!;
-        const result = parseValue(row.cells[column] ?? "", item.dataType);
-        if (
-          "error" in result ||
-          result.value === null ||
-          item.kind === "header"
-        )
-          continue;
-        rows.push(figureRow(periodId, item, result.value));
-      }
+      const rows = columnFigures(parsed, column, byCode).map(
+        ({ item, value }) => figureRow(periodId, item, value),
+      );
       await upsertValues(tx, rows);
       figures += rows.length;
     }

@@ -26,6 +26,7 @@ import {
   pasteSpread,
   previewPaste,
   setValue,
+  setValues,
   updateEntity,
   updatePeriod,
 } from "./service";
@@ -125,6 +126,30 @@ describe("borrowers and spreads", () => {
     expect(spread.checks[period.id]?.map((i) => i.code)).toEqual(["balance"]);
   });
 
+  it("enters several figures at once, or none when one is wrong", async () => {
+    const entity = await createEntity(db, ctx, {
+      name: "Acme",
+      scoringModelId: ctx.modelId,
+    });
+    const period = await addPeriod(db, ctx, entity.id, FY(2024));
+    await setValue(db, ctx, period.id, "INVENTORY", "5");
+    expect(
+      await setValues(db, ctx, period.id, {
+        CASH: "1,000",
+        REVENUE: "(20)",
+        INVENTORY: "",
+      }),
+    ).toEqual({ CASH: "1000", REVENUE: "-20", INVENTORY: null });
+    await expect(
+      setValues(db, ctx, period.id, { CASH: "5", REVENUE: "lots" }),
+    ).rejects.toMatchObject({ kind: "invalid", message: /^Revenue: / });
+    await rejects(setValues(db, ctx, period.id, {}), "invalid");
+    expect((await getSpread(db, ctx, entity.id)).values[period.id]).toEqual({
+      CASH: "1000",
+      REVENUE: "-20",
+    });
+  });
+
   it("pastes a spread, creating periods and reusing existing ones", async () => {
     const entity = await createEntity(db, ctx, {
       name: "Acme",
@@ -144,6 +169,13 @@ describe("borrowers and spreads", () => {
       ["2024-12-31", null],
     ]);
     expect(preview.unmatched).toEqual([{ row: 4, label: "Odd line" }]);
+    // Each column's totals once pasted, with the figures already there, and
+    // the spread's checks on them.
+    const totalAssets = preview.columns.map(
+      (c) => c.totals.find((t) => t.code === "TOTAL_ASSETS")?.value,
+    );
+    expect(totalAssets).toEqual(["105", "120"]);
+    expect(preview.columns[1]!.checks.map((i) => i.code)).toContain("balance");
 
     await rejects(
       pasteSpread(db, ctx, entity.id, text, [
