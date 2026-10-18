@@ -39,8 +39,9 @@ export interface GridPeriod {
 }
 
 // The spread laid out like the scoring model: one row per item, one column per
-// period. Figures are typed in place; Enter moves down a column, as analysts
-// enter one period at a time. The header row and the labels stay in view
+// period. Figures are typed in place: a click selects one to type over, F2 or
+// a double-click edits it, and Enter moves down a column, as analysts enter
+// one period at a time. The header row and the labels stay in view
 // while the grid scrolls, like frozen panes.
 export function SpreadGrid({
   entityId,
@@ -296,6 +297,13 @@ function FigureCell({
     });
   }
 
+  // Editing in place, as F2 or a double-click do in Excel: the cursor at the
+  // figure's end, to change part of it rather than type it over.
+  function editInPlace(el: HTMLInputElement) {
+    keepSelection.current = false;
+    el.setSelectionRange(el.value.length, el.value.length);
+  }
+
   function move(step: number) {
     const next = document.querySelector<HTMLInputElement>(
       `input[data-cell][data-row="${row + step}"][data-col="${col}"]`,
@@ -341,9 +349,13 @@ function FigureCell({
         }}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
+        onDoubleClick={(e) => editInPlace(e.currentTarget)}
         onKeyDown={(e) => {
           keepSelection.current = false;
-          if (e.key === "Enter") {
+          if (e.key === "F2") {
+            e.preventDefault();
+            editInPlace(e.currentTarget);
+          } else if (e.key === "Enter") {
             e.preventDefault();
             move(e.shiftKey ? -1 : 1);
           } else if (e.key === "Escape") {
