@@ -25,6 +25,7 @@ import { fixture } from "../scoring-models/test-helpers";
 import {
   addPeriod,
   createEntity,
+  getEntity,
   setDebtSchedule,
   setExistingLoanAdjustments,
   setPeriodControls,
@@ -32,12 +33,13 @@ import {
   setValues,
   type StatementPeriod,
 } from "../spreads/service";
-import { runModel, type RunInput } from "./run";
+import { runModel, type AnalysisRun, type RunInput } from "./run";
 import { addCapexItem, removeCapexItem, updateCapexItem } from "./capex-plan";
 import {
   addProjectEntry,
   addProjectLoan,
   removeProjectEntry,
+  setConsolidatedLoans,
   setProjectClosing,
   updateProjectEntry,
 } from "./projects";
@@ -1017,6 +1019,44 @@ describe("analysis service", () => {
       setExistingLoanAdjustments(db, ctx, entity.id, "nope", []),
       "not_found",
     );
+
+    // A deal that refinances the term loan at the end of June: post-project,
+    // its debt service stops then. The borrower keeps the loan.
+    const { id } = await addScenario(db, ctx, analysis.id, {
+      name: "Refinancing",
+    });
+    await rejects(
+      setConsolidatedLoans(db, ctx, id, ["nope"], "2025-06-30"),
+      "not_found",
+    );
+    const refinanced = await setConsolidatedLoans(
+      db,
+      ctx,
+      id,
+      [loanId],
+      "2025-06-30",
+    );
+    expect(refinanced.project).toMatchObject({
+      closing: "2025-06-30",
+      consolidatedLoans: [loanId],
+    });
+    const results = await runAnalysis(db, ctx, analysis.id, id);
+    const service = (run: AnalysisRun) =>
+      Number(run.cells.DEBT_SERVICE![2]!.value);
+    // Six months of 10 in principal and the interest on them, not twelve.
+    expect(service(results.project!)).toBeLessThan(
+      service(results.scenario!) / 2 + 10,
+    );
+    expect(service(results.scenario!)).toBe(179.7);
+    expect(
+      (await getEntity(db, ctx, entity.id)).debtSchedule.loans,
+    ).toHaveLength(1);
+    // Removed from the borrower, the loan drops out of the project.
+    await setDebtSchedule(db, ctx, entity.id, { asOf: null, loans: [] });
+    const resaved = await updateScenario(db, ctx, id, {
+      project: refinanced.project,
+    });
+    expect(resaved.project).toBeNull();
   });
 
   it("uses the client's projections instead of assumptions when asked", async () => {

@@ -159,6 +159,29 @@ describe("debt schedule", () => {
     expect(round(post.balance[0]!.value)).toBe("1490000.00");
   });
 
+  it("stops a loan consolidated at closing", () => {
+    const termLoan = new Set([schedule.loans[0]!.id]);
+    const closing = monthIndex("2025-10-31");
+    const post = debtScheduleValues(
+      schedule,
+      [
+        { end: "2025-09-30", months: 9, mode: "proForma" },
+        { end: "2025-12-31", months: 12, mode: "projected" },
+        { end: "2026-12-31", months: 12, mode: "projected" },
+      ],
+      closing,
+      termLoan,
+    );
+    // Post-project, only the shareholder advance is left: 4% on 300,000.
+    expect(round(post.principal[0]!.value)).toBe("0.00");
+    expect(round(post.interest[0]!.value)).toBe("9000.00");
+    expect(round(post.balance[0]!.value)).toBe("300000.00");
+    // 2025 keeps the term loan's payments up to closing: ten months.
+    expect(round(post.principal[1]!.value)).toBe("100000.00");
+    expect(round(post.balance[1]!.value)).toBe("300000.00");
+    expect(post.principal[2]!.parts).toEqual([]);
+  });
+
   it("reports extra payments apart from principal, after the schedule's date", () => {
     const loan = {
       name: "Term loan",

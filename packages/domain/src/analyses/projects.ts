@@ -11,7 +11,13 @@ import type {
   ProjectSource,
   ProjectUse,
 } from "../financing/financing";
-import { getScenario, updateScenario, type Scenario } from "./service";
+import { getEntity } from "../spreads/service";
+import {
+  getAnalysis,
+  getScenario,
+  updateScenario,
+  type Scenario,
+} from "./service";
 
 // A scenario's project edited an entry at a time, as an AI client asks for
 // it, rather than saved whole as the editor does. Every edit checks the
@@ -53,6 +59,7 @@ const noEntry = () =>
 
 // The project as typed, ready to change and save.
 const asInput = (project: Project | null): ProjectInput => ({
+  consolidatedLoans: project?.consolidatedLoans ?? [],
   closing: project?.closing,
   sources: project?.sources ?? [],
   uses: project?.uses ?? [],
@@ -181,4 +188,34 @@ export async function setProjectClosing(
       "The scenario has no project yet; its first entry sets the closing date.",
     );
   return save(db, ctx, scenarioId, { ...asInput(project), closing });
+}
+
+// Sets which of the borrower's existing loans the project repays or
+// refinances at closing; post-project, their debt service stops then. A
+// scenario without a project starts one, closing on the date given.
+export async function setConsolidatedLoans(
+  db: Db,
+  ctx: Context,
+  scenarioId: string,
+  loanIds: readonly string[],
+  closing?: string,
+): Promise<Scenario> {
+  const { project, analysisId } = await getScenario(db, ctx, scenarioId);
+  if (project && closing && closing !== project.closing)
+    throw new DomainError(
+      "invalid",
+      `The project closes on ${project.closing}. Change its closing date to close on another.`,
+    );
+  const { entity } = await getAnalysis(db, ctx, analysisId);
+  const { debtSchedule } = await getEntity(db, ctx, entity.id);
+  if (loanIds.some((id) => !debtSchedule.loans.some((l) => l.id === id)))
+    throw new DomainError(
+      "not_found",
+      "That isn't one of the borrower's existing loans.",
+    );
+  return save(db, ctx, scenarioId, {
+    ...asInput(project),
+    closing: project?.closing ?? closing,
+    consolidatedLoans: [...loanIds],
+  });
 }

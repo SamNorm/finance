@@ -496,11 +496,13 @@ async function projectContext(db: Db, ctx: Context, detail: AnalysisDetail) {
     ctx,
     detail.version.scoringModelVersionId,
   );
-  const [items, model] = await Promise.all([
+  const [items, model, entity] = await Promise.all([
     listItems(db, ctx, scoring.id),
     getScoringModel(db, ctx, scoring.scoringModelId),
+    getEntity(db, ctx, detail.entity.id),
   ]);
   return {
+    existingLoans: new Set(entity.debtSchedule.loans.map((l) => l.id)),
     items,
     sides: balanceSheetSides(items),
     mapping: model.financingItems,
@@ -555,11 +557,16 @@ async function checkProject(
   input: ProjectInput | null | undefined,
 ) {
   if (!input) return null;
-  const { sides, mapping, adjustable } = await projectContext(db, ctx, detail);
+  const { sides, mapping, adjustable, existingLoans } = await projectContext(
+    db,
+    ctx,
+    detail,
+  );
   return normalizeProject(input, {
     sides,
     items: mapping,
     adjustable: new Set(adjustable.map((i) => i.code)),
+    existingLoans,
   });
 }
 

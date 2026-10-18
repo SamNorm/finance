@@ -197,6 +197,7 @@ export interface ProjectInput {
   lines?: readonly Record<string, unknown>[];
   subordinations?: readonly Record<string, unknown>[];
   adjustments?: readonly Record<string, unknown>[];
+  consolidatedLoans?: unknown;
 }
 
 const invalid = (message: string) => new DomainError("invalid", message);
@@ -216,26 +217,38 @@ export function normalizeProject(
     sides: ReadonlyMap<string, Side>;
     items: FinancingItems;
     adjustable?: ReadonlySet<string>;
+    // The borrower's existing loans, by id, which the project can
+    // consolidate.
+    existingLoans?: ReadonlySet<string>;
   },
 ): Project | null {
   if (!input) return null;
-  const list = (value: unknown) => {
+  const list = <T = Record<string, unknown>>(value: unknown): T[] => {
     if (value === undefined) return [];
     if (!Array.isArray(value))
       throw invalid("The project's entries must be lists.");
-    return value as Record<string, unknown>[];
+    return value as T[];
   };
   const sources = list(input.sources);
   const uses = list(input.uses);
   const lines = list(input.lines);
   const subordinations = list(input.subordinations);
   const adjustments = list(input.adjustments);
+  // A loan since removed from the borrower's debt schedule is dropped.
+  const consolidatedLoans = [
+    ...new Set(list<unknown>(input.consolidatedLoans)),
+  ].filter((id): id is string => {
+    if (typeof id !== "string")
+      throw invalid("Consolidated loans are the existing loans' ids.");
+    return context.existingLoans?.has(id) ?? false;
+  });
   if (
     !sources.length &&
     !uses.length &&
     !lines.length &&
     !subordinations.length &&
-    !adjustments.length
+    !adjustments.length &&
+    !consolidatedLoans.length
   )
     return null;
   const closing = parseDate(input.closing, "Project", "closing date");
@@ -331,6 +344,7 @@ export function normalizeProject(
           }),
         }
       : {}),
+    ...(consolidatedLoans.length ? { consolidatedLoans } : {}),
   };
   if (project.sources.some((s) => s.kind === "loan")) {
     const { longTermDebt, currentDebt, cash } = context.items;

@@ -635,6 +635,10 @@ export interface Project {
     amount: string;
     side: "assets" | "claims" | null;
   }[];
+  // The borrower's existing loans the deal repays or refinances at closing,
+  // by id: post-project, their debt service stops then. The borrower's debt
+  // schedule keeps them, for its other analyses and scenarios.
+  consolidatedLoans?: string[];
 }
 
 // A purchase of fixed assets a scenario plans in projected years, partly

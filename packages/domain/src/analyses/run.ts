@@ -202,6 +202,7 @@ export function runModel(input: RunInput): AnalysisRun {
     input.debtSchedule ?? EMPTY_SCHEDULE,
     info,
     project ? monthIndex(project.closing) : null,
+    new Set(project?.consolidatedLoans),
   );
   const blank = { value: null, parts: [] };
   financing.DEBT_SCHEDULE_INTEREST = schedule.interest.map((v) => v ?? blank);

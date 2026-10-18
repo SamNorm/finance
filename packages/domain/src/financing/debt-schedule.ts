@@ -81,11 +81,13 @@ export interface ScheduleValues {
 // on the same payments, for a year that began earlier. Actual periods are
 // left blank. Pro forma periods show the twelve months after the project
 // closes (scaled to the period's length) and the balance then: the debt
-// service the borrower faces post-project.
+// service the borrower faces post-project. Loans the project consolidates
+// (`repaid`) are paid off at closing: nothing after it.
 export function debtScheduleValues(
   schedule: DebtSchedule,
   periods: readonly FinancingPeriod[],
   closing: number | null = null,
+  repaid: ReadonlySet<string> = new Set(),
 ): ScheduleValues {
   const blank = periods.map(() => null);
   if (!schedule.asOf || !schedule.loans.length)
@@ -135,12 +137,13 @@ export function debtScheduleValues(
       balance: { value: new Dec(0), parts: [] as FinancingValue["parts"] },
     };
     for (const { loan, schedule: s } of loans) {
-      const flows = s.flows(from, to);
+      const end = closing !== null && repaid.has(loan.id) ? closing : Infinity;
+      const flows = s.flows(from, Math.min(to, end));
       for (const [key, amount] of [
         ["interest", flows.interest.times(share)],
         ["principal", flows.principal.times(share)],
         ["prepayments", flows.extra.times(share)],
-        ["balance", s.balanceAt(at)],
+        ["balance", at >= end ? new Dec(0) : s.balanceAt(at)],
       ] as const) {
         cells[key].value = cells[key].value!.plus(amount);
         if (!amount.isZero())
