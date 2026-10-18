@@ -106,6 +106,13 @@
       "when": 1792340768521,
       "tag": "0014_statement_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792343978721,
+      "tag": "0015_capex_plan",
+      "breakpoints": true
     }
   ]
 }

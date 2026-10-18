@@ -10,5 +10,6 @@ export {
   type ResultValue,
   type RunPeriod,
 } from "./run";
+export * from "./capex-plan";
 export * from "./projects";
 export * from "./service";

@@ -31,6 +31,7 @@ const SOURCES: Record<LineageRef["source"], string> = {
   summed: "Sum of lines",
   adjustment: "Project",
   schedule: "Debt schedule",
+  capex: "Capex plan",
   blank: "Blank",
 };
 

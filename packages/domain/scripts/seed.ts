@@ -48,7 +48,11 @@ import {
   inventoryByType,
 } from "../src/demo/borrowing-base";
 import { demoCompanies, demoReconciliation } from "../src/demo/companies";
-import { DEMO_MODEL, demoScenarios } from "../src/demo/model";
+import {
+  DEMO_CAPEX_SCENARIO,
+  DEMO_MODEL,
+  demoScenarios,
+} from "../src/demo/model";
 import {
   demoProperty,
   REAL_ESTATE_MODEL,
@@ -229,9 +233,11 @@ async function seed() {
   for (const [i, company] of companies.entries()) {
     const { entity } = borrowers[i]!;
     const actual = company.periods.filter((p) => p.quality !== "projected");
-    const scenarios = demoScenarios(
-      actual.at(-1)!.values.SHAREHOLDER_LOANS ?? "0",
-    );
+    const scenarios = [
+      ...demoScenarios(actual.at(-1)!.values.SHAREHOLDER_LOANS ?? "0"),
+      // Northwind plans a second line.
+      ...(i === 0 ? [DEMO_CAPEX_SCENARIO] : []),
+    ];
     await analysis(
       {
         entityId: entity.id,

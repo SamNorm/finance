@@ -3,6 +3,7 @@ import { runModel, withProject, type AnalysisRun } from "../analyses/run";
 import { checkCharts } from "../financial-models/charts";
 import type { ModelLine } from "../financial-models/types";
 import { validateLines } from "../financial-models/validate";
+import { normalizeCapex, type CapexItem } from "../financing/capex";
 import type { DebtSchedule } from "../financing/debt-schedule";
 import {
   balanceSheetSides,
@@ -28,7 +29,7 @@ import {
   demoReconciliation,
   type DemoPeriod,
 } from "./companies";
-import { DEMO_MODEL, demoScenarios } from "./model";
+import { DEMO_CAPEX_SCENARIO, DEMO_MODEL, demoScenarios } from "./model";
 import {
   demoProperty,
   REAL_ESTATE_MODEL,
@@ -80,6 +81,7 @@ function run(
     project?: ProjectInput | null;
     debtSchedule?: DebtSchedule;
     modelInputs?: Record<string, string>[];
+    capex?: CapexItem[];
   } = {},
 ): AnalysisRun {
   const sides = balanceSheetSides(items);
@@ -106,6 +108,7 @@ function run(
     lines,
     overrides: options.overrides ?? {},
     project,
+    capex: options.capex,
     debtSchedule: options.debtSchedule,
     items: items
       .filter((i) => i.kind !== "header")
@@ -268,6 +271,30 @@ describe("demo data", () => {
       });
       if (project) expect(imbalance(project), scenario.name).toBeNull();
     }
+  });
+
+  it("the capex plan adds debt service and debt in projected years", () => {
+    const northwind = companies[0]!;
+    const options = {
+      projectionYears: 2,
+      debtSchedule: northwind.debtSchedule,
+    };
+    const base = run(commercial, northwind.periods, DEMO_MODEL.lines, options);
+    const planned = run(commercial, northwind.periods, DEMO_MODEL.lines, {
+      ...options,
+      capex: normalizeCapex(DEMO_CAPEX_SCENARIO.capex),
+    });
+    expectNoErrors(planned, "capex plan");
+    // History stays; 2025 only pays the racking from cash; the line's loan
+    // pays from mid-2026.
+    expect(values(planned, "DSCR").slice(0, 4)).toEqual(
+      values(base, "DSCR").slice(0, 4),
+    );
+    expect(values(planned, "DSCR")[4]).toBeLessThan(values(base, "DSCR")[4]!);
+    const added =
+      values(planned, "FUNDED_DEBT")[4]! - values(base, "FUNDED_DEBT")[4]!;
+    expect(added).toBeGreaterThan(1300000);
+    expect(added).toBeLessThan(1350000);
   });
 
   it("the project weighs on coverage and builds net worth, post-project", () => {

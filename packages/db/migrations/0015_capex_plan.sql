@@ -1,0 +1,1 @@
+ALTER TABLE "analysis_scenarios" ADD COLUMN "capex" jsonb DEFAULT '[]'::jsonb NOT NULL;

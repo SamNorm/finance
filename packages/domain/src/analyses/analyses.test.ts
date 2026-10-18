@@ -33,6 +33,7 @@ import {
   type StatementPeriod,
 } from "../spreads/service";
 import { runModel, type RunInput } from "./run";
+import { addCapexItem, removeCapexItem, updateCapexItem } from "./capex-plan";
 import {
   addProjectEntry,
   addProjectLoan,
@@ -47,6 +48,7 @@ import {
   duplicateScenario,
   getAnalysis,
   getProjectSetup,
+  getScenario,
   listAnalyses,
   repinAnalysis,
   runAnalysis,
@@ -833,6 +835,85 @@ describe("analysis service", () => {
     // Nothing left is no project, which has no closing date to move.
     expect(scenario.project).toBeNull();
     await rejects(setProjectClosing(db, ctx, id, "2025-03-31"), "invalid");
+  });
+
+  it("plans capex in projected years, partly financed by loans", async () => {
+    const { context, entity, model } = setup;
+    const draft = await createFinancialModelDraft(db, context, model.id);
+    await addLine(db, context, draft.id, {
+      code: "CAPEX_DS",
+      label: "Capex debt service",
+      kind: "calculation",
+      formula: "CAPEX_DEBT_SERVICE",
+    });
+    const v2 = await publishFinancialModelVersion(db, context, draft.id);
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: entity.id,
+      financialModelVersionId: v2.id,
+      name: "A",
+      projectionYears: 2,
+    });
+    const { id } = await addScenario(db, ctx, analysis.id, {
+      name: "Phase 2",
+      capex: [
+        {
+          name: "Press",
+          date: "2025-06-30",
+          amount: "1000",
+          financed: "80%",
+          rate: "6%",
+          repayment: "equal_principal",
+          years: 4,
+        },
+      ],
+    });
+    const results = await runAnalysis(db, ctx, analysis.id, id);
+    expect(
+      results.capex.map((y) => [y.end, y.spent, y.financed, y.cash]),
+    ).toEqual([
+      ["2025-12-31", "1000", "800", "200"],
+      ["2026-12-31", "0", "0", "0"],
+    ]);
+    // Six payments in 2025, twelve in 2026; nothing in actual years, and
+    // nothing in the base case.
+    const service = results.scenario!.cells.CAPEX_DS!.map((c) =>
+      Number(c.value),
+    );
+    expect(service.slice(0, 2)).toEqual([0, 0]);
+    expect(service[2]).toBeCloseTo(100 + 800 * 0.005 * (6 - (2.5 / 48) * 6), 0);
+    expect(service[3]).toBeGreaterThan(service[2]!);
+    expect(results.base.cells.CAPEX_DS!.every((c) => c.value === "0")).toBe(
+      true,
+    );
+    expect(results.scenario!.cells.CAPEX_DS![2]!.refs[0]).toMatchObject({
+      code: "CAPEX_DEBT_SERVICE",
+      source: "capex",
+      parts: [{ name: "Press" }],
+    });
+
+    // Purchases are edited one at a time, and copied with the scenario.
+    const { item } = await addCapexItem(db, ctx, id, {
+      name: "Racking",
+      date: "2026-03-31",
+      amount: "200",
+    });
+    expect(item).not.toHaveProperty("loan");
+    const { item: financed } = await updateCapexItem(db, ctx, id, item.id, {
+      financed: "50%",
+      rate: "5%",
+      repayment: "blended",
+      years: 5,
+    });
+    expect(financed).toMatchObject({ financed: "0.5", loan: { months: 60 } });
+    const { item: longer } = await updateCapexItem(db, ctx, id, item.id, {
+      years: 7,
+    });
+    expect(longer.loan).toMatchObject({ months: 84, rate: "0.05" });
+    const copy = await duplicateScenario(db, ctx, id);
+    expect(copy.capex).toEqual((await getScenario(db, ctx, id)).capex);
+    const removed = await removeCapexItem(db, ctx, id, item.id);
+    expect(removed.capex.map((i) => i.name)).toEqual(["Press"]);
+    await rejects(removeCapexItem(db, ctx, id, item.id), "not_found");
   });
 
   it("keeps charts added in the analysis, checked against its version", async () => {

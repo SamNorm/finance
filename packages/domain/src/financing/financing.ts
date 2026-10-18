@@ -32,8 +32,9 @@ export type ProjectAdjustment = NonNullable<Project["adjustments"]>[number];
 export type FinancingItems = schema.FinancingItems;
 
 // The built-in inputs every formula can read. Project inputs are zero
-// outside post-project columns, so a model can add them unconditionally;
-// debt schedule inputs are blank in actual periods (see debt-schedule.ts).
+// outside post-project columns, and capex inputs outside projected years,
+// so a model can add them unconditionally; debt schedule inputs are blank
+// in actual periods (see debt-schedule.ts).
 export const FINANCING_INPUTS = [
   {
     code: "PROFORMA_DEBT",
@@ -101,15 +102,51 @@ export const FINANCING_INPUTS = [
     description:
       "What the borrower's existing loans owe, from its debt schedule. Blank in actual periods except post-project.",
   },
+  {
+    code: "CAPEX_SPENT",
+    label: "Planned capex",
+    description:
+      "Fixed assets the scenario's capex plan buys in the period. Like every capex input, zero outside projected years.",
+  },
+  {
+    code: "CAPEX_FINANCED",
+    label: "Capex financed",
+    description:
+      "What the capex plan's loans lend in the period, drawn when each purchase is made; the rest of the capex is paid from cash.",
+  },
+  {
+    code: "CAPEX_INTEREST",
+    label: "Capex loans: interest",
+    description: "Interest on the capex plan's loans.",
+  },
+  {
+    code: "CAPEX_PRINCIPAL",
+    label: "Capex loans: principal",
+    description: "Scheduled principal on the capex plan's loans.",
+  },
+  {
+    code: "CAPEX_DEBT_SERVICE",
+    label: "Capex loans: debt service",
+    description:
+      "Interest and principal on the capex plan's loans: the debt service the plan adds.",
+  },
+  {
+    code: "CAPEX_DEBT",
+    label: "Capex loans: balance",
+    description: "What the capex plan's loans owe at the end of the period.",
+  },
 ] as const;
 
 export type FinancingCode = (typeof FINANCING_INPUTS)[number]["code"];
 export const FINANCING_CODES: readonly string[] = FINANCING_INPUTS.map(
   (input) => input.code,
 );
-export type ProjectCode = Exclude<FinancingCode, `DEBT_SCHEDULE_${string}`>;
+export type ProjectCode = Exclude<
+  FinancingCode,
+  `DEBT_SCHEDULE_${string}` | `CAPEX_${string}`
+>;
 export const PROJECT_CODES = FINANCING_CODES.filter(
-  (code) => !code.startsWith("DEBT_SCHEDULE_"),
+  (code) => !code.startsWith("DEBT_SCHEDULE_") && !code.startsWith("CAPEX_"),
 ) as ProjectCode[];
 
 export type Side = "assets" | "claims";

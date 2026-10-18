@@ -75,9 +75,9 @@ const LINES: Line[] = [
     "INTEREST",
     "Interest expense",
     "amount",
-    "EXISTING_INTEREST + PROFORMA_INTEREST + PROFORMA_LINE_INTEREST",
+    "EXISTING_INTEREST + PROFORMA_INTEREST + PROFORMA_LINE_INTEREST + CAPEX_INTEREST",
     null,
-    "Existing interest plus the project's new loans and line of credit.",
+    "Existing interest plus the project's new loans and line of credit, and the capex plan's loans.",
   ),
   calc(
     "CASH_TAXES",
@@ -113,9 +113,9 @@ const LINES: Line[] = [
     "PRINCIPAL",
     "Scheduled principal",
     "amount",
-    "EXISTING_PRINCIPAL + PROFORMA_PRINCIPAL",
+    "EXISTING_PRINCIPAL + PROFORMA_PRINCIPAL + CAPEX_PRINCIPAL",
     null,
-    "Existing principal plus the project's new loans.",
+    "Existing principal plus the project's new loans and the capex plan's.",
   ),
   calc("DEBT_SERVICE", "Debt service", "amount", "INTEREST + PRINCIPAL"),
   calc("DSCR", "Debt service coverage", "ratio", "CFADS / DEBT_SERVICE"),
@@ -126,8 +126,8 @@ const LINES: Line[] = [
     "Funded debt",
     "amount",
     "BANK_INDEBTEDNESS + CPLTD + CURRENT_LEASE_LIABILITIES + LONG_TERM_DEBT + LEASE_LIABILITIES + SUBORDINATED_DEBT",
-    "MAX(0, PREV(FUNDED_DEBT) - PRINCIPAL)",
-    "Interest-bearing debt on the balance sheet, which post-project includes the new loans.",
+    "MAX(0, PREV(FUNDED_DEBT) - PRINCIPAL + CAPEX_FINANCED)",
+    "Interest-bearing debt on the balance sheet, which post-project includes the new loans; projected, less principal repaid, plus what the capex plan borrows.",
   ),
   calc(
     "DEBT_TO_EBITDA",
@@ -221,6 +221,28 @@ export const DEMO_MODEL = {
     },
   ] satisfies ChartDefinition[],
   lines: complete(LINES),
+};
+
+// Northwind's capex plan: a second machining line in mid-2026, 75% on a
+// ten-year loan, and warehouse racking before that, paid from cash.
+export const DEMO_CAPEX_SCENARIO: ScenarioInput = {
+  name: "Capex plan: second line in 2026",
+  capex: [
+    {
+      name: "Warehouse racking",
+      date: "2025-09-30",
+      amount: "150000",
+    },
+    {
+      name: "Second machining line",
+      date: "2026-06-30",
+      amount: "1800000",
+      financed: "75%",
+      rate: "7%",
+      repayment: "blended",
+      years: 10,
+    },
+  ],
 };
 
 // Scenarios added to each demo analysis: two stresses, and new equipment

@@ -10,6 +10,7 @@ import {
 import { assumptionValue } from "../financial-models/validate";
 import type { ModelLine } from "../financial-models/types";
 import { monthIndex } from "../financing/amortization";
+import { capexValues, type CapexItem } from "../financing/capex";
 import {
   periodModes,
   type FinancingPart,
@@ -60,7 +61,8 @@ export interface LineageRef extends ResultValue {
   period: number;
   // Where the value came from: a model line, an assumption, a figure entered
   // in the spread or for the model, a subtotal summed from its lines, the
-  // scenario's financing, the borrower's debt schedule, or nothing.
+  // scenario's financing, the borrower's debt schedule, the scenario's capex
+  // plan, or nothing.
   source:
     | "calculation"
     | "assumption"
@@ -68,6 +70,7 @@ export interface LineageRef extends ResultValue {
     | "summed"
     | "adjustment"
     | "schedule"
+    | "capex"
     | "blank";
   // For financing and items the project adjusted: each entry's share.
   parts?: FinancingPart[];
@@ -131,6 +134,8 @@ export interface RunInput {
   project?: Project | null;
   // The borrower's existing loans.
   debtSchedule?: DebtSchedule;
+  // The scenario's purchases planned in projected years.
+  capex?: readonly CapexItem[];
   // Items of the scoring model version the model is bound to.
   items: readonly { code: string; label: string; numeric: boolean }[];
 }
@@ -205,6 +210,7 @@ export function runModel(input: RunInput): AnalysisRun {
     (v) => v ?? blank,
   );
   financing.DEBT_SCHEDULE_BALANCE = schedule.balance.map((v) => v ?? blank);
+  Object.assign(financing, capexValues(input.capex ?? [], info));
   const isFinancing = (code: string): code is FinancingCode =>
     FINANCING_CODES.includes(code);
   const financingLabels = new Map<string, string>(
@@ -263,7 +269,11 @@ export function runModel(input: RunInput): AnalysisRun {
 
   const sourceOf = (code: string, p: number): LineageRef["source"] => {
     if (isFinancing(code))
-      return code.startsWith("DEBT_SCHEDULE_") ? "schedule" : "adjustment";
+      return code.startsWith("DEBT_SCHEDULE_")
+        ? "schedule"
+        : code.startsWith("CAPEX_")
+          ? "capex"
+          : "adjustment";
     const line = lineByCode.get(code);
     if (line?.kind === "input") {
       if (periods[p]?.projection === "assumptions" && line.projectionFormula)

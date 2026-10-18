@@ -12,6 +12,12 @@ import { listLines } from "../financial-models/service";
 import type { ModelLine } from "../financial-models/types";
 import { normalizeAssumption } from "../financial-models/validate";
 import {
+  capexYears,
+  normalizeCapex,
+  type CapexItem,
+  type CapexYear,
+} from "../financing/capex";
+import {
   balanceSheetSides,
   imbalance,
   normalizeProject,
@@ -478,6 +484,8 @@ export interface ScenarioInput {
   overrides?: Record<string, string>;
   // The project it finances; null or empty for a stress alone.
   project?: ProjectInput | null;
+  // Purchases planned in projected years, as typed or as saved.
+  capex?: unknown;
 }
 
 // What a project's items are checked against: the balance sheet of the
@@ -572,6 +580,7 @@ export async function addScenario(
       position: detail.scenarios.length,
       overrides: normalizeOverrides(detail.lines, input.overrides ?? {}),
       project: await checkProject(db, ctx, detail, input.project),
+      capex: normalizeCapex(input.capex),
     })
     .returning();
   await touch(db, analysisId);
@@ -620,6 +629,8 @@ export async function updateScenario(
         patch.project === undefined
           ? undefined
           : await checkProject(db, ctx, detail, patch.project),
+      capex:
+        patch.capex === undefined ? undefined : normalizeCapex(patch.capex),
     })
     .where(eq(scenarios.id, scenarioId))
     .returning();
@@ -660,6 +671,7 @@ export async function duplicateScenario(
     name: name?.trim() || `${source.name} (copy)`,
     overrides: source.overrides,
     project: source.project,
+    capex: source.capex,
   });
 }
 
@@ -680,6 +692,8 @@ const touch = (db: Db, analysisId: string) =>
     .where(eq(analyses.id, analysisId));
 
 export interface AnalysisResults {
+  // The chosen scenario's capex plan year by year; empty without one.
+  capex: CapexYear[];
   base: AnalysisRun;
   // The chosen scenario, when one is.
   scenario: AnalysisRun | null;
@@ -723,7 +737,11 @@ export async function runAnalysis(
     periods.map((p) => p.key),
   );
   for (const period of periods) period.modelInputs = inputs[period.key] ?? {};
-  const run = (overrides: Record<string, string>, project: Project | null) =>
+  const run = (
+    overrides: Record<string, string>,
+    project: Project | null,
+    capex: readonly CapexItem[] = [],
+  ) =>
     runModel({
       periods: project
         ? withProject(periods, project, items, sides, mapping)
@@ -732,6 +750,7 @@ export async function runAnalysis(
       lines: detail.lines,
       overrides,
       project,
+      capex,
       debtSchedule: spread.entity.debtSchedule,
       items: items
         .filter((item) => item.kind !== "header")
@@ -748,11 +767,24 @@ export async function runAnalysis(
   const lastYear = base.periods.findLast(
     (p) => p.projection === null && p.months === 12,
   );
+  const scenarioRun = scenario
+    ? run(scenario.overrides, null, scenario.capex)
+    : null;
   return {
+    capex: scenarioRun
+      ? capexYears(
+          scenario!.capex,
+          scenarioRun.periods.map((p) => ({
+            end: p.end,
+            months: p.months,
+            projected: p.projection !== null,
+          })),
+        )
+      : [],
     base,
-    scenario: scenario ? run(scenario.overrides, null) : null,
+    scenario: scenarioRun,
     project: scenario?.project
-      ? run(scenario.overrides, scenario.project)
+      ? run(scenario.overrides, scenario.project, scenario.capex)
       : null,
     postProject: (
       detail.analysis.postProjectKeys ?? (lastYear ? [lastYear.key] : [])
@@ -904,6 +936,7 @@ export async function repinAnalysis(
           ),
         ),
         project: scenario.project,
+        capex: scenario.capex,
       });
     }
     return copy;

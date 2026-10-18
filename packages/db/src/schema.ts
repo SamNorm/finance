@@ -637,6 +637,30 @@ export interface Project {
   }[];
 }
 
+// A purchase of fixed assets a scenario plans in projected years, partly
+// financed by a loan drawn when it's bought; the rest comes from cash.
+// Amounts and rates are canonical decimal strings.
+export interface CapexItem {
+  id: string;
+  name: string;
+  // When it's bought and the loan is drawn.
+  date: string;
+  amount: string;
+  // The share financed, e.g. "0.8".
+  financed: string;
+  // The loan, when a share is financed.
+  loan?: {
+    // Annual rate, e.g. "0.065".
+    rate: string;
+    repayment: "blended" | "equal_principal" | "interest_only";
+    // Months of amortization; 0 for interest only.
+    months: number;
+    frequency?: PaymentFrequency;
+    // Starting when it's drawn.
+    moratorium?: Moratorium;
+  };
+}
+
 export const analysisScenarios = pgTable(
   "analysis_scenarios",
   {
@@ -650,6 +674,8 @@ export const analysisScenarios = pgTable(
     overrides: jsonb().$type<Record<string, string>>().notNull().default({}),
     // The project the scenario finances; none for a stress alone.
     project: jsonb().$type<Project>(),
+    // Purchases planned in projected years, and their financing.
+    capex: jsonb().$type<CapexItem[]>().notNull().default([]),
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],
