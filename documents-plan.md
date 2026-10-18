@@ -1,6 +1,6 @@
 # PDF Documents: Draft Plan
 
-_Status: phase 1 built (§4) · Last updated: 2026-10-18_
+_Status: phase 1 built (§4), phase 3 planned (§6) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -55,7 +55,7 @@ The built-in documents ship as default templates made of these same blocks, so t
 
 ### 3.3 Versions
 
-- Templates follow the financial models' lifecycle: draft, published (immutable), retired.
+- Templates follow the financial models' lifecycle in a lighter form: a draft, the published definition analysts print from, and archived (§6.2). There's no version history: each printed document already keeps the definition it was printed from.
 - A template can be tied to a financial model, since it references that model's line codes. Publishing checks those references, as model publishing does (§5.4).
 
 ### 3.4 Every document generated is a snapshot
@@ -102,13 +102,88 @@ The built-in documents ship as default templates made of these same blocks, so t
    - Charts, covenants and figures follow the app: a covenant's thresholds by year draw on its line's chart.
 
 2. **Documents that follow new features:** the covenant report and compliance certificate, the scenario comparison, the spread report and the consolidation worksheet.
-3. **Template editor** in the Admin model setup area: versions, merge fields, conditional blocks, and labels in French and English.
+3. **Template editor:** organizations' own documents, made from the same blocks by administrators and analysts, with merge fields and conditional blocks. Planned in §6; French and English follow it.
 4. **Narrative sections:** MCP drafting, the credit memo package and Word output.
 5. **Signature and approval blocks**, once real sign-in and roles exist.
 
 ## 5. Open questions
 
 - **Narrative:** where does analyst commentary live? Per analysis, per section, or per line and period?
-- **Ownership of templates:** only admins, or analysts too, with their own variants?
+- ~~**Ownership of templates:** only admins, or analysts too, with their own variants?~~ Analysts too (§6.1).
 - **Storage and retention of snapshots:** in the app's database, or in the institution's document management system?
 - **Word output:** needed in phase 1, or can PDF wait for it?
+
+## 6. Phase 3 in detail: templates and the editor
+
+### 6.1 What users get
+
+- The blocks are fixed: each is something the app computes and lays out, so every figure stays the app's. The UI calls them **sections**; the code keeps `blocks`. A new kind of section is engineering work, and then every template can use it.
+- Users make a document by choosing sections, ordering them, and setting each one: which lines and periods, which charts, their own headings and text with merge fields, and when a section shows.
+- They start blank, or from a copy of a built-in or another template. The built-ins stay as they are, as starting points.
+- **Analysts and administrators both make templates.** There's no sign-in yet (`Context` holds only the organization), so the first cut has organization templates only, which anyone can edit, as with models today. Analysts reach the editor from an analysis's Documents tab as well as from Model setup.
+- **With sign-in** (its own project): an analyst's templates are their own, private, and print from the draft. Administrators publish the organization's. An analyst can offer one to the organization, and an administrator publishes it. Roles then gate Model setup.
+
+### 6.2 Data
+
+- A new `document_templates` table:
+  - the organization, a name and a description;
+  - the financial model it reads, when it names lines or charts (null for one that only uses whole sections, which any analysis can print);
+  - the built-in or template it was copied from;
+  - the draft: a title with merge fields, the orientation and the blocks;
+  - the published definition, the same three, and when it was published;
+  - when it was archived.
+- Analysts print the published definition, so an administrator's half-done edits never reach them. **Publish** copies the draft over it; **Discard changes** copies it back.
+- `documents` gets a `template_id`, set null if the template is deleted. Each printed document keeps its definition, as now.
+- `Template` gets `orientation`, which replaces the `LANDSCAPE` set keyed on built-ins.
+
+### 6.3 Blocks
+
+- **Conditions:** any block takes an optional `when`, from a fixed list rather than an expression language:
+  - the scenario has a project, or it hasn't;
+  - a scenario, or the base case;
+  - a covenant fails in a year shown, or all pass.
+- **Text:** paragraphs with a small Markdown subset (bold, italics, bullets), escaped and then formatted, with merge fields as now.
+- **Merge fields:** as now (`{{borrower.name}}`, `{{line.CODE}}`, `{{line.CODE.post}}`, …). The editor lists them, with the bound model's line codes, and inserts one at the cursor.
+- **Checks** (`checkTemplate`, beside `checkCharts`), run on every save and at publish. The blocks come from the editor and from MCP as JSON, so the check parses them fully:
+  - an unknown section or setting;
+  - a line code, chart or merge field the model's latest published version doesn't have;
+  - a template with no sections.
+
+  Saving stops only on what can't be stored; publishing stops on any error.
+
+- **At print time**, an analysis may run on a newer model version that lost a line. That line shows as a dash, and the preview lists what's missing. Nothing blocks printing: the app flags rather than blocks, as with statement checks.
+
+### 6.4 Where it shows
+
+- **Model setup → Documents** gets two tabs:
+  - **Documents:** the built-ins (to copy) and the organization's templates, with their status (draft changes, published, archived) and the model they read. **New document** starts blank or from a copy.
+  - **Branding:** the form there today.
+- **The editor**, at `/documents/templates/[id]`:
+  - A header with the name, the status, and **Publish**, **Discard changes** and **Archive**.
+  - Settings: the name, description, title, orientation and financial model.
+  - The sections, listed in order, each summed up, e.g. "Model lines: DSCR, Debt to EBITDA · from the latest year". Each moves up or down (as lines do in the model editor), opens in a modal to edit, or is removed. **Add a section** groups them: figures, deal, text, layout.
+  - Every change saves to the draft straight away, as model lines do, and returns its issues.
+  - A live preview of the draft beside the list, for an analysis and scenario picked there (by default the latest analysis on the bound model). It's the preview route, extended to render a draft.
+- **An analysis's Documents tab** offers the built-ins and the organization's published templates that fit its model: bound to it, or to none. **Copy and edit** opens the editor on a copy, previewing that analysis. An organization can hide a built-in it has replaced.
+
+### 6.5 MCP
+
+- `list_document_templates` includes the organization's, by id; `generate_document` takes one.
+- Authoring, so a client's AI can build a document on request:
+  - `describe_document_sections`: each section and its settings, for the AI to read;
+  - `create_document_template`;
+  - `set_document_template`: the whole draft at once (title, orientation, blocks), returning the checks;
+  - `publish_document_template`.
+
+  Replacing the whole draft keeps the tools few; the blocks are small JSON.
+
+### 6.6 Slices
+
+Each slice is committed and merged on its own.
+
+1. **Templates as data:** the table, `orientation` and `when`, `checkTemplate`, the service (create, copy, edit the draft, publish, discard, archive, delete), and printing resolving a template's id as well as a built-in's key. Tests on PGlite.
+2. **The editor and the template list**, under Model setup, with the live preview.
+3. **Printing them:** the analysis tab's list filtered by model, **Copy and edit**, and hiding built-ins.
+4. **MCP:** listing and printing them, then authoring.
+5. **French and English** (§3.6), the documents' part of the app's i18n (recap §7): a template's language sets its fixed wording (headings, "Base case", "Page 1 of 3", months) and number formats (1 234 567,89 $). Model line labels then need a French label, which is a change to financial models. Text sections are already in whatever language they're written in, and templates refer to codes rather than labels, so templates aren't stuck in one language meanwhile.
+6. **Personal templates and roles**, with sign-in (§6.1).
