@@ -220,6 +220,10 @@ describe("MCP server", () => {
       remove_project_entry: "changes",
       set_project_closing: "changes",
       get_loan_schedule: "reads",
+      add_existing_loan: "adds",
+      update_existing_loan: "changes",
+      remove_existing_loan: "changes",
+      set_debt_schedule_date: "changes",
     });
   });
 
@@ -453,6 +457,58 @@ describe("MCP server", () => {
       entryId: sub.entry.id,
     });
     expect(removed.project.subordinations).toEqual([]);
+  });
+
+  it("keeps a borrower's existing loans", async () => {
+    const call = await connect();
+    const {
+      value: [boreale],
+    } = await call("list_borrowers", { search: "boréale" });
+    const mortgage = {
+      borrowerId: boreale.id,
+      name: "Mortgage",
+      balance: "850,000",
+      rate: "4.5%",
+      repayment: "blended",
+      years: 18,
+    };
+    expect(await call("add_existing_loan", mortgage)).toEqual({
+      error: "Debt schedule: enter the date it's as of as a date.",
+    });
+    const { value: added } = await call("add_existing_loan", {
+      ...mortgage,
+      asOf: "2024-12-31",
+    });
+    expect(added.loan).toMatchObject({
+      name: "Mortgage",
+      balance: "850,000.00",
+      terms: "18 years · blended payments",
+      maturity: "2042-12-31",
+    });
+    const { value: changed } = await call("update_existing_loan", {
+      borrowerId: boreale.id,
+      loanId: added.loan.id,
+      balance: "800,000",
+    });
+    expect(changed.loan).toMatchObject({ balance: "800,000.00", rate: "4.5%" });
+    const { value: moved } = await call("set_debt_schedule_date", {
+      borrowerId: boreale.id,
+      asOf: "2025-03-31",
+    });
+    expect(moved.existingLoans.asOf).toBe("2025-03-31");
+    const { value: schedule } = await call("get_loan_schedule", {
+      borrowerId: boreale.id,
+      loanId: added.loan.id,
+    });
+    expect(schedule).toMatchObject({
+      balance: "800,000.00",
+      from: "2025-03-31",
+    });
+    const { value: removed } = await call("remove_existing_loan", {
+      borrowerId: boreale.id,
+      loanId: added.loan.id,
+    });
+    expect(removed.existingLoans).toEqual({ asOf: null, loans: [] });
   });
 
   it("explains what's wrong rather than failing", async () => {
