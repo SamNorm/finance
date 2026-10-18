@@ -1,6 +1,6 @@
 # PDF Documents: Draft Plan
 
-_Status: phase 1 built (§4); phase 3 under way, slices 1 to 4 built (§6.6) · Last updated: 2026-10-18_
+_Status: phase 1 built (§4); phase 3 built but for personal templates, which wait for sign-in (§6.6) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -196,5 +196,8 @@ Each slice is committed and merged on its own.
    How it's built: `listPrintableTemplates` gives an analysis's model the organization's published, unarchived documents that read it or no model, then the built-ins it hasn't hidden (`organizations.hidden_built_ins`, set with `setBuiltInHidden`). A hidden built-in no longer prints, even when asked for by key. On the analysis tab, the organization's own open in the editor and a built-in copies into one reading the analysis's model, both previewing that analysis and scenario.
 
 4. **MCP (built):** listing and printing them, then authoring (§6.5). `describeSections` in `check.ts` describes each setting beside the parser's own list of them.
-5. **French and English** (§3.6), the documents' part of the app's i18n (recap §7): a template's language sets its fixed wording (headings, "Base case", "Page 1 of 3", months) and number formats (1 234 567,89 $). Model line labels then need a French label, which is a change to financial models. Text sections are already in whatever language they're written in, and templates refer to codes rather than labels, so templates aren't stuck in one language meanwhile.
-6. **Personal templates and roles**, with sign-in (§6.1).
+5. **French and English (built)** (§3.6), the documents' part of the app's i18n (recap §7): a template's language sets its fixed wording (headings, "Base case", "Page 1 of 3", months, loan terms) and number formats (1 234 567,89 $). Model line labels print as the model has them; a label per language is the labels layer of the app's i18n, a change to financial models. Text sections are already in whatever language they're written in, and templates refer to codes rather than labels, so templates aren't stuck in one language.
+
+   How it's built: `format.ts` makes each language's formatters, and `locale.ts` holds the documents' wording in English and French, with French loan terms and imbalance notes beside the domain's English. The renderer takes a template's `language`, English when a definition has none, so documents kept before read as they did. The editor and `set_document_template` set it.
+
+6. **Personal templates and roles**, with sign-in (§6.1). Not built: the app has no users yet, so a template can't belong to one.

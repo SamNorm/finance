@@ -13,6 +13,7 @@ import {
   templateOf,
   updateTemplate,
   type BrandingInput,
+  type Language,
   type Orientation,
 } from "@finance/documents";
 import { getAnalysis } from "@finance/domain";
@@ -98,7 +99,12 @@ export async function updateTemplateDetailsAction(
 // sections are parsed and checked in the domain.
 export async function saveTemplateAction(
   templateId: string,
-  draft: { title?: string; orientation?: string; blocks?: unknown },
+  draft: {
+    title?: string;
+    orientation?: string;
+    language?: string;
+    blocks?: unknown;
+  },
 ): Promise<ActionResult> {
   return run((db, ctx) =>
     updateTemplate(db, ctx, String(templateId), {
@@ -107,6 +113,10 @@ export async function saveTemplateAction(
         draft?.orientation === undefined
           ? undefined
           : (String(draft.orientation) as Orientation),
+      language:
+        draft?.language === undefined
+          ? undefined
+          : (String(draft.language) as Language),
       blocks: draft?.blocks,
     }),
   );

@@ -80,6 +80,7 @@ describe("document templates", () => {
       draft: {
         title: report.title,
         orientation: "landscape",
+        language: "en",
         blocks: report.blocks,
       },
       issues: [],
@@ -340,6 +341,72 @@ describe("document templates", () => {
     for (const id of [any, ours, draft, archived, elsewhere])
       await deleteTemplate(db, ctx, id);
     await deleteFinancialModel(db, ctx, other.model.id);
+  });
+
+  it("print their own wording, figures and dates in French", async () => {
+    const { id } = await createTemplate(db, ctx, {
+      name: "Sommaire de l'opération",
+      from: "deal-summary",
+    });
+    await rejects(
+      updateTemplate(db, ctx, id, { language: "de" as never }),
+      "invalid",
+    );
+    const { draft } = await updateTemplate(db, ctx, id, {
+      language: "fr",
+      title: "{{borrower.name}} : {{scenario.name}}, {{date}}",
+      blocks: [
+        { type: "facts" },
+        { type: "sourcesUses" },
+        { type: "debt" },
+        { type: "covenants" },
+        { type: "lines", lines: ["DSCR"], periods: "recent" },
+        { type: "text", text: "Couverture : {{line.DSCR}}." },
+      ],
+    });
+    expect(draft.language).toBe("fr");
+    const nbsp = "\u00a0";
+    const deal = await previewDocument(db, ctx, {
+      analysisId,
+      scenarioId: dealId,
+      template: id,
+      draft: true,
+    });
+    expect(deal.html).toContain('<html lang="fr">');
+    expect(deal.title).toMatch(
+      /^Northwind Precision Inc\. : Post-project: new equipment, \d+ [a-zéû]+\.? \d{4}$/,
+    );
+    for (const words of [
+      "Emprunteur",
+      "Modèle financier",
+      "Utilisations",
+      "Nouveau prêt",
+      "Engagements financiers",
+      "Proposés pour",
+      "Après projet",
+      "Service de la dette, 12 premiers mois",
+      "versements combinés",
+      `2${nbsp}000${nbsp}000`,
+    ])
+      expect(deal.html).toContain(words);
+    expect(deal.html).toMatch(/Couverture : \d,\d\dx\./);
+    expect(deal.footer).toContain('Page <span class="pageNumber"></span> de');
+    expect(deal.footer).toContain("Banque Fictive · Confidentiel");
+    // No English left in what the document words itself.
+    for (const words of [
+      "Borrower",
+      "Sources and uses",
+      "Debt service, first",
+      'Page <span class="pageNumber"></span> of',
+    ])
+      expect(deal.html + deal.footer).not.toContain(words);
+    const base = await previewDocument(db, ctx, {
+      analysisId,
+      template: id,
+      draft: true,
+    });
+    expect(base.html).toContain("Le scénario de base ne finance aucun projet.");
+    await deleteTemplate(db, ctx, id);
   });
 
   it.skipIf(!browserPath())(

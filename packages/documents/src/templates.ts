@@ -101,6 +101,16 @@ export const SECTIONS: Record<
 
 export type Orientation = "portrait" | "landscape";
 
+// The language a document prints its own wording in (headings of its
+// tables, "Base case", "Page 1 of 3") and its figures and dates. Model line
+// labels and text sections print as they're written.
+export type Language = "en" | "fr";
+
+export const LANGUAGES: Record<Language, string> = {
+  en: "English",
+  fr: "Français",
+};
+
 // What a document prints: the part of a template its draft and published
 // definition hold.
 export interface Definition {
@@ -108,6 +118,8 @@ export interface Definition {
   title: string;
   // Landscape fits every period of an analysis.
   orientation: Orientation;
+  // English when missing, as in documents kept before languages.
+  language?: Language;
   blocks: Block[];
 }
 

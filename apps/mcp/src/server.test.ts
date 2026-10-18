@@ -1351,7 +1351,7 @@ describe("MCP server", () => {
       name: "Coverage note",
       status: "draft",
       financialModel: { name: "Debt service", publishedVersion: 1 },
-      draft: { orientation: "portrait" },
+      draft: { orientation: "portrait", language: "en" },
       issues: [],
       editorUrl: `http://localhost:3000/documents/templates/${created.id}`,
     });
@@ -1366,13 +1366,17 @@ describe("MCP server", () => {
     const { value: written } = await call("set_document_template", {
       templateId: created.id,
       title: "{{borrower.name}}: coverage",
+      language: "fr",
       sections: [
         { type: "facts" },
         { type: "lines", lines: ["DSCR", "NOPE"], periods: "recent" },
         { type: "text", text: "Coverage is {{line.DSCR}}.", when: "project" },
       ],
     });
-    expect(written.draft.title).toBe("{{borrower.name}}: coverage");
+    expect(written.draft).toMatchObject({
+      title: "{{borrower.name}}: coverage",
+      language: "fr",
+    });
     expect(written.issues).toEqual([
       "error: Section 2 (Model lines): Debt service has no line NOPE.",
     ]);

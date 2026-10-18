@@ -1,9 +1,6 @@
 import {
   amortize,
-  describeTerms,
-  imbalance,
   monthIndex,
-  monthOf,
   nextYearDebtService,
   projectTotals,
   type CovenantPeriod,
@@ -13,7 +10,8 @@ import {
 } from "@finance/domain";
 import { chartSvg, legendHtml, type ChartInput } from "./chart";
 import type { DocumentData, DocumentRun } from "./data";
-import { date, escape, figure, money, rate, type Format } from "./format";
+import { escape, type Format } from "./format";
+import { locale, type Locale } from "./locale";
 import {
   MERGE_FIELD,
   type Block,
@@ -38,7 +36,7 @@ const DEFAULT_COLOR = "#1e3a8a";
 
 // A merge field's value, e.g. "borrower.name" or "line.DSCR.post"; null
 // for a field there's no such thing as.
-function field(path: string, data: DocumentData): string | null {
+function field(path: string, data: DocumentData, l: Locale): string | null {
   const [head, code, post] = path.split(".");
   if (head === "line" && code) {
     const line = data.lines.find((l) => l.code === code);
@@ -48,7 +46,7 @@ function field(path: string, data: DocumentData): string | null {
     const run = post ? data.project : data.run;
     return p < 0 || !run
       ? ""
-      : figure(run.values[line.code]?.[p] ?? null, line.format as Format);
+      : l.figure(run.values[line.code]?.[p] ?? null, line.format as Format);
   }
   const fields: Record<string, string> = {
     "borrower.name": data.borrower.name,
@@ -56,31 +54,35 @@ function field(path: string, data: DocumentData): string | null {
     "analysis.name": data.analysis.name,
     "model.name": data.model.name,
     "model.version": `v${data.model.version}`,
-    "scenario.name": data.scenario?.name ?? "Base case",
+    "scenario.name": data.scenario?.name ?? l.w.baseCase,
     "organization.name": data.organization.name,
-    date: date(data.date),
+    date: l.date(data.date),
   };
   return fields[path] ?? null;
 }
 
 // {{borrower.name}} and the like; unknown fields are left as typed.
-export function merge(text: string, data: DocumentData): string {
+export function merge(
+  text: string,
+  data: DocumentData,
+  l: Locale = locale(),
+): string {
   return text.replace(
     MERGE_FIELD,
-    (whole, path: string) => field(path, data) ?? whole,
+    (whole, path: string) => field(path, data, l) ?? whole,
   );
 }
 
 // A text block's paragraphs, between blank lines, with "- " bullets,
 // **bold** and *italics*. What's typed is escaped before it's formatted, and
 // merge fields are filled in last, so neither can make markup.
-function prose(text: string, data: DocumentData): string {
+function prose(text: string, data: DocumentData, l: Locale): string {
   const inline = (line: string) =>
     escape(line)
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.+?)\*/g, "<em>$1</em>")
       .replace(MERGE_FIELD, (whole, path: string) =>
-        escape(field(path, data) ?? whole),
+        escape(field(path, data, l) ?? whole),
       );
   const bullet = /^[-*]\s+/;
   return text
@@ -133,36 +135,18 @@ export function shows(when: Condition | undefined, data: DocumentData) {
   }
 }
 
-const QUALITIES: Record<DocumentRun["periods"][number]["quality"], string> = {
-  audited: "Audited",
-  review: "Review engagement",
-  compilation: "Compilation",
-  internal: "Internal",
-  projected: "Projected",
-};
-
-// A month index as "Jan 2025".
-const month = (index: number) => {
-  const [year, m] = monthOf(index).split("-").map(Number) as [number, number];
-  return new Date(Date.UTC(year, m - 1, 1)).toLocaleString("en-CA", {
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-};
-
 // The latest fiscal year that isn't projected.
 const lastYear = (run: DocumentRun) =>
   run.periods.findLastIndex((p) => !p.projection && p.months === 12);
 
-const periodHead = (run: DocumentRun, p: number) => {
+const periodHead = (run: DocumentRun, p: number, l: Locale) => {
   const period = run.periods[p]!;
-  return `${escape(date(period.end))}<small>${
+  return `${escape(l.date(period.end))}<small>${
     period.projection === "assumptions"
-      ? "Projected"
+      ? l.w.projected
       : period.projection === "client"
-        ? "Client projection"
-        : `${period.months} mo · ${QUALITIES[period.quality]}`
+        ? l.w.clientProjection
+        : l.w.periodMonths(period.months, l.w.qualities[period.quality])
   }</small>`;
 };
 
@@ -182,6 +166,7 @@ function columns(data: DocumentData, recent: boolean) {
 function linesBlock(
   block: Extract<Block, { type: "lines" }>,
   data: DocumentData,
+  l: Locale,
 ): string {
   const cols = columns(data, block.periods === "recent");
   const shown = data.lines.filter(
@@ -197,7 +182,7 @@ function linesBlock(
         .map((c) => {
           const run = c.post ? data.project! : data.run;
           const value = run.values[line.code]?.[c.p] ?? null;
-          const shownValue = figure(value, line.format as Format);
+          const shownValue = l.figure(value, line.format as Format);
           const tone =
             line.format === "flag"
               ? value === "true"
@@ -215,27 +200,30 @@ function linesBlock(
   const head = cols
     .map(
       (c) =>
-        `<th class="num${c.post ? " post" : ""}${data.run.periods[c.p]!.projection ? " projected" : ""}">${c.post ? `Post-project<small>${escape(date(data.run.periods[c.p]!.end))}</small>` : periodHead(data.run, c.p)}</th>`,
+        `<th class="num${c.post ? " post" : ""}${data.run.periods[c.p]!.projection ? " projected" : ""}">${c.post ? `${l.w.postProject}<small>${escape(l.date(data.run.periods[c.p]!.end))}</small>` : periodHead(data.run, c.p, l)}</th>`,
     )
     .join("");
-  return `${block.title ? `<h2>${escape(merge(block.title, data))}</h2>` : ""}<table class="figures"><thead><tr><th>${escape(data.scenario?.name ?? "Base case")}</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+  return `${block.title ? `<h2>${escape(merge(block.title, data, l))}</h2>` : ""}<table class="figures"><thead><tr><th>${escape(data.scenario?.name ?? l.w.baseCase)}</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
-function factsBlock(data: DocumentData): string {
+function factsBlock(data: DocumentData, l: Locale): string {
   const facts: [string, string][] = [
     [
       data.borrower.kind === "consolidated"
-        ? "Consolidated client"
-        : "Borrower",
+        ? l.w.consolidatedClient
+        : l.w.borrower,
       data.borrower.name,
     ],
     ...(data.borrower.members.length
-      ? ([["Members", data.borrower.members.join(", ")]] as [string, string][])
+      ? ([[l.w.members, data.borrower.members.join(", ")]] as [
+          string,
+          string,
+        ][])
       : []),
     ...(data.borrower.industry || data.borrower.naicsCode
       ? ([
           [
-            "Industry",
+            l.w.industry,
             [
               data.borrower.industry,
               data.borrower.naicsCode && `NAICS ${data.borrower.naicsCode}`,
@@ -246,16 +234,16 @@ function factsBlock(data: DocumentData): string {
         ] as [string, string][])
       : []),
     ...(data.borrower.riskRating
-      ? ([["Risk rating", data.borrower.riskRating]] as [string, string][])
+      ? ([[l.w.riskRating, data.borrower.riskRating]] as [string, string][])
       : []),
-    ["Analysis", data.analysis.name],
-    ["Financial model", `${data.model.name} · v${data.model.version}`],
-    ["Scenario", data.scenario?.name ?? "Base case"],
+    [l.w.analysis, data.analysis.name],
+    [l.w.financialModel, `${data.model.name} · v${data.model.version}`],
+    [l.w.scenario, data.scenario?.name ?? l.w.baseCase],
     [
-      "Projections",
+      l.w.projections,
       data.analysis.projectionMode === "client"
-        ? "The client's own"
-        : `${data.analysis.projectionYears} years from assumptions`,
+        ? l.w.clientsOwn
+        : l.w.yearsFromAssumptions(data.analysis.projectionYears),
     ],
   ];
   return `<dl class="facts">${facts.map(([k, v]) => `<div><dt>${escape(k)}</dt><dd>${escape(v)}</dd></div>`).join("")}</dl>`;
@@ -266,7 +254,7 @@ const asChartFormat = (format: string): ChartInput["format"] =>
     ? format
     : "amount";
 
-function covenantsBlock(data: DocumentData): string {
+function covenantsBlock(data: DocumentData, l: Locale): string {
   const { covenants } = data;
   if (!covenants.run.length) return "";
   const cols = columns(data, false).filter(
@@ -280,9 +268,9 @@ function covenantsBlock(data: DocumentData): string {
   const test = (period: CovenantPeriod | undefined, format: Format) => {
     if (!period || period.threshold === null) return "–";
     if (period.actual === null)
-      return `<small>no figure · ${escape(figure(period.threshold, format))}</small>`;
-    const margin = figure(period.margin!.replace(/^-/, ""), format);
-    return `<span class="${period.pass ? "pass" : "fail"}">${escape(figure(period.actual, format))}</span><small>${escape(figure(period.threshold, format))} · ${period.margin!.startsWith("-") ? "−" : "+"}${escape(margin)}</small>`;
+      return `<small>${l.w.noFigure} · ${escape(l.figure(period.threshold, format))}</small>`;
+    const margin = l.figure(period.margin!.replace(/^-/, ""), format);
+    return `<span class="${period.pass ? "pass" : "fail"}">${escape(l.figure(period.actual, format))}</span><small>${escape(l.figure(period.threshold, format))} · ${period.margin!.startsWith("-") ? "−" : "+"}${escape(margin)}</small>`;
   };
   const room = (
     period: CovenantPeriod | undefined,
@@ -293,12 +281,13 @@ function covenantsBlock(data: DocumentData): string {
     const { cushion } = period;
     if (!cushion)
       return period.pass
-        ? `${escape(figure(period.margin!, format))} to spare`
-        : `<span class="fail">In breach by ${escape(figure(period.margin!.replace(/^-/, ""), format))}</span>`;
-    const amount = escape(figure(cushion.amount.replace(/^-/, ""), "amount"));
+        ? l.w.toSpare(escape(l.figure(period.margin!, format)))
+        : `<span class="fail">${l.w.inBreachBy(escape(l.figure(period.margin!.replace(/^-/, ""), format)))}</span>`;
+    const amount = escape(l.figure(cushion.amount.replace(/^-/, ""), "amount"));
+    const line = escape(cushion.line);
     if (!period.pass)
-      return `<span class="fail">In breach: ${amount} of ${escape(cushion.line)} ${min ? "short" : "too many"}</span>`;
-    return `${cushion.fall !== null ? `${escape(cushion.fallLine)} can fall ${escape(figure(cushion.fall, "percent"))} before a breach. ` : ""}${amount} ${min ? `of ${escape(cushion.line)} to spare` : `more ${escape(cushion.line)} allowed`}.`;
+      return `<span class="fail">${min ? l.w.inBreachShort(amount, line) : l.w.inBreachOver(amount, line)}</span>`;
+    return `${cushion.fall !== null ? l.w.canFall(escape(cushion.fallLine), escape(l.figure(cushion.fall, "percent"))) : ""}${min ? l.w.spare(amount, line) : l.w.allowed(amount, line)}`;
   };
   const rows = covenants.run
     .map((result, i) => {
@@ -306,16 +295,16 @@ function covenantsBlock(data: DocumentData): string {
       const min = result.covenant.test === "min";
       const what =
         result.label === null
-          ? `${escape(result.covenant.metric)} isn't a line of this model`
-          : `${escape(result.label)}, ${min ? "at least" : "at most"} ${
+          ? l.w.notALine(escape(result.covenant.metric))
+          : `${escape(result.label)}, ${min ? l.w.atLeast : l.w.atMost} ${
               result.covenant.thresholds.length > 1
                 ? result.covenant.thresholds
                     .map(
                       (t) =>
-                        `${escape(figure(t.value, format))}${t.from === null ? "" : ` from ${t.from}`}`,
+                        `${escape(l.figure(t.value, format))}${t.from === null ? "" : l.w.fromYear(t.from)}`,
                     )
-                    .join(", then ")
-                : escape(figure(result.covenant.thresholds[0]!.value, format))
+                    .join(l.w.then)
+                : escape(l.figure(result.covenant.thresholds[0]!.value, format))
             }`;
       return `<tr><td><strong>${escape(result.covenant.name)}</strong><small>${what}</small>${result.covenant.note ? `<small class="note">${escape(result.covenant.note)}</small>` : ""}</td>${cols
         .map(
@@ -327,19 +316,20 @@ function covenantsBlock(data: DocumentData): string {
         )}<td class="room">${room(reference && pick(i, reference), format, min)}</td></tr>`;
     })
     .join("");
-  return `<h2>Covenants <span class="tag">${covenants.source === "scenario" ? `Proposed for ${escape(data.scenario?.name ?? "the deal")}` : "In force"}</span></h2><table class="figures covenants"><thead><tr><th>Covenant</th>${cols
+  return `<h2>${l.w.covenants} <span class="tag">${covenants.source === "scenario" ? l.w.proposedFor(data.scenario ? escape(data.scenario.name) : null) : l.w.inForce}</span></h2><table class="figures covenants"><thead><tr><th>${l.w.covenant}</th>${cols
     .map(
       (c) =>
-        `<th class="num${c.post ? " post" : ""}">${escape(data.run.periods[c.p]!.end.slice(0, 4))}<small>${c.post ? "post-project" : data.run.periods[c.p]!.projection ? "projected" : "actual"}</small></th>`,
+        `<th class="num${c.post ? " post" : ""}">${escape(data.run.periods[c.p]!.end.slice(0, 4))}<small>${c.post ? l.w.postProjectNote : data.run.periods[c.p]!.projection ? l.w.projectedNote : l.w.actual}</small></th>`,
     )
     .join(
       "",
-    )}<th>Room${reference ? `<small>${escape(data.run.periods[reference.p]!.end.slice(0, 4))}${reference.post ? " post-project" : ""}</small>` : ""}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    )}<th>${l.w.room}${reference ? `<small>${escape(data.run.periods[reference.p]!.end.slice(0, 4))}${reference.post ? ` ${l.w.postProjectNote}` : ""}</small>` : ""}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function chartsBlock(
   block: Extract<Block, { type: "charts" }>,
   data: DocumentData,
+  l: Locale,
 ): string {
   const charts = data.charts.filter(
     (c) => !block.charts || block.charts.includes(c.id),
@@ -351,7 +341,7 @@ function chartsBlock(
     data.run.periods.every((p) => p.months === 12) &&
     new Set(years).size === years.length;
   const periods = data.run.periods.map((p, i) => ({
-    label: yearly ? years[i]! : date(p.end),
+    label: yearly ? years[i]! : l.date(p.end),
     projected: p.projection !== null,
   }));
   const values = (run: DocumentRun, code: string) =>
@@ -367,9 +357,9 @@ function chartsBlock(
     }));
     if (single && data.project) {
       const from = lastYear(data.run);
-      series[0]!.label += " · as is";
+      series[0]!.label += l.w.asIs;
       series.push({
-        label: `${byCode.get(first)?.label ?? first} · post-project`,
+        label: `${byCode.get(first)?.label ?? first}${l.w.postProjectSeries}`,
         mark: "line",
         values: values(data.project, first).map((v, i) =>
           i >= from || data.run.periods[i]!.projection ? v : null,
@@ -404,62 +394,66 @@ function chartsBlock(
             }
           : null,
     };
-    return `<figure><figcaption>${escape(chart.title)}</figcaption>${legendHtml(input)}${chartSvg(input)}</figure>`;
+    return `<figure><figcaption>${escape(chart.title)}</figcaption>${legendHtml(input, l)}${chartSvg(input, l)}</figure>`;
   });
-  return `<h2>Charts</h2><div class="charts">${items.join("")}</div>`;
+  return `<h2>${l.w.charts}</h2><div class="charts">${items.join("")}</div>`;
 }
 
-function sourcesUsesBlock(data: DocumentData): string {
+function sourcesUsesBlock(data: DocumentData, l: Locale): string {
   const deal = data.deal;
   if (!deal)
-    return `<p class="muted">${escape(data.scenario?.name ?? "The base case")} finances no project.</p>`;
+    return `<p class="muted">${l.w.financesNoProject(data.scenario ? escape(data.scenario.name) : null)}</p>`;
   const totals = projectTotals(deal);
-  const off = imbalance(deal);
+  const off = l.imbalance(deal);
   const label = (code: string) => data.items[code] ?? code;
   const share = (amount: string, total: string) =>
-    Number(total)
-      ? `${(Math.round((Number(amount) / Number(total)) * 1000) / 10).toFixed(1)}%`
-      : "";
+    escape(l.share(Number(amount), Number(total)));
   const source = deal.sources
     .map(
       (s) =>
         `<tr><td>${escape(s.name)}<small>${
           s.kind === "loan"
-            ? `New loan · ${escape(rate(s.rate))} · ${escape(describeTerms({ ...s, balance: s.amount }))}`
+            ? `${l.w.newLoan} · ${escape(l.rate(s.rate))} · ${escape(l.terms({ ...s, balance: s.amount }))}`
             : escape(label(s.item))
-        }</small></td><td class="num">${escape(figure(s.amount, "amount"))}</td><td class="num">${share(s.amount, totals.sources.toFixed())}</td></tr>`,
+        }</small></td><td class="num">${escape(l.figure(s.amount, "amount"))}</td><td class="num">${share(s.amount, totals.sources.toFixed())}</td></tr>`,
     )
     .join("");
   const use = deal.uses
     .map(
       (u) =>
-        `<tr><td>${escape(u.name)}<small>${escape(label(u.item))}</small></td><td class="num">${escape(figure(u.amount, "amount"))}</td><td class="num">${share(u.amount, totals.uses.toFixed())}</td></tr>`,
+        `<tr><td>${escape(u.name)}<small>${escape(label(u.item))}</small></td><td class="num">${escape(l.figure(u.amount, "amount"))}</td><td class="num">${share(u.amount, totals.uses.toFixed())}</td></tr>`,
     )
     .join("");
   const side = (title: string, rows: string, total: string) =>
-    `<table class="figures"><thead><tr><th>${title}</th><th class="num">Amount</th><th class="num">Share</th></tr></thead><tbody>${rows || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody><tfoot><tr><td>Total</td><td class="num">${escape(figure(total, "amount"))}</td><td></td></tr></tfoot></table>`;
+    `<table class="figures"><thead><tr><th>${title}</th><th class="num">${l.w.amount}</th><th class="num">${l.w.share}</th></tr></thead><tbody>${rows || `<tr><td colspan="3" class="muted">${l.w.none}</td></tr>`}</tbody><tfoot><tr><td>${l.w.total}</td><td class="num">${escape(l.figure(total, "amount"))}</td><td></td></tr></tfoot></table>`;
   const loans = new Map(
     data.debt.flatMap((d) => d.schedule.loans.map((l) => [l.id, l.name])),
   );
   const extras = [
-    ...deal.lines.map(
-      (l) =>
-        `Line of credit increase, ${escape(l.name)}: ${escape(figure(l.increase, "amount"))} at ${escape(rate(l.rate))}, ${escape(rate(l.usage))} used on average.`,
+    ...deal.lines.map((line) =>
+      l.w.lineIncrease(
+        escape(line.name),
+        escape(l.figure(line.increase, "amount")),
+        escape(l.rate(line.rate)),
+        escape(l.rate(line.usage)),
+      ),
     ),
-    ...deal.subordinations.map(
-      (s) =>
-        `${escape(s.name)}: ${escape(figure(s.amount, "amount"))} postponed in favour of the lender and treated as equity.`,
+    ...deal.subordinations.map((s) =>
+      l.w.subordination(escape(s.name), escape(l.figure(s.amount, "amount"))),
     ),
-    ...(deal.consolidatedLoans ?? []).map(
-      (id) =>
-        `${escape(loans.get(id) ?? "An existing loan")}: repaid or refinanced at closing.`,
+    ...(deal.consolidatedLoans ?? []).map((id) =>
+      l.w.refinanced(escape(loans.get(id) ?? l.w.anExistingLoan)),
     ),
-    ...(deal.adjustments ?? []).map(
-      (a) =>
-        `${escape(a.name)}: ${escape(figure(a.amount, "amount"))} to ${escape(label(a.item))}${a.side ? "" : " a year"}.`,
+    ...(deal.adjustments ?? []).map((a) =>
+      l.w.adjustment(
+        escape(a.name),
+        escape(l.figure(a.amount, "amount")),
+        escape(label(a.item)),
+        !a.side,
+      ),
     ),
   ];
-  return `<p class="muted">Closing ${escape(date(deal.closing))}.</p>${off ? `<p class="fail">${escape(off)}: the post-project balance sheet doesn't balance.</p>` : ""}<div class="pair">${side("Sources", source, totals.sources.toFixed())}${side("Uses", use, totals.uses.toFixed())}</div>${extras.length ? `<ul class="extras">${extras.map((e) => `<li>${e}</li>`).join("")}</ul>` : ""}`;
+  return `<p class="muted">${l.w.closing(escape(l.date(deal.closing)))}</p>${off ? `<p class="fail">${l.w.unbalanced(escape(off))}</p>` : ""}<div class="pair">${side(l.w.sources, source, totals.sources.toFixed())}${side(l.w.uses, use, totals.uses.toFixed())}</div>${extras.length ? `<ul class="extras">${extras.map((e) => `<li>${e}</li>`).join("")}</ul>` : ""}`;
 }
 
 // A loan's yearly debt service from its start: the first twelve months'.
@@ -475,7 +469,7 @@ function firstYear(loan: Parameters<typeof amortize>[0], start: string) {
 const newLoans = (data: DocumentData) =>
   (data.deal?.sources.filter((s) => s.kind === "loan") ?? []) as ProjectLoan[];
 
-function debtBlock(data: DocumentData): string {
+function debtBlock(data: DocumentData, l: Locale): string {
   const consolidated = new Set(data.deal?.consolidatedLoans ?? []);
   const existing = data.debt.flatMap((d) =>
     d.schedule.loans.map((loan) => ({ loan, schedule: d.schedule })),
@@ -492,7 +486,7 @@ function debtBlock(data: DocumentData): string {
       const service = year ? Number(year.interest) + Number(year.principal) : 0;
       const repaid = consolidated.has(loan.id);
       if (!repaid) total += service;
-      return `<tr><td>${escape(loan.name)}<small>As of ${escape(date(schedule.asOf!))}${repaid ? " · repaid at closing" : ""}</small></td><td class="num">${escape(figure(loan.balance, "amount"))}</td><td class="num">${escape(rate(loan.rate))}</td><td>${escape(describeTerms(loan))}</td><td class="num">${escape(figure(String(service), "amount"))}</td></tr>`;
+      return `<tr><td>${escape(loan.name)}<small>${l.w.asOf(escape(l.date(schedule.asOf!)))}${repaid ? l.w.repaidAtClosing : ""}</small></td><td class="num">${escape(l.figure(loan.balance, "amount"))}</td><td class="num">${escape(l.rate(loan.rate))}</td><td>${escape(l.terms(loan))}</td><td class="num">${escape(l.figure(String(service), "amount"))}</td></tr>`;
     })
     .join("");
   const added = newLoans(data);
@@ -502,16 +496,19 @@ function debtBlock(data: DocumentData): string {
         firstYear({ ...loan, balance: loan.amount }, data.deal!.closing),
       );
       total += service;
-      return `<tr><td>${escape(loan.name)}<small>New · from ${escape(date(data.deal!.closing))}</small></td><td class="num">${escape(figure(loan.amount, "amount"))}</td><td class="num">${escape(rate(loan.rate))}</td><td>${escape(describeTerms({ ...loan, balance: loan.amount }))}</td><td class="num">${escape(figure(String(service), "amount"))}</td></tr>`;
+      return `<tr><td>${escape(loan.name)}<small>${l.w.newFrom(escape(l.date(data.deal!.closing)))}</small></td><td class="num">${escape(l.figure(loan.amount, "amount"))}</td><td class="num">${escape(l.rate(loan.rate))}</td><td>${escape(l.terms({ ...loan, balance: loan.amount }))}</td><td class="num">${escape(l.figure(String(service), "amount"))}</td></tr>`;
     })
     .join("");
-  if (!existingRows && !newRows)
-    return `<p class="muted">No existing loans are entered, and the scenario adds none.</p>`;
-  return `<table class="figures"><thead><tr><th>Loan</th><th class="num">Balance</th><th class="num">Rate</th><th>Terms</th><th class="num">Debt service, first 12 months</th></tr></thead><tbody>${existingRows}${newRows}</tbody><tfoot><tr><td>Total${added.length || consolidated.size ? ", after the deal" : ""}</td><td></td><td></td><td></td><td class="num">${escape(figure(String(total), "amount"))}</td></tr></tfoot></table>`;
+  if (!existingRows && !newRows) return `<p class="muted">${l.w.noLoans}</p>`;
+  return `<table class="figures"><thead><tr><th>${l.w.loan}</th><th class="num">${l.w.balance}</th><th class="num">${l.w.rate}</th><th>${l.w.terms}</th><th class="num">${l.w.firstYearService}</th></tr></thead><tbody>${existingRows}${newRows}</tbody><tfoot><tr><td>${l.w.total}${added.length || consolidated.size ? l.w.afterTheDeal : ""}</td><td></td><td></td><td></td><td class="num">${escape(l.figure(String(total), "amount"))}</td></tr></tfoot></table>`;
 }
 
 // A loan year by year from its start, as the app's "By year" view shows it.
-function loanYears(loan: Parameters<typeof amortize>[0], start: string) {
+function loanYears(
+  loan: Parameters<typeof amortize>[0],
+  start: string,
+  l: Locale,
+) {
   const payments = amortize(loan, start).payments(120);
   if (!payments.length) return [];
   const from = monthIndex(start);
@@ -524,7 +521,7 @@ function loanYears(loan: Parameters<typeof amortize>[0], start: string) {
       pick: (p: (typeof payments)[number]) => { toNumber(): number },
     ) => inYear.reduce((t, p) => t + pick(p).toNumber(), 0);
     return {
-      months: `${month(first)} to ${month(last)}`,
+      months: l.w.monthRange(l.month(first), l.month(last)),
       interest: sum((p) => p.interest),
       principal: sum((p) => p.principal),
       extra: sum((p) => p.extra),
@@ -534,7 +531,7 @@ function loanYears(loan: Parameters<typeof amortize>[0], start: string) {
   });
 }
 
-function amortizationBlock(data: DocumentData): string {
+function amortizationBlock(data: DocumentData, l: Locale): string {
   const loans: {
     name: string;
     loan: Parameters<typeof amortize>[0];
@@ -548,47 +545,47 @@ function amortizationBlock(data: DocumentData): string {
       })),
     ),
     ...newLoans(data).map((loan) => ({
-      name: `${loan.name} (new)`,
+      name: `${loan.name}${l.w.newSuffix}`,
       loan: { ...loan, balance: loan.amount },
       start: data.deal!.closing,
     })),
   ];
-  if (!loans.length) return `<p class="muted">No loans to schedule.</p>`;
+  if (!loans.length) return `<p class="muted">${l.w.noSchedules}</p>`;
   return loans
     .map(({ name, loan, start }) => {
-      const years = loanYears(loan, start);
+      const years = loanYears(loan, start, l);
       const extra = years.some((y) => y.extra);
-      return `<section class="loan"><h3>${escape(name)}</h3><p class="muted">${escape(figure(loan.balance, "amount"))} at ${escape(rate(loan.rate))}, ${escape(describeTerms(loan))}, from ${escape(date(start))}.</p><table class="figures"><thead><tr><th>Year</th><th>Months</th><th class="num">Interest</th><th class="num">Principal</th>${extra ? `<th class="num">Extra</th>` : ""}<th class="num">Balance</th></tr></thead><tbody>${years
+      return `<section class="loan"><h3>${escape(name)}</h3><p class="muted">${l.w.loanSummary(escape(l.figure(loan.balance, "amount")), escape(l.rate(loan.rate)), escape(l.terms(loan)), escape(l.date(start)))}</p><table class="figures"><thead><tr><th>${l.w.year}</th><th>${l.w.months}</th><th class="num">${l.w.interest}</th><th class="num">${l.w.principal}</th>${extra ? `<th class="num">${l.w.extra}</th>` : ""}<th class="num">${l.w.balance}</th></tr></thead><tbody>${years
         .map(
           (y, i) =>
-            `<tr><td>${i + 1}</td><td>${escape(y.months)}</td><td class="num">${money(y.interest)}</td><td class="num">${money(y.principal)}</td>${extra ? `<td class="num">${money(y.extra)}</td>` : ""}<td class="num">${money(y.balance)}</td></tr>`,
+            `<tr><td>${i + 1}</td><td>${escape(y.months)}</td><td class="num">${l.money(y.interest)}</td><td class="num">${l.money(y.principal)}</td>${extra ? `<td class="num">${l.money(y.extra)}</td>` : ""}<td class="num">${l.money(y.balance)}</td></tr>`,
         )
         .join("")}</tbody></table></section>`;
     })
     .join("");
 }
 
-function block(b: Block, data: DocumentData): string {
+function block(b: Block, data: DocumentData, l: Locale): string {
   if (!shows(b.when, data)) return "";
   switch (b.type) {
     case "heading":
-      return `<h2>${escape(merge(b.text, data))}</h2>`;
+      return `<h2>${escape(merge(b.text, data, l))}</h2>`;
     case "text":
-      return prose(b.text, data);
+      return prose(b.text, data, l);
     case "facts":
-      return factsBlock(data);
+      return factsBlock(data, l);
     case "lines":
-      return linesBlock(b, data);
+      return linesBlock(b, data, l);
     case "covenants":
-      return covenantsBlock(data);
+      return covenantsBlock(data, l);
     case "charts":
-      return chartsBlock(b, data);
+      return chartsBlock(b, data, l);
     case "sourcesUses":
-      return sourcesUsesBlock(data);
+      return sourcesUsesBlock(data, l);
     case "debt":
-      return debtBlock(data);
+      return debtBlock(data, l);
     case "amortization":
-      return amortizationBlock(data);
+      return amortizationBlock(data, l);
     case "pageBreak":
       return `<div class="page-break"></div>`;
   }
@@ -646,7 +643,8 @@ export function renderDocument(
   template: Template,
   data: DocumentData,
 ): RenderedDocument {
-  const title = merge(template.title, data);
+  const l = locale(template.language);
+  const title = merge(template.title, data, l);
   const { branding } = data.organization;
   const color = /^#[0-9a-f]{6}$/i.test(branding.color ?? "")
     ? branding.color!
@@ -655,13 +653,13 @@ export function renderDocument(
   const subtitle = [
     data.analysis.name,
     `${data.model.name} v${data.model.version}`,
-    data.scenario?.name ?? "Base case",
-    date(data.date),
+    data.scenario?.name ?? l.w.baseCase,
+    l.date(data.date),
   ]
     .map(escape)
     .join(" · ");
   const html = `<!doctype html>
-<html lang="en">
+<html lang="${l.language}">
 <head>
 <meta charset="utf-8">
 <title>${escape(title)}</title>
@@ -672,11 +670,12 @@ export function renderDocument(
 <div><h1>${escape(title)}</h1><p>${subtitle}</p></div>
 <div class="org">${branding.logo?.startsWith("data:image/") ? `<img src="${escape(branding.logo)}" alt="">` : escape(data.organization.name)}</div>
 </header>
-${template.blocks.map((b) => block(b, data)).join("\n")}
+${template.blocks.map((b) => block(b, data, l)).join("\n")}
 </body>
 </html>`;
   const notice =
-    branding.notice?.trim() || `${data.organization.name} · Confidential`;
-  const footer = `<div style="width:100%;font:7pt Arial,sans-serif;color:#64748b;padding:0 14mm;display:flex;justify-content:space-between;"><span>${escape(notice)}</span><span>${escape(title)} · Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`;
+    branding.notice?.trim() ||
+    `${data.organization.name} · ${l.w.confidential}`;
+  const footer = `<div style="width:100%;font:7pt Arial,sans-serif;color:#64748b;padding:0 14mm;display:flex;justify-content:space-between;"><span>${escape(notice)}</span><span>${escape(title)} · ${l.w.page(`<span class="pageNumber"></span>`, `<span class="totalPages"></span>`)}</span></div>`;
   return { title, html, footer, orientation };
 }

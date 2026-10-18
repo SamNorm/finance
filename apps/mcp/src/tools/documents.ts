@@ -42,9 +42,10 @@ const outline = (blocks: Block[]) =>
     .filter((b) => b.type !== "pageBreak")
     .map((b) => (b.type === "heading" ? `heading: ${b.text}` : b.type));
 
-const definition = ({ title, orientation, blocks }: Definition) => ({
+const definition = ({ title, orientation, language, blocks }: Definition) => ({
   title,
   orientation,
+  language: language ?? "en",
   sections: blocks,
 });
 
@@ -266,7 +267,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Write a document's draft",
       description:
-        "Changes one of the organization's documents: its name, description or model, and its draft's title, orientation or sections. Sections replace the whole list, in order; each is an object with a `type` and that section's settings from describe_document_sections, and optionally `when`. Returns the draft with its issues, which a person must clear before publishing it in the app. Figures belong in merge fields, never typed.",
+        "Changes one of the organization's documents: its name, description or model, and its draft's title, orientation, language or sections. Sections replace the whole list, in order; each is an object with a `type` and that section's settings from describe_document_sections, and optionally `when`. Returns the draft with its issues, which a person must clear before publishing it in the app. Figures belong in merge fields, never typed.",
       inputSchema: z.object({
         templateId,
         name: z.string().optional(),
@@ -288,6 +289,12 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
           .enum(["portrait", "landscape"])
           .optional()
           .describe("Landscape fits every period of an analysis."),
+        language: z
+          .enum(["en", "fr"])
+          .optional()
+          .describe(
+            "The language of the document's own wording (its tables' headings, notes, page numbers) and of its figures and dates. Line labels print as the model has them; write headings and text in the same language.",
+          ),
         sections: z
           .array(z.record(z.string(), z.unknown()))
           .optional()

@@ -24,6 +24,7 @@ import {
   BUILT_IN_TEMPLATES,
   templateOf,
   type Definition,
+  type Language,
   type Orientation,
 } from "./templates";
 
@@ -70,6 +71,7 @@ export interface TemplateInput {
   financialModelId?: string | null;
   title?: string;
   orientation?: Orientation;
+  language?: Language;
   // Untrusted JSON, parsed here.
   blocks?: unknown;
 }
@@ -236,6 +238,12 @@ function title(value: unknown) {
   return t;
 }
 
+function language(value: unknown): Language {
+  if (value !== "en" && value !== "fr")
+    throw new DomainError("invalid", 'The language is "en" or "fr".');
+  return value;
+}
+
 function orientation(value: unknown): Orientation {
   if (value !== "portrait" && value !== "landscape")
     throw new DomainError(
@@ -281,6 +289,7 @@ export async function createTemplate(
   let draft: Definition = {
     title: `{{borrower.name}}: ${name}`,
     orientation: "portrait",
+    language: "en",
     blocks: [],
   };
   let model: string | null = null;
@@ -292,6 +301,7 @@ export async function createTemplate(
       draft = {
         title: builtIn.title,
         orientation: builtIn.orientation,
+        language: builtIn.language ?? "en",
         blocks: builtIn.blocks,
       };
       description = builtIn.description;
@@ -353,6 +363,7 @@ export async function updateTemplate(
   if (input.title !== undefined) draft.title = title(input.title);
   if (input.orientation !== undefined)
     draft.orientation = orientation(input.orientation);
+  if (input.language !== undefined) draft.language = language(input.language);
   if (input.blocks !== undefined) draft.blocks = blocks(input.blocks);
   await db
     .update(templates)

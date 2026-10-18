@@ -1,4 +1,5 @@
-import { escape, figure } from "./format";
+import { escape } from "./format";
+import type { Locale } from "./locale";
 
 // Charts as documents print them: an SVG of bars, lines or both over the
 // periods, projected periods shaded and a threshold drawn dashed, stepping
@@ -40,18 +41,7 @@ function ticks(values: number[]): number[] {
   return list;
 }
 
-const compact = new Intl.NumberFormat("en-CA", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
-
-function tick(value: number, format: ChartInput["format"]) {
-  if (format === "percent") return `${Math.round(value * 1000) / 10}%`;
-  if (format === "ratio") return `${Math.round(value * 100) / 100}x`;
-  return compact.format(value);
-}
-
-export function chartSvg(chart: ChartInput): string {
+export function chartSvg(chart: ChartInput, l: Locale): string {
   const width = 340;
   const height = 190;
   const left = 46;
@@ -81,7 +71,7 @@ export function chartSvg(chart: ChartInput): string {
   for (const m of marks)
     parts.push(
       `<line x1="${left}" x2="${width - right}" y1="${y(m)}" y2="${y(m)}" stroke="#e2e8f0" stroke-width="1"/>`,
-      `<text x="${left - 6}" y="${y(m) + 3}" text-anchor="end" font-size="9" fill="#64748b">${escape(tick(m, chart.format))}</text>`,
+      `<text x="${left - 6}" y="${y(m) + 3}" text-anchor="end" font-size="9" fill="#64748b">${escape(l.tick(m, chart.format))}</text>`,
     );
   chart.periods.forEach((p, i) =>
     parts.push(
@@ -141,7 +131,7 @@ export function chartSvg(chart: ChartInput): string {
 
 // The legend under a chart's title, in HTML: a key per series, and the
 // threshold with its value when it never steps.
-export function legendHtml(chart: ChartInput): string {
+export function legendHtml(chart: ChartInput, l: Locale): string {
   const keys = chart.series.map(
     (s, i) =>
       `<span class="key"><i style="background:${SERIES_COLORS[i % SERIES_COLORS.length]};${s.mark === "line" ? "height:2px" : ""}"></i>${escape(s.label)}</span>`,
@@ -152,7 +142,7 @@ export function legendHtml(chart: ChartInput): string {
   if (chart.threshold && limits.length) {
     const flat = limits.every((v) => v === limits[0]);
     keys.push(
-      `<span class="key"><i class="dashed"></i>${escape(chart.threshold.label)}${flat ? ` ${escape(figure(String(limits[0]), chart.format))}` : ", by year"}</span>`,
+      `<span class="key"><i class="dashed"></i>${escape(chart.threshold.label)}${flat ? ` ${escape(l.figure(String(limits[0]), chart.format))}` : l.w.byYear}</span>`,
     );
   }
   return keys.length > 1 || chart.threshold

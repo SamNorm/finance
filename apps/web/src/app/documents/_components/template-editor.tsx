@@ -2,6 +2,7 @@
 
 import {
   CONDITIONS,
+  LANGUAGES,
   SECTIONS,
   type Block,
   type BlockType,
@@ -160,6 +161,19 @@ export function TemplateEditor({
               value={draft.orientation}
               disabled={pending}
               onChange={(orientation) => save({ orientation })}
+            />
+          </Field>
+          <Field
+            label="Language"
+            hint="Of the document's own wording, figures and dates. Line labels and your text print as written."
+            group
+          >
+            <Segmented
+              name="language"
+              options={LANGUAGES}
+              value={draft.language ?? "en"}
+              disabled={pending}
+              onChange={(language) => save({ language })}
             />
           </Field>
         </div>

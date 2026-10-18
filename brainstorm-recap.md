@@ -216,9 +216,9 @@ Without a scoring model, where do the inputs live?
 - **M&A pro forma:** combine entities and add acquisition debt, synergies, and sources and uses.
 - **Normalization adjustments:** remove non-recurring items and adjust owner compensation to get adjusted EBITDA.
 - **Consolidation** beyond adding members at 100%: ownership shares and non-controlling interest, consolidated clients within others, and intercompany loans in members' debt schedules (built so far: consolidated clients, §5.5).
-- **PDF documents** and institutions' own templates: see `documents-plan.md`. Phase 1 is built: an analysis report, a deal summary and a debt summary, printed from an analysis with the organization's branding and kept as snapshots.
+- **PDF documents** and institutions' own templates: see `documents-plan.md`. Built: an analysis report, a deal summary and a debt summary, printed from an analysis with the organization's branding and kept as snapshots; and organizations' own documents, made from the same sections in the app or through MCP, in English or French. Personal templates wait for sign-in.
 - **French and English throughout**, which Québec institutions will expect. Three layers, each shippable alone:
-  - documents' fixed wording and number formats (1 234 567,89 $), see `documents-plan.md` §6.6;
+  - documents' fixed wording and number formats (1 234 567,89 $), built: a document's language, see `documents-plan.md` §6.6;
   - a label per language on scoring model items and model lines, kept in ordinary Postgres tables;
   - the interface, with message catalogues, and codes for the domain's messages so the UI can word them in either language.
 
