@@ -85,7 +85,7 @@ beforeAll(async () => {
         INTEREST_EXPENSE: "120000",
         CPLTD: "300000",
         MACHINERY: "2000000",
-        EQUITY: "2000000",
+        EQUITY: "1700000",
       },
     ],
     [
@@ -96,7 +96,7 @@ beforeAll(async () => {
         INTEREST_EXPENSE: "100000",
         CPLTD: "300000",
         MACHINERY: "1800000",
-        EQUITY: "1800000",
+        EQUITY: "1500000",
       },
     ],
   ] as const) {

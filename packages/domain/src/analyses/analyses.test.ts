@@ -18,6 +18,7 @@ import {
   createScoringModel,
   publishVersion,
   replaceItems,
+  setCheckItems,
   setFinancingItems,
 } from "../scoring-models/service";
 import { fixture } from "../scoring-models/test-helpers";
@@ -26,7 +27,10 @@ import {
   createEntity,
   setDebtSchedule,
   setExistingLoanAdjustments,
+  setPeriodControls,
   setValue,
+  setValues,
+  type StatementPeriod,
 } from "../spreads/service";
 import { runModel, type RunInput } from "./run";
 import {
@@ -314,6 +318,8 @@ async function setUp() {
         DEPRECIATION: "100",
         INTEREST_LONG_TERM_DEBT: "80",
         CPLTD: "120",
+        // Balances the balance sheet, which analyses need.
+        PREPAIDS: "120",
         REVENUE: "5000",
       },
     },
@@ -324,6 +330,7 @@ async function setUp() {
         DEPRECIATION: "110",
         INTEREST_LONG_TERM_DEBT: "70",
         CPLTD: "130",
+        PREPAIDS: "130",
         REVENUE: "5500",
       },
     },
@@ -928,6 +935,7 @@ describe("analysis service", () => {
       DEPRECIATION: "120",
       INTEREST_LONG_TERM_DEBT: "60",
       CPLTD: "140",
+      PREPAIDS: "140",
       REVENUE: "6200",
     }))
       await setValue(db, ctx, forecast.id, code, value);
@@ -988,7 +996,11 @@ describe("analysis service", () => {
       formula: "RAW_MATERIALS / INVENTORY",
     });
     const v2 = await publishFinancialModelVersion(db, context, draft.id);
-    await setValue(db, ctx, periods[1]!.id, "INVENTORY", "800");
+    // Inventory comes with what funds it, so the balance sheet balances.
+    await setValues(db, ctx, periods[1]!.id, {
+      INVENTORY: "800",
+      AP_TRADE: "800",
+    });
     const analysis = await createAnalysis(db, ctx, {
       entityId: entity.id,
       financialModelVersionId: v2.id,
@@ -1189,6 +1201,67 @@ describe("analysis service", () => {
       status: "completed",
     });
     expect(completed.status).toBe("completed");
+  });
+
+  it("is made and completed only on a spread without critical errors", async () => {
+    const { context, entity, periods, scoringModel, v1 } = setup;
+    const [fy2023, fy2024] = periods as [StatementPeriod, StatementPeriod];
+    const create = (periodIds: string[] = []) =>
+      createAnalysis(db, ctx, {
+        entityId: entity.id,
+        financialModelVersionId: v1.id,
+        name: "Review",
+        periodIds,
+      });
+    const fails = (promise: Promise<unknown>, code: string) =>
+      expect(promise).rejects.toMatchObject({
+        kind: "conflict",
+        issues: [expect.objectContaining({ code })],
+      });
+
+    // 2024's balance sheet stops balancing.
+    await setValue(db, ctx, fy2024.id, "CASH", "50");
+    await fails(create(), "balance");
+    // An analysis that leaves 2024 out can be made, but not widened to it.
+    const earlier = await create([fy2023.id]);
+    await fails(
+      updateAnalysis(db, ctx, earlier.id, { periodIds: [] }),
+      "balance",
+    );
+    await setValue(db, ctx, fy2024.id, "CASH", "");
+
+    // Net income printed on 2023's statements that the spread doesn't match.
+    await setCheckItems(db, context, scoringModel.id, {
+      netIncome: "NET_INCOME",
+    });
+    await setPeriodControls(db, ctx, fy2023.id, { reportedNetIncome: "999" });
+    await fails(create(), "net_income");
+    // Its results still show, but it can't be completed.
+    expect((await runAnalysis(db, ctx, earlier.id)).base.periods).toHaveLength(
+      1,
+    );
+    await fails(
+      updateAnalysis(db, ctx, earlier.id, { status: "completed" }),
+      "net_income",
+    );
+    await setPeriodControls(db, ctx, fy2023.id, { reportedNetIncome: null });
+    const completed = await updateAnalysis(db, ctx, earlier.id, {
+      status: "completed",
+    });
+    expect(completed.status).toBe("completed");
+
+    // The client's projections count only when the analysis uses them.
+    const forecast = await addPeriod(db, ctx, entity.id, {
+      periodEnd: "2025-12-31",
+      months: 12,
+      quality: "projected",
+    });
+    await setValue(db, ctx, forecast.id, "CASH", "10");
+    const assumed = await create();
+    await fails(
+      updateAnalysis(db, ctx, assumed.id, { projectionMode: "client" }),
+      "balance",
+    );
   });
 
   it("protects models in use and each organization's analyses", async () => {

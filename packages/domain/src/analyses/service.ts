@@ -26,7 +26,12 @@ import {
   listItems,
 } from "../scoring-models/service";
 import { isNumeric } from "../spreads/checks";
-import { getEntity, getSpread } from "../spreads/service";
+import {
+  getEntity,
+  getSpread,
+  type Spread,
+  type StatementPeriod,
+} from "../spreads/service";
 import { runModel, withProject, type AnalysisRun } from "./run";
 
 // Analyses (§5.5): a borrower × a pinned financial model version × periods ×
@@ -222,6 +227,10 @@ export async function createAnalysis(
   checkSettings(input);
   const periodIds = [...new Set(input.periodIds ?? [])];
   await checkPeriods(db, input.entityId, periodIds);
+  await checkSpread(db, ctx, entity.id, {
+    periodIds,
+    projectionMode: input.projectionMode ?? "assumptions",
+  });
   const [analysis] = await db
     .insert(analyses)
     .values({
@@ -256,7 +265,6 @@ export async function updateAnalysis(
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) {
     throw new DomainError("invalid", `"${patch.status}" isn't a status.`);
   }
-  if (patch.status === "completed") await checkBalanced(db, analysisId);
   const postProjectKeys = patch.postProjectKeys && [
     ...new Set(patch.postProjectKeys),
   ];
@@ -268,6 +276,12 @@ export async function updateAnalysis(
     throw new DomainError("invalid", "Unknown period.");
   const periodIds = patch.periodIds && [...new Set(patch.periodIds)];
   if (periodIds) await checkPeriods(db, analysis.entityId, periodIds);
+  if (periodIds || patch.projectionMode || patch.status === "completed")
+    await checkSpread(db, ctx, analysis.entityId, {
+      periodIds: periodIds ?? analysis.periodIds,
+      projectionMode: patch.projectionMode ?? analysis.projectionMode,
+    });
+  if (patch.status === "completed") await checkBalanced(db, analysisId);
   const [updated] = await db
     .update(analyses)
     .set({
@@ -288,6 +302,59 @@ export async function updateAnalysis(
     .where(eq(analyses.id, analysisId))
     .returning();
   return updated!;
+}
+
+// The spread periods an analysis runs on: those chosen, or all when none
+// are, with the client's projections only when it projects with them.
+export function analyzedPeriods(
+  spread: Spread,
+  settings: Pick<Analysis, "periodIds" | "projectionMode">,
+): StatementPeriod[] {
+  const chosen = new Set(settings.periodIds);
+  const client = settings.projectionMode === "client";
+  return spread.periods
+    .filter((p) => !chosen.size || chosen.has(p.id))
+    .filter((p) => client || p.quality !== "projected");
+}
+
+// Critical errors in the periods an analysis runs on: a balance sheet that
+// doesn't balance, or net income that isn't the statements'. Its results
+// can't be relied on until they're fixed.
+export function spreadErrors(
+  spread: Spread,
+  settings: Pick<Analysis, "periodIds" | "projectionMode">,
+): { period: StatementPeriod; issues: Issue[] }[] {
+  return analyzedPeriods(spread, settings).flatMap((period) => {
+    const issues = (spread.checks[period.id] ?? []).filter(
+      (i) => i.severity === "error",
+    );
+    return issues.length ? [{ period, issues }] : [];
+  });
+}
+
+const periodLabel = (p: StatementPeriod) =>
+  p.months === 12 ? p.periodEnd : `${p.periodEnd} (${p.months} months)`;
+
+// Analyses are made, re-scoped and completed only on a sound spread.
+async function checkSpread(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  settings: Pick<Analysis, "periodIds" | "projectionMode">,
+) {
+  const spread = await getSpread(db, ctx, entityId);
+  const issues = spreadErrors(spread, settings).flatMap(({ period, issues }) =>
+    issues.map((i) => ({
+      ...i,
+      message: `${periodLabel(period)}: ${i.message}`,
+    })),
+  );
+  if (issues.length)
+    throw new DomainError(
+      "conflict",
+      `Fix ${spread.entity.name}'s spread before analyzing it. ${issues.map((i) => i.message).join(" ")}`,
+      issues,
+    );
 }
 
 // An analysis is completed with its projects settled: in each scenario's,
@@ -614,23 +681,19 @@ export async function runAnalysis(
     getSpread(db, ctx, detail.entity.id),
     projectContext(db, ctx, detail),
   ]);
-  const { periodIds, projectionMode, projectionYears } = detail.analysis;
-  const chosen = new Set(periodIds);
+  const { projectionMode, projectionYears } = detail.analysis;
   const client = projectionMode === "client";
   // Projections come either from the client, as spread periods, or from the
   // model's assumptions, never both.
-  const periods = spread.periods
-    .filter((p) => !chosen.size || chosen.has(p.id))
-    .filter((p) => client || p.quality !== "projected")
-    .map((p) => ({
-      key: p.id,
-      end: p.periodEnd,
-      months: p.months,
-      quality: p.quality,
-      entered: spread.values[p.id] ?? {},
-      summed: spread.computed[p.id] ?? {},
-      modelInputs: {} as Record<string, string>,
-    }));
+  const periods = analyzedPeriods(spread, detail.analysis).map((p) => ({
+    key: p.id,
+    end: p.periodEnd,
+    months: p.months,
+    quality: p.quality,
+    entered: spread.values[p.id] ?? {},
+    summed: spread.computed[p.id] ?? {},
+    modelInputs: {} as Record<string, string>,
+  }));
   const inputs = await modelInputsOf(
     db,
     periods.map((p) => p.key),
