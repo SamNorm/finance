@@ -160,10 +160,13 @@ export async function updateScenarioAction(
     name?: string;
     overrides?: Record<string, string>;
     project?: ProjectInput | null;
+    capex?: unknown[];
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
-    const { overrides, project } = patch;
+    const { overrides, project, capex } = patch;
+    if (capex !== undefined && !Array.isArray(capex))
+      throw invalid("The capex plan must be a list of purchases.");
     if (
       overrides !== undefined &&
       (typeof overrides !== "object" || overrides === null)
@@ -180,6 +183,7 @@ export async function updateScenarioAction(
       name: patch.name === undefined ? undefined : String(patch.name),
       overrides: overrides && textFields(overrides),
       project,
+      capex,
     });
   });
 }

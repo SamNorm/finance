@@ -83,6 +83,7 @@ async function AnalysisView({ params, searchParams }: Props) {
     name: s.name,
     overrides: s.overrides,
     project: s.project,
+    capex: s.capex,
     imbalance: s.project && imbalance(s.project),
   }));
   // Critical errors in the periods it analyzes, which hold completion back.
@@ -249,6 +250,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                 analysisId={analysis.id}
                 scenario={scenarios.find((s) => s.id === scenario.id)!}
                 assumptions={assumptions}
+                capexYears={results.capex}
                 setup={{
                   items: scoringItems
                     .filter((item) => sides.has(item.code))

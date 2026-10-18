@@ -1,6 +1,6 @@
 "use client";
 
-import type { ModelLine, Project } from "@finance/domain";
+import type { CapexItem, CapexYear, ModelLine, Project } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import { Copy, Landmark, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -27,12 +27,14 @@ import {
   type BalanceSheetItem,
   type ProjectDraft,
 } from "./project-editor";
+import { CapexPlan, capexDraft, capexInput } from "./capex-plan";
 
 export interface ScenarioOption {
   id: string;
   name: string;
   overrides: Record<string, string>;
   project: Project | null;
+  capex: CapexItem[];
   // How the project is out of balance, e.g. "Sources exceed uses by 500".
   imbalance?: string | null;
 }
@@ -231,17 +233,21 @@ export function BaseCase({
   );
 }
 
-// A scenario's assumption overrides and project, saved together.
+// A scenario's assumption overrides, project and capex plan, saved
+// together.
 export function ScenarioEditor({
   analysisId,
   scenario,
   assumptions,
   setup,
+  capexYears,
 }: {
   analysisId: string;
   scenario: ScenarioOption;
   assumptions: ModelLine[];
   setup: ProjectSetup;
+  // The saved capex plan year by year.
+  capexYears: CapexYear[];
 }) {
   const typed = () =>
     Object.fromEntries(
@@ -254,20 +260,30 @@ export function ScenarioEditor({
   const [project, setProject] = useState<ProjectDraft>(() =>
     toDraft(scenario.project),
   );
+  const [capex, setCapex] = useState(() => capexDraft(scenario.capex));
   // The saved project shows as a sources and uses table until edited.
   const [editing, setEditing] = useState(!scenario.project);
   // Once saved, show the overrides as the server keeps them. Adjustments
   // saved from a loan's schedule change the saved project; while it isn't
   // being edited, the draft follows.
-  const saved = JSON.stringify([scenario.overrides, scenario.project]);
+  const saved = JSON.stringify([
+    scenario.overrides,
+    scenario.project,
+    scenario.capex,
+  ]);
   const [synced, setSynced] = useState(saved);
   if (synced !== saved) {
     setSynced(saved);
     setValues(typed());
     if (!editing) setProject(toDraft(scenario.project));
+    setCapex(capexDraft(scenario.capex));
   }
+  const capexDirty =
+    JSON.stringify(capexInput(capex)) !==
+    JSON.stringify(capexInput(capexDraft(scenario.capex)));
   const dirty =
     JSON.stringify(values) !== JSON.stringify(typed()) ||
+    capexDirty ||
     (editing &&
       JSON.stringify(toInput(project)) !==
         JSON.stringify(toInput(toDraft(scenario.project))));
@@ -288,6 +304,7 @@ export function ScenarioEditor({
       const result = await updateScenarioAction(scenario.id, {
         overrides,
         project: toInput(project),
+        capex: capexInput(capex),
       });
       // Inside the transition, so the message lands with the refreshed results.
       startTransition(() => {
@@ -404,6 +421,13 @@ export function ScenarioEditor({
           />
         )}
       </Card>
+
+      <CapexPlan
+        draft={capex}
+        years={capexYears}
+        stale={capexDirty}
+        onChange={setCapex}
+      />
 
       <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface/95 px-4 py-3 shadow-lg backdrop-blur">
         <button
