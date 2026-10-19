@@ -380,7 +380,8 @@ export type BorrowingBaseLine = BorrowingBaseLineBase &
         // The group it's part of, by code.
         group?: string;
         currency?: string;
-        // The advance rate, and an optional cap in the line's currency.
+        // The advance rate, and an optional cap in the facility's currency,
+        // applied after conversion.
         rate: Term;
         cap?: Term;
         // Aged: its amount is the buckets added up, and those from
