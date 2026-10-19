@@ -181,6 +181,36 @@ describe("functions", () => {
   });
 });
 
+describe("monthly functions", () => {
+  const month = (m: number): Period => {
+    const end = new Date(Date.UTC(2025, m, 0)).toISOString().slice(0, 10);
+    return { key: end, end, months: 1 };
+  };
+  const months = [1, 2, 3, 4, 5].map(month);
+  const run = (formula: string) =>
+    model({
+      periods: months,
+      inputs: { DRAWN: [100, null, 300, 50, 200] },
+      lines: { X: formula },
+    });
+  const show4 = (formula: string) =>
+    [2, 3, 4].map((p) => show(run(formula).cell("X", p).value));
+
+  it("reads the calendar month and rolls over months", () => {
+    expect(show(run("MONTH()").cell("X", 1).value)).toBe("2");
+    expect(show4("ROLLSUM(DRAWN, 3)")).toEqual(["400", "350", "550"]);
+    expect(show4("ROUND(ROLLAVG(DRAWN, 3), 2)")).toEqual([
+      "200",
+      "175",
+      "183.33",
+    ]);
+    expect(show4("ROLLMIN(DRAWN, 3)")).toEqual(["100", "50", "50"]);
+    expect(show4("ROLLMAX(DRAWN, 3)")).toEqual(["300", "300", "300"]);
+    expect(show(run("ROLLSUM(DRAWN, 3)").cell("X", 1).value)).toBe("#N/A");
+    expect(show(run("ROLLSUM(DRAWN, 0)").cell("X", 4).value)).toBe("#VALUE!");
+  });
+});
+
 describe("evaluateModel", () => {
   it("uses projection formulas in projected periods", () => {
     const evaluation = model({

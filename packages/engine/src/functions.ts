@@ -117,11 +117,41 @@ export const FUNCTIONS: Record<string, FunctionSpec> = {
     signature: "ANNUALIZE(x)",
     help: "x scaled to twelve months from the months the period covers.",
   },
+  ROLLSUM: {
+    min: 2,
+    max: 2,
+    signature: "ROLLSUM(x, periods)",
+    help: "x added up over this period and the ones before it of the same length, e.g. ROLLSUM(SALES, 12) for twelve months. Blanks are skipped.",
+  },
+  ROLLAVG: {
+    min: 2,
+    max: 2,
+    signature: "ROLLAVG(x, periods)",
+    help: "The mean of x over this period and the ones before it of the same length. Blanks are skipped.",
+  },
+  ROLLMIN: {
+    min: 2,
+    max: 2,
+    signature: "ROLLMIN(x, periods)",
+    help: "The smallest x over this period and the ones before it of the same length. Blanks are skipped.",
+  },
+  ROLLMAX: {
+    min: 2,
+    max: 2,
+    signature: "ROLLMAX(x, periods)",
+    help: "The largest x over this period and the ones before it of the same length. Blanks are skipped.",
+  },
   MONTHS: {
     min: 0,
     max: 0,
     signature: "MONTHS()",
     help: "The months the period covers.",
+  },
+  MONTH: {
+    min: 0,
+    max: 0,
+    signature: "MONTH()",
+    help: "The calendar month the period ends in, 1 to 12.",
   },
   YEAR: {
     min: 0,

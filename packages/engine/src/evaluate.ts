@@ -335,6 +335,36 @@ export function evaluateModel(run: ModelRun): Evaluation {
         }
         return current.div(base).pow(new Dec(1).div(steps)).minus(1);
       }
+      case "ROLLSUM":
+      case "ROLLAVG":
+      case "ROLLMIN":
+      case "ROLLMAX": {
+        const steps = count(1);
+        if (isError(steps)) return steps;
+        // This period and the ones before it of the same length.
+        const span = [p];
+        for (let q = p - 1; q >= 0 && span.length < steps; q--)
+          if (run.periods[q]!.months === period.months) span.push(q);
+        if (span.length < steps)
+          return new FormulaError(
+            "#N/A",
+            `No ${steps} ${period.months}-month periods up to ${period.end}.`,
+          );
+        const numbers = [];
+        for (const q of span) {
+          const value = arg(0, q);
+          if (isError(value)) return value;
+          if (isNumber(value)) numbers.push(value);
+        }
+        if (name === "ROLLSUM")
+          return numbers.reduce((a, b) => a.plus(b), new Dec(0));
+        if (!numbers.length) return null;
+        if (name === "ROLLAVG")
+          return numbers
+            .reduce((a, b) => a.plus(b), new Dec(0))
+            .div(numbers.length);
+        return name === "ROLLMIN" ? Dec.min(...numbers) : Dec.max(...numbers);
+      }
       case "TTM":
         return trailingTwelveMonths(node, p, refs);
       case "ANNUALIZE": {
@@ -343,6 +373,8 @@ export function evaluateModel(run: ModelRun): Evaluation {
       }
       case "MONTHS":
         return new Dec(period.months);
+      case "MONTH":
+        return new Dec(Number(period.end.slice(5, 7)));
       case "YEAR":
         return new Dec(period.end.slice(0, 4));
       case "PROJECTED":
