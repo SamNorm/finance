@@ -1,6 +1,9 @@
 import {
+  BUILT_IN_BORROWING_BASES,
   listBorrowingBases,
+  listBorrowingBaseTemplates,
   listGroupBorrowingBases,
+  listLinesToMargin,
   type BorrowingBaseSummary,
   type GroupSummary,
 } from "@finance/domain";
@@ -13,6 +16,8 @@ import { button, card, rowLink, table } from "@/components/styles";
 import { describeMonth, QUALITY } from "@/lib/borrowing-bases";
 import { formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
+import { MarginALine } from "./_components/margin-a-line";
+import type { MarginSources } from "./_components/margin-line";
 
 export const metadata: Metadata = { title: "Borrowing bases" };
 
@@ -32,14 +37,32 @@ const amount = (value: string | null | undefined) =>
 // Every margined line, for monitoring: where each stood at its latest
 // certificate, how often it was short over the last year, and which
 // certificates are late; and each consolidated client with margined
-// members, its members' lines added up, listed by name beside them.
+// members, its members' lines added up, listed by name beside them. A
+// borrower's line not margined yet can be margined from here.
 async function BorrowingBasesView() {
   const db = getDb();
   const ctx = await getContext();
-  const [lines, groups] = await Promise.all([
+  const [lines, groups, toMargin, templates] = await Promise.all([
     listBorrowingBases(db, ctx),
     listGroupBorrowingBases(db, ctx),
+    listLinesToMargin(db, ctx),
+    listBorrowingBaseTemplates(db, ctx),
   ]);
+  const sources: MarginSources = {
+    builtIns: BUILT_IN_BORROWING_BASES.map(({ id, name, description }) => ({
+      id,
+      name,
+      description,
+    })),
+    templates: templates
+      .filter((t) => t.published && !t.archivedAt)
+      .map(({ id, name, description }) => ({ id, name, description })),
+    lines: lines.map((l) => ({
+      lineId: l.lineId,
+      name: l.lineName,
+      entityName: l.entity.name,
+    })),
+  };
   const rows = [
     ...lines.map((line) => ({ name: line.entity.name, line, group: null })),
     ...groups.map((group) => ({ name: group.entity.name, line: null, group })),
@@ -50,6 +73,12 @@ async function BorrowingBasesView() {
       <PageHeader
         title="Borrowing bases"
         description="Margined lines of credit and their monthly certificates: collateral, less ineligibles, at its advance rates, against what's drawn."
+        actions={
+          rows.length > 0 &&
+          toMargin.length > 0 && (
+            <MarginALine borrowers={toMargin} sources={sources} />
+          )
+        }
       />
 
       {rows.length === 0 ? (
@@ -57,14 +86,22 @@ async function BorrowingBasesView() {
           icon={<Gauge />}
           title="No line is margined yet."
           actions={
-            <Link href="/borrowers" className={button.secondary}>
-              Open borrowers
-            </Link>
+            toMargin.length > 0 ? (
+              <MarginALine
+                borrowers={toMargin}
+                sources={sources}
+                variant="primary"
+              />
+            ) : (
+              <Link href="/borrowers" className={button.secondary}>
+                Open borrowers
+              </Link>
+            )
           }
         >
-          Open a borrower&apos;s Existing debt tab and choose Margin this line
-          on one of its lines of credit. It starts from a built-in borrowing
-          base, which you then set to the credit agreement.
+          Margin one of a borrower&apos;s lines of credit, here or from its
+          Existing debt tab. It starts from a built-in borrowing base, which you
+          then set to the credit agreement.
         </EmptyState>
       ) : (
         <section className={`${card} overflow-hidden`}>

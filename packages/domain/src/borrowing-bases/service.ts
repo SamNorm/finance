@@ -1,4 +1,13 @@
-import { and, asc, eq, inArray, isNotNull, schema, type Db } from "@finance/db";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  schema,
+  type Db,
+} from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError, type Issue } from "../errors";
@@ -401,6 +410,62 @@ export async function listMarginedLines(
     )
     .orderBy(asc(entities.name), asc(creditLines.position));
   return rows;
+}
+
+// A borrower a line could be margined for: its open lines of credit not
+// margined yet, or none when it has no open line to margin.
+export interface LinesToMargin {
+  entity: { id: string; name: string };
+  lines: { id: string; name: string; currency: string; limit: Term }[];
+}
+
+// The organization's borrowers with no margin on their open lines: those
+// with lines to margin, and those with no open line yet, by name. One whose
+// open lines are all margined isn't listed; a consolidated client's lines
+// are its members'.
+export async function listLinesToMargin(
+  db: Db,
+  ctx: Context,
+): Promise<LinesToMargin[]> {
+  const [borrowers, lines] = await Promise.all([
+    db
+      .select({ id: entities.id, name: entities.name })
+      .from(entities)
+      .where(
+        and(
+          eq(entities.organizationId, ctx.organizationId),
+          eq(entities.kind, "borrower"),
+        ),
+      )
+      .orderBy(asc(entities.name)),
+    db
+      .select({ line: creditLines })
+      .from(creditLines)
+      .innerJoin(entities, eq(entities.id, creditLines.entityId))
+      .where(
+        and(
+          eq(entities.organizationId, ctx.organizationId),
+          isNull(creditLines.closedOn),
+        ),
+      )
+      .orderBy(asc(creditLines.position), asc(creditLines.createdAt)),
+  ]);
+  return borrowers.flatMap((entity) => {
+    const open = lines.filter(({ line }) => line.entityId === entity.id);
+    const unmargined = open.filter(({ line }) => !line.borrowingBase);
+    if (open.length && !unmargined.length) return [];
+    return [
+      {
+        entity,
+        lines: unmargined.map(({ line }) => ({
+          id: line.id,
+          name: line.name,
+          currency: line.currency,
+          limit: line.limit,
+        })),
+      },
+    ];
+  });
 }
 
 // Starts a line's borrowing base from a built-in one, an organization's

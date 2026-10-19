@@ -29,6 +29,7 @@ import {
   getBorrowingBase,
   importBorrowingBasePaste,
   listBorrowingBases,
+  listLinesToMargin,
   previewBorrowingBasePaste,
   removeBorrowingBaseMonth,
   runBorrowingBaseOf,
@@ -37,6 +38,7 @@ import {
   setBorrowingBaseTerm,
   setBorrowingBaseValues,
   startBorrowingBase,
+  type LinesToMargin,
 } from "./service";
 
 const rejects = (promise: Promise<unknown>, kind: string) =>
@@ -674,6 +676,52 @@ describe("borrowing base service", () => {
       AR_CAD_CONTRAS: "85000",
       BB_OUTSTANDING: "2200000",
     });
+  });
+
+  it("lists borrowers with open lines left to margin, or none yet", async () => {
+    const { entity, line } = await setUp();
+    const scoringModelId = entity.scoringModelId;
+    const fresh = await createEntity(db, ctx, {
+      name: "Aardvark Ltd",
+      scoringModelId,
+    });
+    const closed = await createEntity(db, ctx, {
+      name: "Closed Co",
+      scoringModelId,
+    });
+    const old = await addCreditLine(db, ctx, closed.id, {
+      name: "Old line",
+      limit: { value: "500,000" },
+      rate: "6%",
+    });
+    await updateCreditLine(db, ctx, old.id, { closedOn: "2025-06-30" });
+    const mine = (list: LinesToMargin[]) =>
+      list.filter((b) =>
+        [entity.id, fresh.id, closed.id].includes(b.entity.id),
+      );
+
+    expect(mine(await listLinesToMargin(db, ctx))).toEqual([
+      { entity: { id: fresh.id, name: "Aardvark Ltd" }, lines: [] },
+      { entity: { id: closed.id, name: "Closed Co" }, lines: [] },
+      {
+        entity: { id: entity.id, name: "Northwind" },
+        lines: [
+          {
+            id: line.id,
+            name: "Operating line",
+            currency: "CAD",
+            limit: line.limit,
+          },
+        ],
+      },
+    ]);
+    // Once its only open line is margined, a borrower isn't listed.
+    await startBorrowingBase(db, ctx, line.id, {
+      builtIn: "receivables-inventory",
+    });
+    expect(
+      mine(await listLinesToMargin(db, ctx)).map((b) => b.entity.name),
+    ).toEqual(["Aardvark Ltd", "Closed Co"]);
   });
 
   it("compares months with the spread at its period ends, and lists margined lines", async () => {
