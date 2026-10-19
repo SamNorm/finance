@@ -11,6 +11,8 @@ import {
   monthIndex,
   monthOf,
   runAnalysis,
+  runAnalysisBorrowingBases,
+  runAnalysisGroupBorrowingBase,
   spreadErrors,
   type AnalysisRun,
 } from "@finance/domain";
@@ -30,6 +32,10 @@ import { AnalysisCharts } from "../_components/analysis-charts";
 import { documentRows } from "../../documents/rows";
 import { AnalysisDocuments } from "../_components/analysis-documents";
 import { AnalysisSettings } from "../_components/analysis-settings";
+import {
+  ProjectedBorrowingBases,
+  type ProjectionSetup,
+} from "../_components/bb-projection";
 import { CovenantResults } from "../_components/covenant-results";
 import { CovenantSummary } from "../_components/covenant-summary";
 import { Repin } from "../_components/repin";
@@ -70,7 +76,7 @@ async function AnalysisView({ params, searchParams }: Props) {
   });
   const scenario =
     detail.scenarios.find((s) => s.id === query.scenario) ?? null;
-  const [results, spread, scoringItems, debt, documents, printable] =
+  const [results, spread, scoringItems, debt, documents, printable, projected] =
     await Promise.all([
       runAnalysis(db, ctx, id, scenario?.id ?? null),
       getSpread(db, ctx, detail.entity.id),
@@ -78,7 +84,12 @@ async function AnalysisView({ params, searchParams }: Props) {
       getDebtSchedules(db, ctx, detail.entity.id),
       listDocuments(db, ctx, { analysisId: id }),
       listPrintableTemplates(db, ctx, detail.model.id),
+      runAnalysisBorrowingBases(db, ctx, id, scenario?.id ?? null),
     ]);
+  // A consolidated client adds its members' margined lines up.
+  const group = projected.some((l) => l.member)
+    ? await runAnalysisGroupBorrowingBase(db, ctx, id, scenario?.id ?? null)
+    : null;
   const scoringModel = await getScoringModel(
     db,
     ctx,
@@ -129,7 +140,49 @@ async function AnalysisView({ params, searchParams }: Props) {
     lastActual: lastActual ? lastActual.end.slice(0, 7) : null,
     withoutUsage: results.creditLines.withoutUsage,
     borrowerHref: `/borrowers/${entity.id}?tab=existing-debt`,
+    margined: Object.fromEntries(
+      projected.flatMap((l) =>
+        l.proposedNew ? [] : [[l.key, l.definition] as const],
+      ),
+    ),
   };
+  // The Borrowing base tab: each margined line projected under the
+  // scenario open. It shows when the borrower has one, or a scenario
+  // proposes one.
+  const inForceIds = new Set(results.creditLines.inForce.map((l) => l.id));
+  const proposedIn = detail.scenarios.flatMap((s) =>
+    (s.lines ?? [])
+      .filter((l) => l.borrowingBase && !l.closed && !inForceIds.has(l.id))
+      .map((l) => ({ scenarioId: s.id, scenarioName: s.name, line: l.name })),
+  );
+  const projection: ProjectionSetup = {
+    analysisId: analysis.id,
+    scenario: scenario && {
+      id: scenario.id,
+      name: scenario.name,
+      closing: scenario.project?.closing ?? null,
+      lines: scenario.lines,
+      borrowingBases: scenario.borrowingBases,
+    },
+    lines: projected,
+    limits: Object.fromEntries([
+      ...results.creditLines.inForce.map((l) => [l.id, l.limit] as const),
+      ...(scenario?.lines ?? [])
+        .filter((l) => !inForceIds.has(l.id))
+        .map((l) => [l.id, l.limit] as const),
+    ]),
+    usage: results.creditLines.usage,
+    group: group && { name: entity.name, ...group },
+    proposedIn,
+    usageHref: `?${new URLSearchParams({
+      ...(scenario ? { scenario: scenario.id } : {}),
+      tab: "scenario",
+    })}`,
+  };
+  const projectionIssues = [
+    ...projected.flatMap((l) => l.issues),
+    ...(group?.issues ?? []),
+  ];
   // Where the open scenario's assumptions can take a value by year:
   // projected periods, and post-project from the last fiscal year on.
   const lastYear = run.periods.findLastIndex(
@@ -325,6 +378,26 @@ async function AnalysisView({ params, searchParams }: Props) {
                 />
               ),
           },
+          ...(projected.length || proposedIn.length
+            ? [
+                {
+                  value: "borrowing-base",
+                  label: "Borrowing base",
+                  count: projected.length || undefined,
+                  alert: projectionIssues.some((i) => i.severity === "error")
+                    ? ("error" as const)
+                    : projectionIssues.length
+                      ? ("warning" as const)
+                      : undefined,
+                  content: (
+                    <ProjectedBorrowingBases
+                      key={`bb:${scenario?.id ?? "base"}`}
+                      setup={projection}
+                    />
+                  ),
+                },
+              ]
+            : []),
           {
             value: "scenario",
             label: "Assumptions & project",

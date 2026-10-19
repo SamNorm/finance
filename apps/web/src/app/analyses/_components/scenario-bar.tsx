@@ -27,12 +27,7 @@ import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
-import {
-  lineDraft,
-  lineInput,
-  usageDrafts,
-  usageInput,
-} from "@/lib/credit-lines";
+import { usageDrafts, usageInput } from "@/lib/credit-lines";
 import { formatDate, formatFigure } from "@/lib/format";
 import {
   addScenarioAction,
@@ -53,6 +48,7 @@ import { CapexPlan, capexDraft, capexInput } from "./capex-plan";
 import {
   BaseCaseLines,
   lineChanges,
+  proposedLinesInput,
   ScenarioLines,
   scenarioLineIds,
   scenarioLinesDraft,
@@ -404,7 +400,7 @@ export function ScenarioEditor({
   // Usage is kept for the lines in force and those proposed, as the server
   // would keep it.
   const linesInput = {
-    lines: lines.proposed && lines.proposed.map(lineInput),
+    lines: proposedLinesInput(lines),
     lineUsage: usageInput(
       lines.usage,
       scenarioLineIds(creditLines, lines.proposed),
@@ -413,7 +409,9 @@ export function ScenarioEditor({
   const linesDirty =
     JSON.stringify(linesInput) !==
     JSON.stringify({
-      lines: scenario.lines && scenario.lines.map(lineDraft).map(lineInput),
+      lines: proposedLinesInput(
+        scenarioLinesDraft(scenario.lines, scenario.lineUsage),
+      ),
       lineUsage: usageInput(
         usageDrafts(scenario.lineUsage),
         scenarioLineIds(creditLines, scenario.lines),
@@ -629,7 +627,12 @@ export function ScenarioEditor({
             debtSchedules={setup.debtSchedules}
             scenarioId={scenario.id}
             lineChanges={
-              scenario.lines && lineChanges(scenario.lines, creditLines.inForce)
+              scenario.lines &&
+              lineChanges(
+                scenario.lines,
+                creditLines.inForce,
+                creditLines.margined,
+              )
             }
           />
         ) : (

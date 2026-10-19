@@ -1,9 +1,10 @@
 "use client";
 
 import type { LineUsage, ProposedLine, Term } from "@finance/domain";
+import type { BorrowingBaseDefinition } from "@finance/domain/borrowing-bases";
 import { monthIndex, monthOf } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
-import { Pencil, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronDown, Pencil, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Badge, Card } from "@/components/page";
@@ -16,6 +17,7 @@ import {
   describeTerm,
   draftTerm,
   lineDraft,
+  lineInput,
   MONTHS,
   termIn,
   typedRate,
@@ -27,6 +29,14 @@ import {
 } from "@/lib/credit-lines";
 import { formatDate, formatFigure } from "@/lib/format";
 import { updateAnalysisAction } from "../actions";
+import {
+  DealTermsEditor,
+  dealTermsDraft,
+  dealTermsInput,
+  definitionAsTyped,
+  describeDealTerms,
+  type DealTermsDraft,
+} from "./proposed-terms";
 
 // Lines of credit in an analysis (borrowing-base-plan.md §4.3, §4.4): the
 // usage assumed for each line, a share of its limit with any month
@@ -61,6 +71,9 @@ export interface LinesSetup {
   withoutUsage: { id: string; name: string }[];
   // Where lines are entered: the borrower's Existing debt tab.
   borrowerHref: string;
+  // The borrowing bases of margined lines in force, by line id, whose terms
+  // a deal can change.
+  margined?: Record<string, BorrowingBaseDefinition>;
 }
 
 // A line as the usage grid shows it.
@@ -390,6 +403,10 @@ export interface ScenarioLinesDraft {
   // Null keeps the lines in force.
   proposed: LineDraft[] | null;
   usage: Record<string, UsageDraft>;
+  // The borrowing base terms the deal changes, by line id.
+  terms: Record<string, DealTermsDraft>;
+  // New margined lines' borrowing bases, by line id, kept as saved.
+  definitions: Record<string, BorrowingBaseDefinition>;
 }
 
 export const scenarioLinesDraft = (
@@ -398,7 +415,29 @@ export const scenarioLinesDraft = (
 ): ScenarioLinesDraft => ({
   proposed: lines && lines.map(lineDraft),
   usage: usageDrafts(usage),
+  terms: Object.fromEntries(
+    (lines ?? []).map((l) => [l.id, dealTermsDraft(l.terms)]),
+  ),
+  definitions: Object.fromEntries(
+    (lines ?? []).flatMap((l) =>
+      l.borrowingBase ? [[l.id, l.borrowingBase]] : [],
+    ),
+  ),
 });
+
+// The proposed lines as the domain reads them, with their borrowing base
+// terms; a line closed at the deal changes none.
+export const proposedLinesInput = (draft: ScenarioLinesDraft) =>
+  draft.proposed &&
+  draft.proposed.map((line) => {
+    const terms = line.closed ? {} : dealTermsInput(draft.terms[line.id] ?? {});
+    const definition = draft.definitions[line.id];
+    return {
+      ...lineInput(line),
+      ...(Object.keys(terms).length ? { terms } : {}),
+      ...(definition ? { borrowingBase: definitionAsTyped(definition) } : {}),
+    };
+  });
 
 // The lines a scenario can assume usage for: those in force, and the new
 // lines it proposes.
@@ -465,7 +504,10 @@ export function ScenarioLines({
           : {}),
         badge: change?.closed
           ? "Closed at the deal"
-          : change && differs(change, line)
+          : change &&
+              (differs(change, line) ||
+                Object.keys(dealTermsInput(draft.terms[line.id] ?? {})).length >
+                  0)
             ? "Changed at the deal"
             : undefined,
         counts: (m) =>
@@ -535,6 +577,15 @@ export function ScenarioLines({
                 key={line.key}
                 line={line}
                 was={setup.inForce.find((l) => l.id === line.id) ?? null}
+                margined={setup.margined?.[line.id] ?? null}
+                newMargined={draft.definitions[line.id] ?? null}
+                terms={draft.terms[line.id] ?? {}}
+                onTerms={(terms) =>
+                  onChange({
+                    ...draft,
+                    terms: { ...draft.terms, [line.id]: terms },
+                  })
+                }
                 onChange={(patch) => update(line.key, patch)}
                 onRemove={() =>
                   setProposed(proposed.filter((l) => l.key !== line.key))
@@ -613,15 +664,26 @@ const caption = "text-xs font-medium text-muted";
 function ProposedLineFields({
   line,
   was,
+  margined,
+  newMargined,
+  terms,
+  onTerms,
   onChange,
   onRemove,
 }: {
   line: LineDraft;
   // The line in force it changes; null for a new line.
   was: LineInForce | null;
+  // Its borrowing base in force, when it's margined.
+  margined: BorrowingBaseDefinition | null;
+  // A new line's own borrowing base, when the deal margins it.
+  newMargined: BorrowingBaseDefinition | null;
+  terms: DealTermsDraft;
+  onTerms: (terms: DealTermsDraft) => void;
   onChange: (patch: Partial<LineDraft>) => void;
   onRemove: () => void;
 }) {
+  const changedTerms = Object.keys(dealTermsInput(terms)).length;
   const name = line.name || was?.name || "The line";
   return (
     <fieldset className="flex flex-col gap-2 rounded-lg border border-line p-3">
@@ -707,6 +769,41 @@ function ProposedLineFields({
           {formatFigure(was.rate, "percent")}
         </p>
       )}
+      {margined && !line.closed && (
+        <details
+          open={changedTerms > 0}
+          className="group rounded-md border border-line/70 bg-surface-2/30"
+        >
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
+            <span className="font-medium">Borrowing base terms</span>
+            <span className="text-xs text-muted">
+              {changedTerms
+                ? `${changedTerms} ${changedTerms === 1 ? "line" : "lines"} changed at the deal`
+                : "As in force: advance rates, caps and reserves the deal can change"}
+            </span>
+            <ChevronDown
+              className="ml-auto size-4 text-muted transition-transform group-open:rotate-180"
+              aria-hidden
+            />
+          </summary>
+          <div className="border-t border-line/70 px-3 py-2">
+            <DealTermsEditor
+              name={name}
+              definition={margined}
+              draft={terms}
+              onChange={onTerms}
+            />
+          </div>
+        </details>
+      )}
+      {!was && newMargined && (
+        <p className="text-xs text-muted">
+          Margined
+          {newMargined.basedOn ? ` from ${newMargined.basedOn.name}` : ""}:
+          projected from its own borrowing base and assumptions, with no
+          history.
+        </p>
+      )}
     </fieldset>
   );
 }
@@ -716,6 +813,7 @@ function ProposedLineFields({
 export function lineChanges(
   proposed: readonly ProposedLine[],
   inForce: readonly LineInForce[],
+  margined: Record<string, BorrowingBaseDefinition> = {},
 ): string[] {
   const percent = (rate: string) => formatFigure(rate, "percent");
   return proposed.flatMap((line) => {
@@ -733,6 +831,7 @@ export function lineChanges(
         `limit ${describeTerm(was.limit)} → ${describeTerm(line.limit)}`,
       line.rate !== was.rate &&
         `rate ${percent(was.rate)} → ${percent(line.rate)}`,
+      ...describeDealTerms(line.terms, margined[line.id]),
     ].filter(Boolean);
     return changes.length ? [`${was.name}: ${changes.join(", ")}`] : [];
   });

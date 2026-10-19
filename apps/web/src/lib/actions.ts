@@ -101,14 +101,43 @@ export function creditLineFields(raw: unknown): CreditLineInput {
 }
 
 // A line a scenario proposes: a line's fields, the id of the line in force
-// it changes or a new line's, and whether the deal closes it.
+// it changes or a new line's, and whether the deal closes it; for a margined
+// line, the borrowing base terms the deal changes, by line code (a null cap
+// removes one); for a new margined line, its definition, which the domain
+// reads strictly.
 export function proposedLineFields(raw: unknown): ProposedLineInput {
   const fields = creditLineFields(raw);
-  const { id, closed } = raw as Record<string, unknown>;
+  const { id, closed, terms, borrowingBase } = raw as Record<string, unknown>;
+  if (terms !== undefined && !isObject(terms))
+    throw invalid("Give a line's borrowing base terms by line code.");
   return {
     ...fields,
     id: typeof id === "string" ? id : undefined,
     closed: closed === true,
+    ...(terms
+      ? {
+          terms: Object.fromEntries(
+            Object.entries(terms).map(([code, given]) => {
+              if (!isObject(given))
+                throw invalid("Give a line's rate, cap or amount.");
+              return [
+                code,
+                Object.fromEntries(
+                  (["rate", "cap", "amount"] as const)
+                    .filter((name) => given[name] !== undefined)
+                    .map((name) => [
+                      name,
+                      name === "cap" && given.cap === null
+                        ? null
+                        : termFields(given[name]),
+                    ]),
+                ),
+              ];
+            }),
+          ),
+        }
+      : {}),
+    ...(isObject(borrowingBase) ? { borrowingBase } : {}),
   };
 }
 
