@@ -1,6 +1,6 @@
 # Monthly Borrowing Base: Draft Plan
 
-_Status: being built in phases (§13): the domain of phases 1 to 6 is in, with phase 1's app, MCP and documents; every question settled (§14) · Last updated: 2026-10-18_
+_Status: built: phases 1 to 7 (§13) are in, in the domain, the app, MCP and documents; phase 8 waits until wanted; every question settled (§14) · Last updated: 2026-10-19_
 
 ## 1. Goal
 
