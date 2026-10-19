@@ -14,6 +14,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { ExcelLink } from "@/components/excel-link";
 import { Badge, EmptyState, Page, PageHeader } from "@/components/page";
 import { Tabs } from "@/components/tabs";
 import { figuresOf } from "@/lib/borrowing-bases";
@@ -113,11 +114,19 @@ async function LineView({ params, searchParams }: Props) {
       }
       actions={
         line.borrowingBase && (
-          <BorrowingBaseActions
-            lineId={line.id}
-            lineName={line.name}
-            sources={sources}
-          />
+          <>
+            {results && results.run.months.length > 0 && (
+              <ExcelLink
+                href={`/borrowing-bases/${line.id}/xlsx`}
+                title="Download the borrowing base month by month as a workbook, with its tests and certificates."
+              />
+            )}
+            <BorrowingBaseActions
+              lineId={line.id}
+              lineName={line.name}
+              sources={sources}
+            />
+          </>
         )
       }
     />

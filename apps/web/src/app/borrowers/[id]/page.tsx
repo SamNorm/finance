@@ -37,6 +37,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { Comments } from "@/components/comments";
+import { ExcelLink } from "@/components/excel-link";
 import { IssueList, IssuesSummary } from "@/components/issue-list";
 import {
   Badge,
@@ -562,6 +563,14 @@ async function ConsolidatedView({
               schedules.reduce((n, s) => n + s.loans.length, 0) + lines.length,
             content: (
               <div className="flex flex-col gap-5">
+                {members.some((m) => m.debtSchedule.loans.length) && (
+                  <div className="flex justify-end">
+                    <ExcelLink
+                      href={`/borrowers/${entity.id}/debt/xlsx`}
+                      title="Download the members' existing debt as a workbook: their loans and lines of credit, and each loan's payments."
+                    />
+                  </div>
+                )}
                 <MembersDebt members={members} />
                 {members.length > 0 && (
                   <CreditLines

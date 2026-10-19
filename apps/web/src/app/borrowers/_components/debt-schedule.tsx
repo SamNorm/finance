@@ -4,6 +4,7 @@ import type { DebtSchedule } from "@finance/domain";
 import { REPAYMENTS, type Adjustment } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import { useState, useTransition } from "react";
+import { ExcelLink } from "@/components/excel-link";
 import { LoanSchedule } from "@/components/loan-schedule";
 import { Card } from "@/components/page";
 import {
@@ -137,13 +138,19 @@ export function DebtScheduleEditor({
       actions={
         schedule.asOf &&
         schedule.loans.length > 0 && (
-          <p className="text-xs text-muted">
-            {formatFigure(String(totals.balance), "amount")} owed on{" "}
-            {formatDate(schedule.asOf)} · debt service over the next 12 months{" "}
-            <span className="font-medium text-foreground">
-              {formatFigure(String(totals.service), "amount")}
-            </span>
-          </p>
+          <>
+            <p className="text-xs text-muted">
+              {formatFigure(String(totals.balance), "amount")} owed on{" "}
+              {formatDate(schedule.asOf)} · debt service over the next 12 months{" "}
+              <span className="font-medium text-foreground">
+                {formatFigure(String(totals.service), "amount")}
+              </span>
+            </p>
+            <ExcelLink
+              href={`/borrowers/${entityId}/debt/xlsx`}
+              title="Download the existing debt as a workbook: the loans and lines of credit, and each loan's payments."
+            />
+          </>
         )
       }
     >

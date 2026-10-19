@@ -26,6 +26,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { Comments } from "@/components/comments";
+import { ExcelLink } from "@/components/excel-link";
 import { Badge, Card, Page, PageHeader } from "@/components/page";
 import { Tabs } from "@/components/tabs";
 import { formatDate, formatDay, formatFigure } from "@/lib/format";
@@ -281,13 +282,19 @@ async function AnalysisView({ params, searchParams }: Props) {
           </>
         }
         actions={
-          <AnalysisActions
-            analysis={{
-              id: analysis.id,
-              name: analysis.name,
-              status: analysis.status,
-            }}
-          />
+          <>
+            <ExcelLink
+              href={`/analyses/${analysis.id}/xlsx`}
+              title="Download the base case and every scenario as a workbook: lines, covenants, sources and uses."
+            />
+            <AnalysisActions
+              analysis={{
+                id: analysis.id,
+                name: analysis.name,
+                status: analysis.status,
+              }}
+            />
+          </>
         }
       />
 

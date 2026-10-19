@@ -17,6 +17,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { ExcelLink } from "@/components/excel-link";
 import { button, card } from "@/components/styles";
 import { Icon } from "@/components/ui";
 import { formatDate, formatFigure } from "@/lib/format";
@@ -96,6 +97,12 @@ export function SpreadGrid({
           ))}
         </nav>
         <div className="ml-auto flex gap-2 py-2">
+          {periods.length > 0 && (
+            <ExcelLink
+              href={`/borrowers/${entityId}/spread/xlsx`}
+              title="Download the spread as a workbook: a sheet per statement, and the checks."
+            />
+          )}
           {consolidated ? (
             <button
               type="button"
