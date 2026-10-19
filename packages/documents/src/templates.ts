@@ -44,11 +44,13 @@ export type Block =
     | { type: "covenants" }
     // The model's charts and the analysis's own; or those named.
     | { type: "charts"; charts?: string[] }
-    // The scenario's project: sources and uses at closing, line of credit
-    // increases, subordinations, loans consolidated and adjustments.
+    // The scenario's project: sources and uses at closing, the lines of
+    // credit it changes, adds or cancels, subordinations, loans consolidated
+    // and adjustments.
     | { type: "sourcesUses" }
     // Existing loans and the project's new ones: balance, rate, terms and
-    // debt service.
+    // debt service. Then the lines of credit as the scenario leaves them:
+    // limit, rate, the usage assumed and a year's interest.
     | { type: "debt" }
     // Each loan's schedule, year by year.
     | { type: "amortization" }
@@ -86,11 +88,13 @@ export const SECTIONS: Record<
   },
   sourcesUses: {
     label: "Sources and uses",
-    description: "The scenario's project at closing.",
+    description:
+      "The scenario's project at closing, and its changes to lines of credit.",
   },
   debt: {
     label: "Debt",
-    description: "Existing loans and the project's new ones.",
+    description:
+      "Existing loans and the project's new ones, and the lines of credit with their usage and interest.",
   },
   amortization: {
     label: "Schedules by year",
@@ -187,7 +191,7 @@ export const BUILT_IN_TEMPLATES: Template[] = [
     key: "debt-summary",
     name: "Debt summary",
     description:
-      "Existing loans and the deal's new ones, with each loan's schedule year by year.",
+      "Existing loans and the deal's new ones, the lines of credit with their usage and interest, and each loan's schedule year by year.",
     title: "{{borrower.name}}: debt summary",
     orientation: "portrait",
     blocks: [

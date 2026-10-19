@@ -6,15 +6,21 @@ import {
   getEntity,
   getOrganization,
   getVersion,
+  LINE_CODES,
   listItems,
   runAnalysis,
   type AnalysisResults,
   type AnalysisRun,
   type ChartDefinition,
   type Context,
+  type FinancingPart,
+  type LineCode,
+  type LineUsage,
   type ModelLine,
   type OwnedDebtSchedule,
+  type OwnedLine,
   type Project,
+  type ProposedLine,
   type RunPeriod,
 } from "@finance/domain";
 
@@ -24,12 +30,20 @@ import {
 
 export const DATA_VERSION = 1;
 
+// A built-in input's value in a period, with each line of credit's part
+// (lines drawn nothing have none); null where it's blank.
+export type LineValue = { value: string; parts: FinancingPart[] } | null;
+
 // A run's values by line code, in the periods' order; null where there's
 // no value or an error.
 export interface DocumentRun {
   periods: RunPeriod[];
   values: Record<string, (string | null)[]>;
   assumptions: Record<string, { value: string | null; overridden: boolean }>;
+  // The lines of credit's built-in inputs (borrowing-base-plan.md §4.5), in
+  // the periods' order: interest, the limits at the period's end and the
+  // average drawn. Blank in actual periods as they stand.
+  creditLines: Record<LineCode, LineValue[]>;
 }
 
 export interface DocumentData {
@@ -65,6 +79,15 @@ export interface DocumentData {
   covenants: AnalysisResults["covenants"];
   deal: Project | null;
   debt: OwnedDebtSchedule[];
+  // The borrower's lines of credit in force, or a consolidated client's
+  // members'; the usage the run assumes for each, by line id (the
+  // scenario's over the analysis's); and the lines the scenario proposes
+  // for its deal, null for those in force.
+  creditLines: {
+    inForce: OwnedLine[];
+    usage: LineUsage;
+    proposed: ProposedLine[] | null;
+  };
   // Labels of the scoring model items the deal posts to.
   items: Record<string, string>;
 }
@@ -84,6 +107,10 @@ function compact(run: AnalysisRun): DocumentRun {
         { value: a.value, overridden: a.overridden },
       ]),
     ),
+    // The lines of credit's built-in inputs, as the run counts them.
+    creditLines: Object.fromEntries(
+      LINE_CODES.map((code) => [code, run.financing[code] ?? []]),
+    ) as DocumentRun["creditLines"],
   };
 }
 
@@ -142,13 +169,18 @@ export async function analysisDocumentData(
       format,
     })),
     charts: [...detail.modelCharts, ...detail.analysis.charts],
-    run: compact(results.scenario ?? results.base),
+    run: results.scenario ? compact(results.scenario) : compact(results.base),
     base: results.scenario ? compact(results.base) : null,
     project: results.project && compact(results.project),
     postProject: results.postProject,
     covenants: results.covenants,
     deal,
     debt,
+    creditLines: {
+      inForce: results.creditLines.inForce,
+      usage: results.creditLines.usage,
+      proposed: scenario?.lines ?? null,
+    },
     items: Object.fromEntries(
       items.filter((i) => posted.has(i.code)).map((i) => [i.code, i.label]),
     ),

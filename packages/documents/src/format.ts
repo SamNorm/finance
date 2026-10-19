@@ -45,6 +45,11 @@ export function formats(language: Language) {
     year: "numeric",
     timeZone: "UTC",
   });
+  const monthNames = new Intl.DateTimeFormat(tag, {
+    month: "long",
+    timeZone: "UTC",
+  });
+  const lists = new Intl.ListFormat(tag, { type: "conjunction" });
   const compact = new Intl.NumberFormat(tag, {
     notation: "compact",
     maximumFractionDigits: 1,
@@ -87,6 +92,11 @@ export function formats(language: Language) {
       ];
       return months.format(new Date(Date.UTC(year, m - 1, 1)));
     },
+    // A calendar month, 1 to 12 → "October".
+    monthName: (month: number) =>
+      monthNames.format(new Date(Date.UTC(2000, month - 1, 1))),
+    // "a, b and c", or "a, b et c".
+    list: (items: string[]) => lists.format(items),
     // A chart axis's label, shorter than a figure.
     tick(value: number, format: "amount" | "percent" | "ratio" | "count") {
       if (format === "percent") return tickPercent.format(value);

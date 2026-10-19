@@ -2,6 +2,7 @@ import {
   BALANCE_TOLERANCE,
   describeTerms,
   imbalance,
+  monthNumber,
   projectTotals,
   yearsOf,
   type Amortizing,
@@ -9,6 +10,8 @@ import {
   type Moratorium,
   type Project,
   type Repayment,
+  type Season,
+  type Term,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import { formats } from "./format";
@@ -18,6 +21,9 @@ import type { Language } from "./templates";
 // and the like. Values passed in are already escaped and formatted.
 
 type Quality = "audited" | "review" | "compilation" | "internal" | "projected";
+
+// How a proposed line moves a limit or a rate.
+export type Change = "raised" | "lowered" | "changed";
 
 const en = {
   baseCase: "Base case",
@@ -86,8 +92,16 @@ const en = {
   total: "Total",
   sources: "Sources",
   uses: "Uses",
-  lineIncrease: (name: string, amount: string, rate: string, usage: string) =>
-    `Line of credit increase, ${name}: ${amount} at ${rate}, ${usage} used on average.`,
+  // A scenario's proposed lines of credit
+  limitChange: (change: Change, from: string, to: string) =>
+    `limit ${change} from ${from} to ${to}`,
+  rateChange: (change: Change, from: string, to: string) =>
+    `rate ${change} from ${from} to ${to}`,
+  lineChange: (name: string, changes: string[]) =>
+    `${name}: ${changes.join(", ")}.`,
+  newLine: (name: string, currency: string, limit: string, rate: string) =>
+    `New line of credit: ${name} (${currency}), ${limit} at ${rate}.`,
+  lineClosed: (name: string) => `${name}: cancelled at closing.`,
   subordination: (name: string, amount: string) =>
     `${name}: ${amount} postponed in favour of the lender and treated as equity.`,
   anExistingLoan: "An existing loan",
@@ -108,6 +122,26 @@ const en = {
   terms: "Terms",
   firstYearService: "Debt service, first 12 months",
   afterTheDeal: ", after the deal",
+  // Lines of credit
+  lineOfCredit: "Line of credit",
+  limit: "Limit",
+  averageUsage: "Average usage",
+  interestAYear: "Interest, a year",
+  notAssumed: "Not assumed",
+  ofTheLimit: (share: string) => `${share} of the limit`,
+  monthsEntered: (count: number) =>
+    `${count} ${count === 1 ? "month" : "months"} entered`,
+  atClosing: "at closing",
+  asOfMonth: (month: string) => `as of ${month}`,
+  lineChanged: (when: string) => ` · changed ${when}`,
+  lineAdded: (when: string) => ` · new ${when}`,
+  lineCancelled: (when: string) => ` · cancelled ${when}`,
+  // A limit's seasons and steps: "2,000,000 (2,500,000 from October to
+  // March); from Jun 2026: 3,000,000"
+  inMonth: (month: string) => `in ${month}`,
+  monthsFromTo: (from: string, to: string) => `from ${from} to ${to}`,
+  stepFrom: (month: string, limit: string) => `from ${month}: ${limit}`,
+  stepSeparator: "; ",
   // Schedules
   noSchedules: "No loans to schedule.",
   newSuffix: " (new)",
@@ -184,8 +218,14 @@ const fr: Words = {
   total: "Total",
   sources: "Sources",
   uses: "Utilisations",
-  lineIncrease: (name, amount, rate, usage) =>
-    `Augmentation de la marge de crédit, ${name} : ${amount} à ${rate}, utilisée à ${usage} en moyenne.`,
+  limitChange: (change, from, to) =>
+    `autorisation ${{ raised: "portée", lowered: "ramenée", changed: "modifiée" }[change]} de ${from} à ${to}`,
+  rateChange: (change, from, to) =>
+    `taux ${{ raised: "porté", lowered: "ramené", changed: "modifié" }[change]} de ${from} à ${to}`,
+  lineChange: (name, changes) => `${name} : ${changes.join(", ")}.`,
+  newLine: (name, currency, limit, rate) =>
+    `Nouvelle marge de crédit : ${name} (${currency}), ${limit} à ${rate}.`,
+  lineClosed: (name) => `${name} : annulation à la clôture.`,
   subordination: (name, amount) =>
     `${name} : ${amount} postposés en faveur du prêteur et traités comme de l'avoir.`,
   anExistingLoan: "Un prêt existant",
@@ -205,6 +245,24 @@ const fr: Words = {
   terms: "Modalités",
   firstYearService: "Service de la dette, 12 premiers mois",
   afterTheDeal: ", après l'opération",
+  lineOfCredit: "Marge de crédit",
+  limit: "Autorisation",
+  averageUsage: "Utilisation moyenne",
+  interestAYear: "Intérêts annuels",
+  notAssumed: "Aucune hypothèse",
+  ofTheLimit: (share) => `${share} de l'autorisation`,
+  monthsEntered: (count) => `${count} mois saisi${count > 1 ? "s" : ""}`,
+  atClosing: "à la clôture",
+  asOfMonth: (month) => `dès ${month}`,
+  lineChanged: (when) => ` · modifiée ${when}`,
+  lineAdded: (when) => ` · nouvelle ${when}`,
+  lineCancelled: (when) => ` · annulée ${when}`,
+  inMonth: (month) => `en ${month}`,
+  // D'avril, d'août, d'octobre.
+  monthsFromTo: (from, to) =>
+    `${/^[aeiou]/.test(from) ? "d'" : "de "}${from} à ${to}`,
+  stepFrom: (month, limit) => `dès ${month} : ${limit}`,
+  stepSeparator: " ; ",
   noSchedules: "Aucun prêt à présenter.",
   newSuffix: " (nouveau)",
   monthRange: (from, to) => `${from} à ${to}`,
@@ -251,13 +309,57 @@ const MORATORIUMS: Record<Moratorium["kind"], string> = {
   full: "sur le capital et les intérêts",
 };
 
+// A season's calendar months as runs of months in a row, each from its
+// first: [10, 11, 12, 1, 2, 3] → [[10, 3]].
+function monthRuns(months: readonly number[]): [number, number][] {
+  const set = new Set(months);
+  const next = (m: number) => (m % 12) + 1;
+  const previous = (m: number) => ((m + 10) % 12) + 1;
+  return [...set]
+    .filter((m) => !set.has(previous(m)))
+    .sort((a, b) => a - b)
+    .map((first) => {
+      let last = first;
+      while (set.has(next(last))) last = next(last);
+      return [first, last];
+    });
+}
+
 export function locale(language: Language = "en") {
   const f = formats(language);
   const french = language === "fr";
+  const w = WORDS[language];
   return {
     language,
     ...f,
-    w: WORDS[language],
+    w,
+    // A line of credit's limit as its term reads, seasons in brackets and
+    // steps after: "2,000,000 (2,500,000 from October to March); from Jun
+    // 2026: 3,000,000".
+    limit(term: Term): string {
+      const amount = (value: string) => f.figure(value, "amount");
+      const months = (season: Season) =>
+        f.list(
+          monthRuns(season.months).map(([first, last]) =>
+            first === last
+              ? w.inMonth(f.monthName(first))
+              : w.monthsFromTo(f.monthName(first), f.monthName(last)),
+          ),
+        );
+      const value = (base: string, seasons: Season[] = []) =>
+        seasons.length
+          ? `${amount(base)} (${f.list(seasons.map((s) => `${amount(s.value)} ${months(s)}`))})`
+          : amount(base);
+      return [
+        value(term.value, term.seasons),
+        ...(term.steps ?? []).map((step) =>
+          w.stepFrom(
+            f.month(monthNumber(step.from)),
+            value(step.value, step.seasons),
+          ),
+        ),
+      ].join(w.stepSeparator);
+    },
     terms(loan: Amortizing): string {
       if (!french) return describeTerms(loan);
       const parts: string[] = [];

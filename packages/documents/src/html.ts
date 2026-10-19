@@ -6,12 +6,16 @@ import {
   type CovenantPeriod,
   type DebtSchedule,
   type ExistingLoan,
+  type LineCode,
+  type LineTerms,
   type ProjectLoan,
+  type Season,
+  type Term,
 } from "@finance/domain";
 import { chartSvg, legendHtml, type ChartInput } from "./chart";
 import type { DocumentData, DocumentRun } from "./data";
 import { escape, type Format } from "./format";
-import { locale, type Locale } from "./locale";
+import { locale, type Change, type Locale } from "./locale";
 import {
   MERGE_FIELD,
   type Block,
@@ -430,6 +434,7 @@ function sourcesUsesBlock(data: DocumentData, l: Locale): string {
     data.debt.flatMap((d) => d.schedule.loans.map((l) => [l.id, l.name])),
   );
   const extras = [
+    ...lineChanges(data, l),
     ...deal.subordinations.map((s) =>
       l.w.subordination(escape(s.name), escape(l.figure(s.amount, "amount"))),
     ),
@@ -446,6 +451,77 @@ function sourcesUsesBlock(data: DocumentData, l: Locale): string {
     ),
   ];
   return `<p class="muted">${l.w.closing(escape(l.date(deal.closing)))}</p>${off ? `<p class="fail">${l.w.unbalanced(escape(off))}</p>` : ""}<div class="pair">${side(l.w.sources, source, totals.sources.toFixed())}${side(l.w.uses, use, totals.uses.toFixed())}</div>${extras.length ? `<ul class="extras">${extras.map((e) => `<li>${e}</li>`).join("")}</ul>` : ""}`;
+}
+
+// A term's figures in a set order, to tell whether a proposed limit changes
+// the one in force.
+function termKey(term: Term): string {
+  const seasons = (list: Season[] = []) =>
+    list
+      .map(
+        (s) => [[...s.months].sort((a, b) => a - b), Number(s.value)] as const,
+      )
+      .sort((a, b) => a[0][0]! - b[0][0]!);
+  return JSON.stringify([
+    Number(term.value),
+    seasons(term.seasons),
+    (term.steps ?? []).map((s) => [
+      s.from,
+      Number(s.value),
+      seasons(s.seasons),
+    ]),
+  ]);
+}
+
+const changeOf = (from: string, to: string): Change =>
+  Number(to) > Number(from)
+    ? "raised"
+    : Number(to) < Number(from)
+      ? "lowered"
+      : "changed";
+
+// Whether a proposed line changes the terms of the one in force.
+const changesTerms = (was: LineTerms, line: LineTerms) =>
+  termKey(was.limit) !== termKey(line.limit) ||
+  Number(was.rate) !== Number(line.rate);
+
+// Each line of credit the scenario changes, adds or cancels, as the deal's
+// extras word it. Lines it proposes as they are say nothing.
+function lineChanges(data: DocumentData, l: Locale): string[] {
+  const inForce = new Map(data.creditLines.inForce.map((x) => [x.id, x]));
+  return (data.creditLines.proposed ?? []).flatMap((line) => {
+    const was = inForce.get(line.id);
+    if (!was)
+      return line.closed
+        ? []
+        : [
+            l.w.newLine(
+              escape(line.name),
+              escape(line.currency),
+              escape(l.limit(line.limit)),
+              escape(l.rate(line.rate)),
+            ),
+          ];
+    if (line.closed) return [l.w.lineClosed(escape(was.name))];
+    const changed: string[] = [];
+    if (termKey(was.limit) !== termKey(line.limit))
+      changed.push(
+        l.w.limitChange(
+          changeOf(was.limit.value, line.limit.value),
+          escape(l.limit(was.limit)),
+          escape(l.limit(line.limit)),
+        ),
+      );
+    if (Number(was.rate) !== Number(line.rate))
+      changed.push(
+        l.w.rateChange(
+          changeOf(was.rate, line.rate),
+          escape(l.rate(was.rate)),
+          escape(l.rate(line.rate)),
+        ),
+      );
+    return changed.length ? [l.w.lineChange(escape(was.name), changed)] : [];
+  });
 }
 
 // A loan's yearly debt service from its start: the first twelve months'.
@@ -491,8 +567,113 @@ function debtBlock(data: DocumentData, l: Locale): string {
       return `<tr><td>${escape(loan.name)}<small>${l.w.newFrom(escape(l.date(data.deal!.closing)))}</small></td><td class="num">${escape(l.figure(loan.amount, "amount"))}</td><td class="num">${escape(l.rate(loan.rate))}</td><td>${escape(l.terms({ ...loan, balance: loan.amount }))}</td><td class="num">${escape(l.figure(String(service), "amount"))}</td></tr>`;
     })
     .join("");
-  if (!existingRows && !newRows) return `<p class="muted">${l.w.noLoans}</p>`;
-  return `<table class="figures"><thead><tr><th>${l.w.loan}</th><th class="num">${l.w.balance}</th><th class="num">${l.w.rate}</th><th>${l.w.terms}</th><th class="num">${l.w.firstYearService}</th></tr></thead><tbody>${existingRows}${newRows}</tbody><tfoot><tr><td>${l.w.total}${added.length || consolidated.size ? l.w.afterTheDeal : ""}</td><td></td><td></td><td></td><td class="num">${escape(l.figure(String(total), "amount"))}</td></tr></tfoot></table>`;
+  const lines = linesOfCredit(data, l);
+  if (!existingRows && !newRows)
+    return `<p class="muted">${l.w.noLoans}</p>${lines}`;
+  return `<table class="figures"><thead><tr><th>${l.w.loan}</th><th class="num">${l.w.balance}</th><th class="num">${l.w.rate}</th><th>${l.w.terms}</th><th class="num">${l.w.firstYearService}</th></tr></thead><tbody>${existingRows}${newRows}</tbody><tfoot><tr><td>${l.w.total}${added.length || consolidated.size ? l.w.afterTheDeal : ""}</td><td></td><td></td><td></td><td class="num">${escape(l.figure(String(total), "amount"))}</td></tr></tfoot></table>${lines}`;
+}
+
+// Where the lines of credit's interest and usage are read: the post-project
+// column when there's one (a fiscal year's before a year to date's), whose
+// run counts the deal's lines; or else the first projected period.
+function linePeriod(data: DocumentData) {
+  if (data.project) {
+    const { periods } = data.project;
+    const shown = periods.flatMap((period, p) =>
+      data.postProject.includes(period.key) ? [p] : [],
+    );
+    const p = shown.find((p) => periods[p]!.months === 12) ?? shown[0];
+    if (p !== undefined) return { run: data.project, p, post: true };
+  }
+  const run = data.project ?? data.run;
+  const p = run.periods.findIndex((period) => period.projection !== null);
+  return p < 0 ? null : { run, p, post: false };
+}
+
+// The lines of credit beside the loans, as the deal leaves them: those in
+// force (closed ones no longer count), each as the scenario proposes it,
+// then the new ones; with the usage assumed and a year's interest on it.
+function linesOfCredit(data: DocumentData, l: Locale): string {
+  const { inForce, usage, proposed } = data.creditLines;
+  const byId = new Map((proposed ?? []).map((line) => [line.id, line]));
+  const ids = new Set(inForce.map((line) => line.id));
+  const shown: {
+    line: LineTerms;
+    change: "changed" | "new" | "cancelled" | null;
+  }[] = [
+    ...inForce
+      .filter((line) => !line.closedOn)
+      .map((line) => {
+        const own = byId.get(line.id);
+        return {
+          line: own && !own.closed ? own : line,
+          change: !own
+            ? null
+            : own.closed
+              ? ("cancelled" as const)
+              : changesTerms(line, own)
+                ? ("changed" as const)
+                : null,
+        };
+      }),
+    ...(proposed ?? [])
+      .filter((line) => !ids.has(line.id) && !line.closed)
+      .map((line) => ({ line, change: "new" as const })),
+  ];
+  if (!shown.length) return "";
+  // When the scenario's lines apply: at closing, or with no project from
+  // the first projected month.
+  const last = data.run.periods.findLast((p) => p.projection === null);
+  const when = data.deal
+    ? l.w.atClosing
+    : last
+      ? l.w.asOfMonth(l.month(monthIndex(last.end) + 1))
+      : "";
+  const at = linePeriod(data);
+  const part = (code: LineCode, id: string) => {
+    const value = at?.run.creditLines[code][at.p];
+    return value
+      ? Number(value.parts.find((x) => x.id === id)?.value ?? 0)
+      : null;
+  };
+  // Interest over a period's months, to a year's.
+  const scale = at ? 12 / at.run.periods[at.p]!.months : 1;
+  const amount = (value: number | null) =>
+    value === null ? "–" : escape(l.figure(String(value), "amount"));
+  const rows = shown
+    .map(({ line, change }) => {
+      const own = usage[line.id];
+      const months = Object.keys(own?.months ?? {}).length;
+      const assumed = own?.share !== undefined || months > 0;
+      const tag =
+        change === "changed"
+          ? l.w.lineChanged(escape(when))
+          : change === "new"
+            ? l.w.lineAdded(escape(when))
+            : change === "cancelled"
+              ? l.w.lineCancelled(escape(when))
+              : "";
+      const interest = part("LINE_INTEREST", line.id);
+      const annual = interest === null ? null : interest * scale;
+      const how = [
+        own?.share !== undefined
+          ? l.w.ofTheLimit(escape(l.rate(own.share)))
+          : null,
+        months ? l.w.monthsEntered(months) : null,
+      ].filter(Boolean);
+      const used =
+        change === "cancelled"
+          ? "–"
+          : !assumed
+            ? `<span class="fail">${l.w.notAssumed}</span>`
+            : `${amount(part("LINE_AVERAGE_USAGE", line.id))}${how.length ? `<small>${how.join(" · ")}</small>` : ""}`;
+      return `<tr><td>${escape(line.name)}<small>${escape(line.currency)}${tag}</small></td><td>${escape(l.limit(line.limit))}</td><td class="num">${escape(l.rate(line.rate))}</td><td class="num">${used}</td><td class="num">${change === "cancelled" || !assumed ? "–" : amount(annual)}</td></tr>`;
+    })
+    .join("");
+  const note = at
+    ? `<small>${escape(at.run.periods[at.p]!.end.slice(0, 4))} ${at.post ? l.w.postProjectNote : l.w.projectedNote}</small>`
+    : "";
+  return `<table class="figures"><thead><tr><th>${l.w.lineOfCredit}</th><th>${l.w.limit}</th><th class="num">${l.w.rate}</th><th class="num">${l.w.averageUsage}${note}</th><th class="num">${l.w.interestAYear}${note}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // A loan year by year from its start, as the app's "By year" view shows it.

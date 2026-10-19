@@ -1,10 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "@finance/db";
-import { deleteAnalysis, getAnalysis, type Context } from "@finance/domain";
+import {
+  deleteAnalysis,
+  getAnalysis,
+  updateAnalysis,
+  type Context,
+} from "@finance/domain";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { analysisDocumentData, dataHash } from "./data";
 import { northwind } from "./fixture";
-import { merge } from "./html";
+import { merge, renderDocument } from "./html";
 import { browserPath, closeBrowser } from "./pdf";
 import {
   deleteDocument,
@@ -14,7 +19,7 @@ import {
   previewDocument,
   setBranding,
 } from "./service";
-import { BUILT_IN_TEMPLATES } from "./templates";
+import { BUILT_IN_TEMPLATES, templateOf } from "./templates";
 
 let db: Db;
 let ctx: Context;
@@ -100,6 +105,78 @@ describe("documents", () => {
       "deal-summary",
       "debt-summary",
     ]);
+  });
+
+  it("list lines of credit with their usage, and the deal's changes to them", async () => {
+    const html = async (template: string, scenarioId: string | null) =>
+      (await previewDocument(db, ctx, { analysisId, scenarioId, template }))
+        .html;
+    // In force, drawn 60% of a limit that's 2,500,000 half the year: 7.2%
+    // on 1,350,000 in the first projected year.
+    const debt = await html("debt-summary", null);
+    for (const words of [
+      "<th>Line of credit</th>",
+      "Operating line<small>CAD</small>",
+      "2,000,000 (2,500,000 from October to March)",
+      "7.2%",
+      "1,350,000<small>60% of the limit</small>",
+      '<td class="num">97,200</td>',
+      "2025 projected",
+    ])
+      expect(debt).toContain(words);
+
+    // The deal raises the line by 500,000: the debt reads it after closing,
+    // and the sources and uses say so.
+    const deal = await html("deal-summary", dealId);
+    expect(deal).toContain(
+      "<li>Operating line: limit raised from 2,000,000 (2,500,000 from October to March) to 2,500,000 (3,000,000 from October to March).</li>",
+    );
+    for (const words of [
+      "Operating line<small>CAD · changed at closing</small>",
+      "1,650,000<small>60% of the limit</small>",
+      '<td class="num">118,800</td>',
+      "2024 post-project",
+    ])
+      expect(deal).toContain(words);
+
+    // With no usage assumed, interest counts as zero, and the document says
+    // so.
+    const data = await analysisDocumentData(db, ctx, analysisId, dealId);
+    const [line] = data.creditLines.inForce;
+    expect(data.creditLines.usage).toEqual({ [line!.id]: { share: "0.6" } });
+    expect(data.creditLines.proposed).toMatchObject([
+      { id: line!.id, limit: { value: "2500000" } },
+    ]);
+    await updateAnalysis(db, ctx, analysisId, { lineUsage: {} });
+    expect(await html("debt-summary", null)).toContain(
+      '<span class="fail">Not assumed</span></td><td class="num">–</td>',
+    );
+    await updateAnalysis(db, ctx, analysisId, {
+      lineUsage: { [line!.id]: { share: "60%" } },
+    });
+  });
+
+  it("word lines of credit in French", async () => {
+    const data = await analysisDocumentData(db, ctx, analysisId, dealId);
+    const { html } = renderDocument(
+      { ...templateOf("deal-summary")!, language: "fr" },
+      data,
+    );
+    const nbsp = "\u00a0";
+    const amount = (text: string) => text.replaceAll(" ", nbsp);
+    for (const words of [
+      "<th>Marge de crédit</th><th>Autorisation</th>",
+      "Utilisation moyenne",
+      "Intérêts annuels",
+      "2024 après projet",
+      "CAD · modifiée à la clôture",
+      `${amount("2 500 000")} (${amount("3 000 000")} d'octobre à mars)`,
+      `${amount("1 650 000")}<small>60${nbsp}% de l'autorisation</small>`,
+      `<li>Operating line : autorisation portée de ${amount("2 000 000")} (${amount("2 500 000")} d'octobre à mars) à ${amount("2 500 000")} (${amount("3 000 000")} d'octobre à mars).</li>`,
+    ])
+      expect(html).toContain(words);
+    for (const words of ["Line of credit", "of the limit", "raised from"])
+      expect(html).not.toContain(words);
   });
 
   it("brand documents with the organization's colour, logo and notice", async () => {

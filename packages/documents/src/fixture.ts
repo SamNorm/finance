@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import { schema } from "@finance/db";
 import { createTestDb } from "@finance/db/testing";
 import {
+  addCreditLine,
   addPeriod,
   addScenario,
   createAnalysis,
   createEntity,
   createFinancialModel,
   createScoringModel,
+  getCreditLines,
   parseItemTable,
   publishFinancialModelVersion,
   publishVersion,
@@ -20,6 +22,7 @@ import {
   setFinancialModelCharts,
   setFinancingItems,
   setValues,
+  updateAnalysis,
   type Context,
 } from "@finance/domain";
 import { demoCompanies } from "@finance/domain/demo/companies";
@@ -29,8 +32,10 @@ import {
   demoScenarios,
 } from "@finance/domain/demo/model";
 
-// For tests: Northwind on the demo model, with its covenants and term
-// loans, an analysis, and the equipment deal proposing its own covenants.
+// For tests: Northwind on the demo model, with its covenants, term loans and
+// seasonal operating line, an analysis drawing the line 60% on average, and
+// the equipment deal proposing its own covenants and raising the line by
+// $500,000.
 export async function northwind() {
   const db = await createTestDb();
   const ctx: Context = { organizationId: randomUUID() };
@@ -78,6 +83,8 @@ export async function northwind() {
       years: l.months / 12,
     })),
   });
+  for (const line of northwind.creditLines)
+    await addCreditLine(db, ctx, entity.id, line);
   await setCovenants(db, ctx, entity.id, DEMO_COVENANTS);
   const model = await createFinancialModel(db, ctx, {
     name: DEMO_MODEL.name,
@@ -94,8 +101,14 @@ export async function northwind() {
       projectionYears: 2,
     })
   ).id;
+  const [line] = await getCreditLines(db, ctx, entity.id);
+  await updateAnalysis(db, ctx, analysisId, {
+    lineUsage: { [line!.id]: { share: "60%" } },
+  });
   const deal = demoScenarios(
     northwind.periods.at(-1)!.values.SHAREHOLDER_LOANS ?? "0",
+    "0",
+    line,
   ).find((s) => s.project)!;
   const dealId = (await addScenario(db, ctx, analysisId, deal)).id;
   return {
