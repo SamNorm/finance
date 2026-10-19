@@ -320,6 +320,14 @@ describe("MCP server", () => {
       preview_borrowing_base_paste: "reads",
       import_borrowing_base_paste: "changes",
       remove_borrowing_base_month: "changes",
+      run_analysis_borrowing_bases: "reads",
+      set_analysis_borrowing_base: "changes",
+      set_scenario_borrowing_base: "changes",
+      set_projected_borrowing_base_values: "changes",
+      preview_projected_borrowing_base_paste: "reads",
+      import_projected_borrowing_base_paste: "changes",
+      fill_line_usage: "changes",
+      fill_seasonal_assumption: "changes",
     });
   });
 
@@ -2515,6 +2523,456 @@ describe("MCP server", () => {
       error:
         "Pass one of builtIn, templateId or fromLineId: describe_borrowing_base_lines lists the built-ins and templates.",
     });
+  });
+
+  it("projects a margined line's borrowing base in an analysis, and a deal's terms", async () => {
+    const call = await connect();
+    const { value: borrower } = await call("create_borrower", {
+      name: "Maple Distribution",
+    });
+    await call("add_period", {
+      borrowerId: borrower.id,
+      periodEnd: "2025-12-31",
+      quality: "audited",
+    });
+    const { value: models } = await call("list_financial_models", {
+      search: "debt service",
+    });
+    const { value: analysis } = await call("create_analysis", {
+      borrowerId: borrower.id,
+      financialModelId: models[0].id,
+      name: "Renewal 2026",
+      projectionYears: 1,
+    });
+    const { value: added } = await call("add_line_of_credit", {
+      borrowerId: borrower.id,
+      name: "Operating line",
+      limit: "3,000,000",
+      rate: "7%",
+    });
+    const line = added.line.id;
+    // Receivables projected a year on, or from the last month, grown.
+    await call("set_borrowing_base_definition", {
+      lineId: line,
+      definition: {
+        lines: [
+          {
+            kind: "collateral",
+            code: "AR",
+            label: "Receivables",
+            collateral: "receivables",
+            rate: "75%",
+            projection: "IFERROR(PREV(AR, 12), PREV(AR)) * (1 + GROWTH)",
+          },
+          {
+            kind: "collateral",
+            code: "INV",
+            label: "Inventory",
+            collateral: "inventory",
+            rate: "50%",
+            cap: "1,000,000",
+          },
+          { kind: "prior_claim", code: "PRIORITY", label: "Source deductions" },
+          { kind: "driver", code: "SALES", label: "Sales" },
+          { kind: "assumption", code: "GROWTH", label: "Growth", value: "0%" },
+          {
+            kind: "assumption",
+            code: "SALES_PROFILE",
+            label: "Sales profile",
+            value: "100%",
+          },
+        ],
+      },
+    });
+    const month = (
+      AR: string,
+      INV: string,
+      PRIORITY: string,
+      BB_OUTSTANDING: string,
+      SALES: string,
+    ) => ({ AR, INV, PRIORITY, BB_OUTSTANDING, SALES });
+    await call("set_borrowing_base_values", {
+      lineId: line,
+      months: {
+        "2025-10": month(
+          "1,600,000",
+          "1,800,000",
+          "200,000",
+          "1,500,000",
+          "1,000,000",
+        ),
+        "2025-11": month(
+          "2,000,000",
+          "2,400,000",
+          "250,000",
+          "2,200,000",
+          "1,300,000",
+        ),
+        "2025-12": month(
+          "1,800,000",
+          "2,000,000",
+          "200,000",
+          "2,000,000",
+          "1,100,000",
+        ),
+      },
+    });
+
+    const { value: detail } = await call("get_analysis", {
+      analysisId: analysis.id,
+    });
+    expect(detail.borrowingBases).toEqual([
+      {
+        lineId: line,
+        line: "Operating line",
+        source: "assumptions",
+        months: 12,
+        assumptions: [
+          { code: "GROWTH", label: "Growth", definition: { value: "0.0%" } },
+          {
+            code: "SALES_PROFILE",
+            label: "Sales profile",
+            definition: { value: "100.0%" },
+          },
+        ],
+      },
+    ]);
+
+    // From assumptions: the history, then twelve months ahead.
+    const run = async (args: Record<string, unknown> = {}) =>
+      (
+        await call("run_analysis_borrowing_bases", {
+          analysisId: analysis.id,
+          ...args,
+        })
+      ).value;
+    let projected = await run();
+    let [ahead] = projected.lines;
+    expect(projected).toMatchObject({
+      analysis: "Renewal 2026",
+      borrower: "Maple Distribution",
+      scenario: "Base case",
+    });
+    expect(ahead.projection).toEqual({
+      source: "the definition's projection formulas and assumptions",
+      months: 12,
+      from: "2026-01",
+      to: "2026-12",
+    });
+    expect(ahead.months).toHaveLength(15);
+    expect(ahead.months[2]).toEqual({ month: "2025-12", quality: "reported" });
+    expect(ahead.months[3]).toEqual({
+      month: "2026-01",
+      quality: null,
+      projected: true,
+    });
+    const row = (code: string) =>
+      ahead.rows.find((r: { code: string }) => r.code === code);
+    expect(row("BB_TOTAL").values.slice(0, 4)).toEqual([
+      "1,900,000",
+      "2,250,000",
+      "2,150,000",
+      "2,150,000",
+    ]);
+    // A year on, October is as it was.
+    expect(row("BB_TOTAL").values[12]).toBe("1,900,000");
+    // Projected months are tested.
+    expect(ahead.tests[0].months[3]).toEqual({
+      threshold: "0",
+      actual: "150,000",
+      margin: "150,000",
+      result: "Pass",
+    });
+    expect(ahead.usageCheck).toEqual({
+      projectedBalance: "1,975,000",
+      assumedForInterest: null,
+      flagged: false,
+    });
+    expect(ahead).not.toHaveProperty("dealTermsFrom");
+    expect(ahead).not.toHaveProperty("asIs");
+
+    // Receivables up 10% a month in the base case.
+    const { value: grown } = await call("set_analysis_borrowing_base", {
+      analysisId: analysis.id,
+      lineId: line,
+      assumptions: { growth: "10%" },
+    });
+    expect(grown.assumptions[0]).toEqual({
+      code: "GROWTH",
+      label: "Growth",
+      definition: { value: "0.0%" },
+      analysis: { value: "10.0%" },
+    });
+    expect(grown.projection).toEqual({
+      from: "2026-01",
+      to: "2026-12",
+      lowestSurplus: { value: "0", month: "2026-11" },
+      deficitMonths: [],
+    });
+    // Filled once from the certificates, for the analyst to review.
+    const { value: profile } = await call("fill_seasonal_assumption", {
+      analysisId: analysis.id,
+      lineId: line,
+      assumption: "SALES_PROFILE",
+      from: "SALES",
+    });
+    expect(profile.assumption.analysis).toEqual({
+      byMonth: { October: "88.24%", November: "114.71%", December: "97.06%" },
+    });
+
+    // The client's own projection: entered, then pasted.
+    await call("set_analysis_borrowing_base", {
+      analysisId: analysis.id,
+      lineId: line,
+      source: "client",
+    });
+    const { value: entered } = await call(
+      "set_projected_borrowing_base_values",
+      {
+        analysisId: analysis.id,
+        lineId: line,
+        months: {
+          "2026-01": { AR: "2,400,000", BB_OUTSTANDING: "2,600,000" },
+          "2028-01": { AR: "1" },
+        },
+      },
+    );
+    expect(entered).toEqual({
+      line: "Operating line",
+      figures: 3,
+      months: [
+        {
+          month: "2026-01",
+          projected: true,
+          borrowingBase: "2,600,000",
+          usage: "2,600,000",
+          surplus: "0",
+        },
+        {
+          month: "2028-01",
+          projected: false,
+          borrowingBase: null,
+          usage: null,
+          surplus: null,
+        },
+      ],
+      warnings: [
+        "2028-01 isn't among Operating line's projected months (2026-01 to 2026-12), so it changes nothing.",
+      ],
+    });
+    await call("set_projected_borrowing_base_values", {
+      analysisId: analysis.id,
+      lineId: line,
+      months: { "2028-01": { AR: null } },
+    });
+    const text = [
+      "\tFeb-26\tMar-26",
+      "Receivables\t2,300,000\t2,200,000",
+      "Line outstanding\t2,500,000\t2,400,000",
+    ].join("\n");
+    const { value: preview } = await call(
+      "preview_projected_borrowing_base_paste",
+      { analysisId: analysis.id, lineId: line, text },
+    );
+    expect(preview).toMatchObject({
+      canImport: true,
+      figures: 4,
+      matchedRows: [{ code: "AR" }, { code: "BB_OUTSTANDING" }],
+      columns: [
+        { month: "2026-02", projected: true, alreadyEntered: false },
+        { month: "2026-03", projected: true, alreadyEntered: false },
+      ],
+    });
+    expect(preview).not.toHaveProperty("warning");
+    const { value: imported } = await call(
+      "import_projected_borrowing_base_paste",
+      {
+        analysisId: analysis.id,
+        lineId: line,
+        text,
+        confirmation: preview.confirmation,
+      },
+    );
+    expect(imported).toMatchObject({
+      figures: 4,
+      months: [
+        { month: "2026-02", borrowingBase: "2,525,000", surplus: "25,000" },
+        { month: "2026-03", borrowingBase: "2,450,000", surplus: "50,000" },
+      ],
+      warnings: [],
+    });
+    [ahead] = (await run()).lines;
+    expect(ahead.projection.source).toBe(
+      "the client's projected figures; lines it didn't project from their projection formulas",
+    );
+    expect(ahead.estimated).toContain("INV");
+
+    // A deal raising the limit and the receivables' advance rate, from the
+    // first projected month with no project.
+    const { value: deal } = await call("add_scenario", {
+      analysisId: analysis.id,
+      name: "Deal",
+    });
+    const { value: proposed } = await call("set_proposed_line", {
+      scenarioId: deal.id,
+      lineId: line,
+      limit: "3,500,000",
+      terms: { ar: { rate: "80%" } },
+    });
+    expect(proposed.line).toMatchObject({
+      change: "changed",
+      inForce: { limit: "3,000,000" },
+      borrowingBaseTerms: [
+        {
+          code: "AR",
+          label: "Receivables",
+          advanceRate: "80%",
+          inForce: { advanceRate: "75%" },
+        },
+      ],
+    });
+    expect(
+      (
+        await call("set_proposed_line", {
+          scenarioId: deal.id,
+          lineId: line,
+          terms: { NOPE: { rate: "80%" } },
+        })
+      ).error,
+    ).toBe("Operating line: its borrowing base has no line NOPE.");
+    expect(
+      (
+        await call("set_proposed_line", {
+          scenarioId: deal.id,
+          lineId: line,
+          borrowingBase: { lines: [] },
+        })
+      ).error,
+    ).toMatch(/^Operating line is in force: it keeps its own borrowing base/);
+    // A new margined line beside it keeps the line's deal terms.
+    const { value: equipment } = await call("set_proposed_line", {
+      scenarioId: deal.id,
+      name: "Equipment line",
+      limit: "500,000",
+      rate: "8%",
+      borrowingBase: {
+        lines: [
+          {
+            kind: "collateral",
+            code: "EQ",
+            label: "Equipment receivables",
+            rate: "50%",
+          },
+        ],
+      },
+    });
+    expect(equipment.line).toMatchObject({
+      change: "new line",
+      borrowingBase: { collateral: [{ code: "EQ", advanceRate: "50%" }] },
+    });
+    expect(equipment.proposedLinesOfCredit[0]).toMatchObject({
+      id: line,
+      borrowingBaseTerms: [{ code: "AR", advanceRate: "80%" }],
+    });
+
+    let underDeal = await run({
+      scenarioId: deal.id,
+      lines: ["BB_TOTAL", "BB_LIMIT"],
+    });
+    expect(underDeal.scenario).toBe("Deal");
+    [ahead] = underDeal.lines;
+    expect(ahead.dealTermsFrom).toBe("2026-01");
+    expect(ahead.months[3]).toEqual({
+      month: "2026-01",
+      quality: null,
+      projected: true,
+      dealTerms: true,
+    });
+    expect(ahead.rows).toEqual([
+      expect.objectContaining({ code: "BB_TOTAL" }),
+      expect.objectContaining({ code: "BB_LIMIT" }),
+    ]);
+    expect(row("BB_LIMIT").values.slice(2, 4)).toEqual([
+      "3,000,000",
+      "3,500,000",
+    ]);
+    // 2,400,000 at 80%, inventory at its cap, less prior claims.
+    expect(row("BB_TOTAL").values[3]).toBe("2,720,000");
+    expect(
+      ahead.asIs.rows.find((r: { code: string }) => r.code === "BB_TOTAL")
+        .values[3],
+    ).toBe("2,600,000");
+    expect(underDeal.lines[1]).toMatchObject({
+      line: "Equipment line",
+      newLine:
+        "Proposed by the scenario: projected from its definition and assumptions alone, with no history.",
+    });
+
+    // The scenario's own changes: a larger prior claim in January.
+    const { value: stressed } = await call("set_scenario_borrowing_base", {
+      scenarioId: deal.id,
+      lineId: line,
+      assumptions: { GROWTH: "-15%" },
+      figures: { "2026-01": { priority: "400,000" } },
+    });
+    expect(stressed).toMatchObject({
+      scenario: "Deal",
+      line: "Operating line",
+      changes: {
+        lineId: line,
+        assumptions: [{ code: "GROWTH", value: "-15.0%" }],
+        figures: { "2026-01": { PRIORITY: "400,000" } },
+      },
+      warnings: [],
+    });
+    underDeal = await run({ scenarioId: deal.id, lines: ["BB_TOTAL"] });
+    expect(underDeal.lines[0].rows[0].values[3]).toBe("2,520,000");
+    const { value: withDeal } = await call("get_analysis", {
+      analysisId: analysis.id,
+    });
+    expect(withDeal.scenarios[0].borrowingBaseChanges).toEqual([
+      stressed.changes,
+    ]);
+    expect(
+      withDeal.borrowingBases.map((b: { line: string }) => b.line),
+    ).toEqual(["Operating line", "Equipment line"]);
+
+    // Usage for interest filled once from the projection, then the
+    // scenario's from the certificates a year earlier.
+    const { value: filled } = await call("fill_line_usage", {
+      analysisId: analysis.id,
+      lineId: line,
+      from: "projection",
+    });
+    expect(Object.keys(filled.usage.months)).toHaveLength(12);
+    expect(filled.usage.months["2026-01"]).toBe("2,600,000");
+    const { value: fromCertificates } = await call("fill_line_usage", {
+      scenarioId: deal.id,
+      lineId: line,
+      from: "certificates",
+    });
+    expect(fromCertificates).toMatchObject({
+      scenario: "Deal",
+      usage: {
+        months: {
+          "2026-10": "1,500,000",
+          "2026-11": "2,200,000",
+          "2026-12": "2,000,000",
+        },
+      },
+    });
+    [ahead] = (await run()).lines;
+    expect(ahead.usageCheck).toMatchObject({ flagged: false });
+    expect(ahead.usageCheck.assumedForInterest).toBe(
+      ahead.usageCheck.projectedBalance,
+    );
+
+    const { value: cleared } = await call("set_scenario_borrowing_base", {
+      scenarioId: deal.id,
+      lineId: line,
+      clear: true,
+    });
+    expect(cleared.changes).toBeNull();
   });
 
   it("acts within the caller's organization only", async () => {

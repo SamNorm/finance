@@ -100,6 +100,14 @@ export const limit = z
     'The authorized limit: an amount, "2,000,000". When it changes, {value, seasons, steps}: {"value": "2,000,000", "seasons": [{"months": "10-3", "value": "2,500,000"}]} is 2,500,000 from October to March every year and 2,000,000 otherwise; a step such as {"from": "2026-06", "value": "3,000,000"} changes it from a month on.',
   );
 
+// A borrowing base's term: an advance rate, a cap or a reserve's amount,
+// which can differ by season and step from a month as a limit does.
+export const term = z
+  .union([z.string(), z.number(), z.record(z.string(), z.unknown())])
+  .describe(
+    'A value, "80%" or "1,500,000"; or {"value", "seasons", "steps"} when it changes by season or from a month, as a limit does.',
+  );
+
 export const postsTo = z
   .string()
   .describe(

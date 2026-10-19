@@ -13,6 +13,7 @@ import {
   type OwnedDebtSchedule,
   type OwnedLine,
   type Scenario,
+  type BorrowingBaseDefinition,
 } from "@finance/domain";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
@@ -21,6 +22,10 @@ import { figure } from "../format";
 import { describeProject } from "../loans";
 import { describeCapex } from "./capex";
 import { describeCovenants } from "./covenants";
+import {
+  describeScenarioBorrowingBases,
+  marginedDefinitions,
+} from "../borrowing-bases";
 import { describeScenarioLines } from "./credit-lines";
 import { ADD, CHANGE, invalid, respond } from "../respond";
 
@@ -40,6 +45,11 @@ export function describeScenario(
   lines: readonly ModelLine[],
   debtSchedules?: readonly OwnedDebtSchedule[],
   creditLines: readonly OwnedLine[] = [],
+  // Margined lines' definitions, by the key analyses know them by.
+  definitions: ReadonlyMap<
+    string,
+    { name: string; definition: BorrowingBaseDefinition }
+  > = new Map(),
 ) {
   const byCode = new Map(lines.map((l) => [l.code, l]));
   return {
@@ -67,17 +77,36 @@ export function describeScenario(
     capexPlan: describeCapex(s.capex),
     // The deal's own covenants; null tests the borrower's in force.
     proposedCovenants: s.covenants && describeCovenants(s.covenants),
-    ...describeScenarioLines(s, creditLines),
+    ...describeScenarioLines(s, creditLines, definitions),
+    // Its changes to projected borrowing bases, by line.
+    borrowingBaseChanges: describeScenarioBorrowingBases(
+      s.borrowingBases,
+      (key) => {
+        const own = definitions.get(key);
+        if (own) return own;
+        const proposed = s.lines?.find((l) => l.id === key);
+        return proposed?.borrowingBase
+          ? { name: proposed.name, definition: proposed.borrowingBase }
+          : undefined;
+      },
+    ),
   };
 }
 
 async function described(db: Db, ctx: Context, scenario: Scenario) {
   const { lines, entity } = await getAnalysis(db, ctx, scenario.analysisId);
-  const [debtSchedules, creditLines] = await Promise.all([
+  const [debtSchedules, creditLines, definitions] = await Promise.all([
     getDebtSchedules(db, ctx, entity.id),
     getCreditLines(db, ctx, entity.id),
+    marginedDefinitions(db, ctx, entity.id),
   ]);
-  return describeScenario(scenario, lines, debtSchedules, creditLines);
+  return describeScenario(
+    scenario,
+    lines,
+    debtSchedules,
+    creditLines,
+    definitions,
+  );
 }
 
 export function scenarioTools(server: McpServer, db: Db, ctx: Context) {

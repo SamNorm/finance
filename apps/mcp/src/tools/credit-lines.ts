@@ -20,13 +20,30 @@ import {
   type OwnedLine,
   type ProposedLine,
   type Scenario,
-  type Term,
+  type BorrowingBaseDefinition,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
-import { amount, borrowerId, date, limit, rate, scenarioId } from "../fields";
+import {
+  amount,
+  borrowerId,
+  date,
+  limit,
+  rate,
+  scenarioId,
+  term,
+} from "../fields";
 import { amount as showAmount, rate as showRate } from "../format";
+import {
+  dealTermsAsTyped,
+  definitionAsTyped,
+  definitionInput,
+  describeDealTerms,
+  describeDefinition,
+  marginedDefinitions,
+} from "../borrowing-bases";
+import { limitInWords, termAsTyped, typedPercent } from "../terms";
 import { ADD, CHANGE, invalid, respond } from "../respond";
 
 // A borrower's lines of credit (borrowing-base-plan.md §4): what's real, kept
@@ -34,103 +51,6 @@ import { ADD, CHANGE, invalid, respond } from "../respond";
 // on the usage they assume, a share of the limit with any month's amount
 // drawn instead; a scenario can override that usage and propose the deal's
 // lines, as it proposes covenants.
-
-export const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
-
-// Calendar months in words: a run, across the new year too, as "October to
-// March"; others listed, "January, April and July".
-function monthsInWords(months: readonly number[]): string {
-  const name = (m: number) => MONTHS[m - 1]!;
-  const set = new Set(months);
-  if (set.size === 1) return name(months[0]!);
-  const next = (m: number) => (m % 12) + 1;
-  const start = months.find((m) => !set.has(((m + 10) % 12) + 1));
-  if (start !== undefined) {
-    let end = start;
-    let length = 1;
-    while (set.has(next(end)) && length < set.size) {
-      end = next(end);
-      length++;
-    }
-    if (length === set.size) return `${name(start)} to ${name(end)}`;
-  }
-  const sorted = [...set].sort((a, b) => a - b).map(name);
-  return `${sorted.slice(0, -1).join(", ")} and ${sorted.at(-1)}`;
-}
-
-// "2026-06" → "June 2026".
-const monthInWords = (month: string) =>
-  `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
-
-// A term in words, each value shown by `show`: a limit reads "2,000,000
-// (2,500,000 October to March); from June 2026, 3,000,000", an advance rate
-// "75%; from June 2026, 70%".
-export function termInWords(
-  term: Term,
-  show: (value: string) => string = showAmount,
-): string {
-  const seasons = (list: Term["seasons"]) =>
-    list?.length
-      ? ` (${list.map((s) => `${show(s.value)} ${monthsInWords(s.months)}`).join(", ")})`
-      : "";
-  return [
-    `${show(term.value)}${seasons(term.seasons)}`,
-    ...(term.steps ?? []).map(
-      (s) =>
-        `from ${monthInWords(s.from)}, ${show(s.value)}${seasons(s.seasons)}`,
-    ),
-  ].join("; ");
-}
-
-export const limitInWords = (term: Term) => termInWords(term);
-
-// A term as the tools take it, so it can be sent back with a step or a
-// season changed; each value typed by `show`.
-export function termAsTyped(
-  term: Term,
-  show: (value: string) => string = showAmount,
-) {
-  const seasons = (list: Term["seasons"]) =>
-    list?.length
-      ? {
-          seasons: list.map((s) => ({
-            months: s.months,
-            value: show(s.value),
-          })),
-        }
-      : {};
-  return {
-    value: show(term.value),
-    ...seasons(term.seasons),
-    ...(term.steps?.length
-      ? {
-          steps: term.steps.map((s) => ({
-            from: s.from,
-            value: show(s.value),
-            ...seasons(s.seasons),
-          })),
-        }
-      : {}),
-  };
-}
-
-// A fraction kept by the app, typed back exactly with its percent sign: a
-// share of 100% kept as "1" would otherwise read as 1%.
-export const typedPercent = (fraction: string) =>
-  `${new Dec(fraction).times(100).toFixed()}%`;
 
 // A line's terms: its limit in words, and as the tools take it when it
 // changes by season or step.
@@ -197,14 +117,24 @@ function changesFrom(line: LineTerms, was: LineTerms) {
   };
 }
 
+// Margined lines' definitions, by the key analyses know them by.
+type Definitions = ReadonlyMap<
+  string,
+  { name: string; definition: BorrowingBaseDefinition }
+>;
+
+const hasDealTerms = (line: ProposedLine) =>
+  Object.keys(line.terms ?? {}).length > 0;
+
 function describeProposed(
   lines: readonly ProposedLine[],
   inForce: readonly OwnedLine[],
+  definitions: Definitions,
 ) {
   return lines.map((line) => {
     const was = inForce.find((l) => l.id === line.id);
     const changes = was && !line.closed ? changesFrom(line, was) : {};
-    const changed = Object.keys(changes).length > 0;
+    const changed = Object.keys(changes).length > 0 || hasDealTerms(line);
     return {
       id: line.id,
       ...describeTerms(line),
@@ -216,7 +146,20 @@ function describeProposed(
             ? "changed"
             : "as in force",
       // What it changes, as the line is in force.
-      ...(changed ? { inForce: changes } : {}),
+      ...(Object.keys(changes).length ? { inForce: changes } : {}),
+      // Its borrowing base's terms as the deal changes them.
+      ...(hasDealTerms(line)
+        ? {
+            borrowingBaseTerms: describeDealTerms(
+              line.terms,
+              definitions.get(line.id)?.definition ?? line.borrowingBase,
+            ),
+          }
+        : {}),
+      // A new margined line's borrowing base.
+      ...(line.borrowingBase
+        ? { borrowingBase: describeDefinition(line.borrowingBase) }
+        : {}),
     };
   });
 }
@@ -226,6 +169,7 @@ function describeProposed(
 export function describeScenarioLines(
   s: Scenario,
   inForce: readonly OwnedLine[],
+  definitions: Definitions = new Map(),
 ) {
   const names = new Map(
     [...inForce, ...(s.lines ?? [])].map((l) => [l.id, l.name]),
@@ -239,7 +183,8 @@ export function describeScenarioLines(
       ...describeUsage(usage),
     })),
     // The deal's lines; null keeps the lines in force.
-    proposedLinesOfCredit: s.lines && describeProposed(s.lines, inForce),
+    proposedLinesOfCredit:
+      s.lines && describeProposed(s.lines, inForce, definitions),
     ...(s.lines
       ? {
           proposedLinesApply: s.project
@@ -250,15 +195,25 @@ export function describeScenarioLines(
   };
 }
 
-// A line as a scenario's proposal sends it back: its terms as kept, rates
-// typed exactly.
-const asTyped = (line: LineTerms) => ({
+// A line as a scenario's proposes it, or a line in force it starts from.
+type Proposable = LineTerms &
+  Partial<Pick<ProposedLine, "terms" | "borrowingBase">>;
+
+// A line as a scenario's proposal sends it back: its terms as kept, its
+// borrowing base's too, rates typed exactly.
+const asTyped = (line: Proposable) => ({
   id: line.id,
   name: line.name,
   currency: line.currency,
   limit: line.limit,
   rate: typedPercent(line.rate),
   ...(line.closed ? { closed: true } : {}),
+  ...(line.terms && Object.keys(line.terms).length
+    ? { terms: dealTermsAsTyped(line.terms) }
+    : {}),
+  ...(line.borrowingBase
+    ? { borrowingBase: definitionAsTyped(line.borrowingBase) }
+    : {}),
 });
 
 // A usage as kept, typed back exactly.
@@ -328,19 +283,23 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
   };
 
   // The lines in force where a scenario's analysis is: the borrower's, or a
-  // consolidated client's members'.
+  // consolidated client's members'; and the margined ones' definitions.
   const inForceFor = async (scenario: Scenario) => {
     const { entity } = await getAnalysis(db, ctx, scenario.analysisId);
-    return getCreditLines(db, ctx, entity.id);
+    const [lines, definitions] = await Promise.all([
+      getCreditLines(db, ctx, entity.id),
+      marginedDefinitions(db, ctx, entity.id),
+    ]);
+    return { lines, definitions };
   };
 
   // A scenario's lines after an edit, and the line it was about.
   const proposalAfter = (
     scenario: Scenario,
-    inForce: readonly OwnedLine[],
+    { lines: inForce, definitions }: Awaited<ReturnType<typeof inForceFor>>,
     id?: string,
   ) => {
-    const described = describeScenarioLines(scenario, inForce);
+    const described = describeScenarioLines(scenario, inForce, definitions);
     const line =
       id && described.proposedLinesOfCredit?.find((l) => l.id === id);
     return { scenario: scenario.name, ...(line ? { line } : {}), ...described };
@@ -541,6 +500,7 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
         "Proposes a line of credit for a scenario's deal: a line in force (its lineId) with a new limit, rate, name or currency, or closed at the deal (closed: true); or, without lineId, a new line, which needs its name, limit and rate. Fields not given keep the line's terms.",
         "With a project, proposed lines apply post-project from closing (PROFORMA_LINE_INTEREST is the interest they add); without one, as in a stress, from the first projected month.",
         "A scenario with no proposal starts from a copy of the lines in force; lines in force it doesn't change stay as they are. A new line counts no interest until set_line_usage gives it a usage in the scenario. Returns the line with its id.",
+        "For a margined line, terms changes its borrowing base's advance rates, caps and reserves in the deal, by the borrowing base's line codes; they apply when the proposed lines do, and run_analysis_borrowing_bases shows the line with them and as is. A new line can be margined with borrowingBase, a whole definition; a line in force keeps its own.",
       ].join(" "),
       inputSchema: z.object({
         scenarioId,
@@ -560,17 +520,42 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
           .describe(
             "true closes a line in force at the deal, e.g. one the deal refinances; false keeps it open.",
           ),
+        terms: z
+          .record(
+            z.string(),
+            z
+              .object({
+                rate: term.optional().describe('An advance rate, "80%".'),
+                cap: term
+                  .nullable()
+                  .optional()
+                  .describe("A cap; null removes the cap in the deal."),
+                amount: term.optional().describe("A reserve's set amount."),
+              })
+              .nullable(),
+          )
+          .optional()
+          .describe(
+            'The deal\'s borrowing base terms, by the borrowing base\'s line code (from get_borrowing_base): {"AR": {"rate": "80%"}, "INVENTORY": {"cap": "1,500,000"}}. A code given replaces that code\'s terms in the proposal, others stay; null drops a code\'s changes. Collateral takes rate and cap, a group cap, a reserve with a set amount its amount.',
+          ),
+        borrowingBase: definitionInput
+          .nullable()
+          .optional()
+          .describe(
+            "A new line's borrowing base, a whole definition as set_borrowing_base_definition takes it; null leaves the new line unmargined.",
+          ),
       }),
       annotations: CHANGE,
     },
-    ({ scenarioId, lineId, ...given }) =>
+    ({ scenarioId, lineId, terms, borrowingBase, ...given }) =>
       respond(async () => {
         const scenario = await getScenario(db, ctx, scenarioId);
-        const inForce = await inForceFor(scenario);
-        const proposal: LineTerms[] =
+        const inForceNow = await inForceFor(scenario);
+        const inForce = inForceNow.lines;
+        const proposal: Proposable[] =
           scenario.lines ?? inForce.filter((l) => !l.closedOn);
         const was = inForce.find((l) => l.id === lineId);
-        const current =
+        const current: Proposable | undefined =
           lineId === undefined
             ? undefined
             : (proposal.find((l) => l.id === lineId) ?? was);
@@ -586,8 +571,30 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
           throw invalid(
             "Only a line in force can be closed at the deal; remove_proposed_line drops a new one.",
           );
-        if (current && Object.values(given).every((v) => v === undefined))
+        if (
+          current &&
+          terms === undefined &&
+          borrowingBase === undefined &&
+          Object.values(given).every((v) => v === undefined)
+        )
           throw invalid("Give at least one field to change.");
+        if (was && borrowingBase !== undefined)
+          throw invalid(
+            `${was.name} is in force: it keeps its own borrowing base. Change its terms in the deal with terms, or its definition with set_borrowing_base_definition.`,
+          );
+        // Codes given replace theirs; null drops a code's changes.
+        const dealTerms: Record<string, unknown> = dealTermsAsTyped(
+          current?.terms ?? {},
+        );
+        for (const [code, t] of Object.entries(terms ?? {})) {
+          const key = code.trim().toUpperCase();
+          if (t === null) delete dealTerms[key];
+          else dealTerms[key] = t;
+        }
+        const definition =
+          borrowingBase === undefined
+            ? current?.borrowingBase && definitionAsTyped(current.borrowingBase)
+            : borrowingBase;
         const line = {
           id: lineId,
           name: given.name ?? current?.name,
@@ -595,6 +602,8 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
           limit: given.limit ?? current?.limit,
           rate: given.rate ?? (current && typedPercent(current.rate)),
           closed: given.closed ?? current?.closed,
+          ...(Object.keys(dealTerms).length ? { terms: dealTerms } : {}),
+          ...(definition ? { borrowingBase: definition } : {}),
         };
         const listed = proposal.some((l) => l.id === lineId);
         const updated = await updateScenario(db, ctx, scenarioId, {
@@ -605,7 +614,7 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
         const id =
           lineId ??
           updated.lines!.find((l) => !proposal.some((p) => p.id === l.id))!.id;
-        return proposalAfter(updated, inForce, id);
+        return proposalAfter(updated, inForceNow, id);
       }),
   );
 
@@ -632,7 +641,8 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
               ? "The scenario doesn't propose that line."
               : "The scenario proposes no lines of credit: it uses the lines in force.",
           );
-        const inForce = await inForceFor(scenario);
+        const inForceNow = await inForceFor(scenario);
+        const inForce = inForceNow.lines;
         const rest = scenario.lines.filter((l) => l.id !== lineId);
         // Copies of the lines in force change nothing, so they go too.
         const changesNothing = rest.every((l) => {
@@ -641,13 +651,14 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
             was &&
             !was.closedOn &&
             !l.closed &&
+            !hasDealTerms(l) &&
             !Object.keys(changesFrom(l, was)).length
           );
         });
         const updated = await updateScenario(db, ctx, scenarioId, {
           lines: changesNothing ? null : rest.map(asTyped),
         });
-        return proposalAfter(updated, inForce);
+        return proposalAfter(updated, inForceNow);
       }),
   );
 

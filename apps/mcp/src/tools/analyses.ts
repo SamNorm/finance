@@ -27,6 +27,10 @@ import { analysisId, borrowerId } from "../fields";
 import { figure } from "../format";
 import { imbalanceWarning } from "../loans";
 import { ADD, CHANGE, invalid, matches, READ, respond } from "../respond";
+import {
+  describeProjectionSettings,
+  marginedDefinitions,
+} from "../borrowing-bases";
 import { describeCapexYears } from "./capex";
 import { describeCovenantResults } from "./covenants";
 import { describeLinesInAnalysis } from "./credit-lines";
@@ -138,7 +142,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get an analysis",
       description:
-        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit over the analysis's, and the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal). The base case is the borrower as is and isn't a scenario.",
+        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, how it projects each margined line's borrowing base (its source, months and assumption values), and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit over the analysis's, the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal, with any borrowing base terms it changes), and its changes to projected borrowing bases. The base case is the borrower as is and isn't a scenario.",
       inputSchema: z.object({ analysisId }),
       annotations: READ,
     },
@@ -146,10 +150,20 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
-        const [debtSchedules, creditLines] = await Promise.all([
+        const [debtSchedules, creditLines, definitions] = await Promise.all([
           getDebtSchedules(db, ctx, detail.entity.id),
           getCreditLines(db, ctx, detail.entity.id),
+          marginedDefinitions(db, ctx, detail.entity.id),
         ]);
+        // New margined lines its scenarios propose project too.
+        const projected = new Map(definitions);
+        for (const s of detail.scenarios)
+          for (const l of s.lines ?? [])
+            if (l.borrowingBase && !projected.has(l.id))
+              projected.set(l.id, {
+                name: l.name,
+                definition: l.borrowingBase,
+              });
         const warnings = await spreadWarnings(
           db,
           ctx,
@@ -193,8 +207,18 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
             creditLines,
             analysis.lineUsage,
           ),
+          // How the analysis projects each margined line's borrowing base
+          // (run_analysis_borrowing_bases runs them).
+          borrowingBases: [...projected].map(([key, { name, definition }]) =>
+            describeProjectionSettings(
+              key,
+              name,
+              definition,
+              analysis.borrowingBases[key],
+            ),
+          ),
           scenarios: detail.scenarios.map((s) =>
-            describeScenario(s, lines, debtSchedules, creditLines),
+            describeScenario(s, lines, debtSchedules, creditLines, definitions),
           ),
         };
       }),

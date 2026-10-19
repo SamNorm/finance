@@ -2,7 +2,6 @@ import type { Db } from "@finance/db";
 import {
   BUILT_IN_BORROWING_BASES,
   COLLATERAL_CODES,
-  COLLATERAL_TYPES,
   DEFAULT_BUCKETS,
   DEFAULT_INELIGIBLE_FROM,
   LINE_KINDS,
@@ -13,7 +12,6 @@ import {
   getCreditLine,
   getCreditLines,
   importBorrowingBasePaste,
-  isPlain,
   listBorrowingBaseTemplates,
   listBorrowingBases,
   parseBorrowingBasePaste,
@@ -27,33 +25,32 @@ import {
   setBorrowingBaseTerm,
   setBorrowingBaseValues,
   startBorrowingBase,
-  type BorrowingBaseDefinition,
-  type BorrowingBaseFormat,
-  type BorrowingBaseIssues,
   type BorrowingBaseLineKind,
   type BorrowingBaseMonthInput,
-  type BorrowingBaseSummary,
   type Context,
-  type CycleFigure,
   type CycleSummary,
   type Issue,
-  type LineOf,
   type Term,
-  type TestPeriod,
-  type WaterfallRow,
 } from "@finance/domain";
 import { FUNCTIONS } from "@finance/engine";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import { borrowerId } from "../fields";
-import {
-  amount as showAmount,
-  exchangeRate,
-  figure,
-  rate as showRate,
-} from "../format";
+import { amount as showAmount, figure, rate as showRate } from "../format";
 import { CHANGE, invalid, matches, READ, respond } from "../respond";
-import { MONTHS, termAsTyped, termInWords, typedPercent } from "./credit-lines";
+import {
+  definitionAsTyped,
+  definitionInput,
+  describeDefinition,
+  describeEntered,
+  describeLatest,
+  describeRun,
+  figureIn,
+  issueText,
+  issuesOf,
+  shown,
+} from "../borrowing-bases";
+import { MONTHS, termInWords } from "../terms";
 import { fingerprint } from "./spreads";
 
 // A margined line's borrowing base (borrowing-base-plan.md §5–§7): its
@@ -71,278 +68,6 @@ const month = z.string().describe('The month, as YYYY-MM: "2025-11".');
 // A consolidated client reads its members' lines as "member/line"; the
 // borrowing base is the member's line's own.
 const own = (id: string) => id.slice(id.lastIndexOf("/") + 1);
-
-const issueText = (issue: Issue) => `${issue.severity}: ${issue.message}`;
-
-// A figure as the app shows it; exchange rates to their last decimal.
-const shown = (
-  code: string,
-  format: BorrowingBaseFormat,
-  value: string | null,
-) => (code.startsWith("FX.") ? exchangeRate(value) : figure(value, format));
-
-// A threshold or a term's values as a figure of `format` shows them.
-const showAs = (format: BorrowingBaseFormat) => (value: string) =>
-  figure(value, format) ?? value;
-
-// The history's issues, then each month's in order; only `months`' when
-// given.
-function issuesOf(issues: BorrowingBaseIssues, months?: ReadonlySet<string>) {
-  return [
-    ...issues.general.map(issueText),
-    ...Object.entries(issues.byMonth)
-      .filter(([m]) => !months || months.has(m))
-      .sort(([a], [b]) => a.localeCompare(b))
-      .flatMap(([, list]) => list.map(issueText)),
-  ];
-}
-
-// A margined line's latest month, for monitoring.
-export function describeLatest(summary: BorrowingBaseSummary) {
-  const { latest } = summary;
-  return {
-    months: summary.months,
-    latest: latest && {
-      month: latest.month,
-      quality: latest.quality,
-      borrowingBase: figure(latest.total, "amount"),
-      limit: figure(latest.limit, "amount"),
-      usage: figure(latest.usage, "amount"),
-      // Negative when short.
-      surplus: figure(latest.surplus, "amount"),
-      utilization: figure(latest.utilization, "percent"),
-    },
-    deficitMonthsLast12: summary.deficitMonths,
-    overdue: summary.overdue,
-  };
-}
-
-const BASED_ON = {
-  builtin: "built-in",
-  template: "the organization's template",
-  line: "another line's",
-} as const;
-
-// A definition as the analyst reads it: lines by kind, terms in words.
-function describeDefinition(definition: BorrowingBaseDefinition) {
-  const of = <K extends BorrowingBaseLineKind>(kind: K) =>
-    definition.lines.filter((l): l is LineOf<K> => l.kind === kind);
-  const base = (l: { code: string; label: string; description?: string }) => ({
-    code: l.code,
-    label: l.label,
-    ...(l.description ? { description: l.description } : {}),
-  });
-  const formulas = (l: { formula?: string; projection?: string }) => ({
-    ...(l.formula ? { formula: l.formula } : {}),
-    ...(l.projection ? { projection: l.projection } : {}),
-  });
-  const currency = (l: { currency?: string }) =>
-    l.currency ? { currency: l.currency } : {};
-  const reconciles = (l: { reconcilesWith?: string }) =>
-    l.reconcilesWith ? { reconcilesWith: l.reconcilesWith } : {};
-  const listed = <T>(key: string, list: T[]) =>
-    list.length ? { [key]: list } : {};
-  const formats = new Map(
-    definition.lines.map((l) => [l.code, "format" in l ? l.format : "amount"]),
-  );
-  const totals = new Map<string, BorrowingBaseFormat>(
-    TOTALS.map((t) => [t.code, t.format]),
-  );
-  const formatOf = (code: string): BorrowingBaseFormat =>
-    totals.get(code) ??
-    (code.endsWith(".RATE") ? "percent" : (formats.get(code) ?? "amount"));
-  return {
-    ...(definition.basedOn
-      ? {
-          basedOn: `${definition.basedOn.name} (${BASED_ON[definition.basedOn.kind]})`,
-        }
-      : {}),
-    ...listed(
-      "collateral",
-      of("collateral").map((x) => ({
-        ...base(x),
-        type: COLLATERAL_TYPES[x.collateral],
-        ...(x.group ? { group: x.group } : {}),
-        ...currency(x),
-        advanceRate: termInWords(x.rate, showRate),
-        ...(x.cap ? { cap: termInWords(x.cap) } : {}),
-        ...(x.aging
-          ? {
-              aging: {
-                buckets: x.aging.buckets,
-                ineligible: `${x.aging.buckets[x.aging.ineligibleFrom]} and over`,
-              },
-            }
-          : {}),
-        ...reconciles(x),
-        ...formulas(x),
-      })),
-    ),
-    ...listed(
-      "groups",
-      of("group").map((g) => ({
-        ...base(g),
-        type: COLLATERAL_TYPES[g.collateral],
-        ...(g.cap ? { cap: termInWords(g.cap) } : {}),
-        lines: of("collateral")
-          .filter((x) => x.group === g.code)
-          .map((x) => x.code),
-      })),
-    ),
-    ...listed(
-      "ineligibles",
-      of("ineligible").map((i) => ({ ...base(i), of: i.of, ...formulas(i) })),
-    ),
-    ...listed(
-      "priorClaims",
-      of("prior_claim").map((p) => ({
-        ...base(p),
-        ...currency(p),
-        ...formulas(p),
-      })),
-    ),
-    ...listed(
-      "reserves",
-      of("reserve").map((r) => ({
-        ...base(r),
-        ...(r.amount
-          ? { amount: termInWords(r.amount) }
-          : r.formula
-            ? {}
-            : { amount: "entered each month" }),
-        ...formulas(r),
-      })),
-    ),
-    ...listed(
-      "usage",
-      of("usage").map((u) => ({
-        ...base(u),
-        ...currency(u),
-        ...reconciles(u),
-        ...formulas(u),
-      })),
-    ),
-    ...(definition.outstandingReconcilesWith
-      ? { outstandingReconcilesWith: definition.outstandingReconcilesWith }
-      : {}),
-    ...(definition.outstandingProjection
-      ? { outstandingProjection: definition.outstandingProjection }
-      : {}),
-    ...listed(
-      "drivers",
-      of("driver").map((d) => ({
-        ...base(d),
-        format: d.format,
-        ...formulas(d),
-      })),
-    ),
-    ...listed(
-      "assumptions",
-      of("assumption").map((a) => ({
-        ...base(a),
-        format: a.format,
-        value: figure(a.value, a.format),
-        ...(a.byMonth
-          ? {
-              byMonth: Object.fromEntries(
-                a.byMonth.flatMap((v, m) =>
-                  v === null ? [] : [[MONTHS[m]!, figure(v, a.format)]],
-                ),
-              ),
-            }
-          : {}),
-      })),
-    ),
-    ...listed(
-      "calculations",
-      of("calculation").map((c) => ({
-        ...base(c),
-        format: c.format,
-        ...formulas(c),
-      })),
-    ),
-    // The definition's own; the margin and overline tests always run.
-    ...listed(
-      "tests",
-      (definition.tests ?? []).map((t) => ({
-        name: t.name,
-        line: t.metric,
-        test: t.test === "min" ? "at least" : "at most",
-        threshold: termInWords(t.threshold, showAs(formatOf(t.metric))),
-      })),
-    ),
-  };
-}
-
-// A term as set_borrowing_base_definition takes it: its value typed, or
-// the value with its seasons and steps.
-const typedTerm = (term: Term, show: (value: string) => string) =>
-  isPlain(term) ? show(term.value) : termAsTyped(term, show);
-
-// A definition as set_borrowing_base_definition takes it, to send back
-// whole with a change: rates and percentages typed with their percent sign.
-function definitionAsTyped(definition: BorrowingBaseDefinition) {
-  const exact = (value: string) => value;
-  return {
-    ...(definition.basedOn ? { basedOn: definition.basedOn } : {}),
-    lines: definition.lines.map((line) => {
-      switch (line.kind) {
-        case "collateral":
-          return {
-            ...line,
-            rate: typedTerm(line.rate, typedPercent),
-            ...(line.cap ? { cap: typedTerm(line.cap, showAmount) } : {}),
-          };
-        case "group":
-          return {
-            ...line,
-            ...(line.cap ? { cap: typedTerm(line.cap, showAmount) } : {}),
-          };
-        case "reserve":
-          return {
-            ...line,
-            ...(line.amount
-              ? { amount: typedTerm(line.amount, showAmount) }
-              : {}),
-          };
-        case "assumption": {
-          const typed = (v: string | null) =>
-            v !== null && line.format === "percent" ? typedPercent(v) : v;
-          return {
-            ...line,
-            value: typed(line.value),
-            ...(line.byMonth ? { byMonth: line.byMonth.map(typed) } : {}),
-          };
-        }
-        default:
-          return line;
-      }
-    }),
-    ...(definition.outstandingReconcilesWith
-      ? { outstandingReconcilesWith: definition.outstandingReconcilesWith }
-      : {}),
-    ...(definition.outstandingProjection
-      ? { outstandingProjection: definition.outstandingProjection }
-      : {}),
-    ...(definition.tests?.length
-      ? {
-          tests: definition.tests.map((t) => ({
-            ...t,
-            threshold: typedTerm(t.threshold, exact),
-          })),
-        }
-      : {}),
-    ...(definition.charts?.length ? { charts: definition.charts } : {}),
-  };
-}
-
-// The codes entered each month, as a certificate lists them.
-const describeEntered = (inputs: readonly WaterfallRow[]) =>
-  inputs.map((r) => ({
-    code: r.code,
-    label: r.label,
-    ...(r.currency ? { currency: r.currency } : {}),
-  }));
 
 // What each kind of line takes in a definition, besides kind, code, label
 // and description.
@@ -465,24 +190,6 @@ function monthRange(
       (!last || months[p]!.month <= last),
   );
 }
-
-// One month's test: the figure against its threshold, the room left before
-// a breach (negative when failed); null when the month isn't tested.
-function describeTestMonth(
-  period: TestPeriod | undefined,
-  show: (value: string | null) => string | null,
-) {
-  if (!period || period.pass === null) return null;
-  return {
-    threshold: show(period.threshold),
-    actual: show(period.value),
-    margin: show(period.margin),
-    result: period.pass ? "Pass" : "Fail",
-  };
-}
-
-const figureIn = (value: CycleFigure | null, format: BorrowingBaseFormat) =>
-  value && { value: figure(value.value, format), month: value.month };
 
 export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
   // A line's borrowing base after it's set up: its definition, the codes
@@ -781,39 +488,6 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
           throw invalid(
             `${detail.line.name} has months from ${run.months[0]!.month} to ${run.months.at(-1)!.month}.`,
           );
-        // Rows with figures: no section headings, nor groups' own rows,
-        // whose figure is their margined amount.
-        const figures = run.rows.filter(
-          (r) =>
-            r.kind !== "section" &&
-            !(r.lineKind === "group" && r.kind === "line"),
-        );
-        const wanted = codes?.map((c) => c.trim().toUpperCase());
-        const unknown = wanted?.filter(
-          (c) => !figures.some((r) => r.code === c),
-        );
-        if (unknown?.length)
-          throw invalid(
-            `Not figures of ${detail.line.name}'s borrowing base: ${unknown.join(", ")}.`,
-          );
-        // A foreign collateral line's detail is in its own currency, until
-        // it's margined.
-        const foreign = new Map(
-          detail.definition.lines.flatMap((l) =>
-            l.kind === "collateral" && l.currency
-              ? [[l.code, l.currency] as const]
-              : [],
-          ),
-        );
-        const currencyOf = (row: WaterfallRow) => {
-          if (row.currency) return row.currency;
-          const [line, suffix] = row.code.split(".");
-          return suffix &&
-            ["INELIGIBLE", "ELIGIBLE", "AGED_OUT"].includes(suffix)
-            ? foreign.get(line!)
-            : undefined;
-        };
-        const formats = new Map(figures.map((r) => [r.code, r.format]));
         const inRange = new Set(shownMonths.map((p) => run.months[p]!.month));
         const testNames = new Map(run.tests.map((t) => [t.id, t.name]));
         const summary = (s: CycleSummary) => ({
@@ -843,43 +517,10 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
             month: run.months[p]!.month,
             quality: run.months[p]!.quality,
           })),
-          // Each row's values follow the months' order.
-          rows: figures
-            .filter((r) =>
-              wanted ? wanted.includes(r.code) : details || r.kind !== "detail",
-            )
-            .map((r) => {
-              const currency = currencyOf(r);
-              return {
-                code: r.code,
-                label: r.label,
-                ...(currency ? { currency } : {}),
-                values: shownMonths.map((p) => {
-                  if (!run.months[p]!.quality) return null;
-                  const cell = run.cells[r.code]?.[p];
-                  return cell?.error
-                    ? `error: ${cell.error.message}`
-                    : shown(r.code, r.format, cell?.value ?? null);
-                }),
-              };
-            }),
-          tests: run.tests.map((t) => {
-            const format = formats.get(t.metric) ?? "amount";
-            const show = (value: string | null) =>
-              shown(t.metric, format, value);
-            return {
-              name: t.name,
-              line: t.metric,
-              test: t.test === "min" ? "at least" : "at most",
-              ...(t.builtIn ? { builtIn: true } : {}),
-              failedMonths: shownMonths
-                .filter((p) => t.months[p]?.pass === false)
-                .map((p) => run.months[p]!.month),
-              // Null where a month isn't tested.
-              months: shownMonths.map((p) =>
-                describeTestMonth(t.months[p], show),
-              ),
-            };
+          ...describeRun(run, detail.definition, shownMonths, {
+            name: detail.line.name,
+            details,
+            codes,
           }),
           issues: issuesOf(results.issues, inRange),
           cycle: {
@@ -967,41 +608,7 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
       ].join(" "),
       inputSchema: z.object({
         lineId,
-        definition: z
-          .object({
-            lines: z
-              .array(z.record(z.string(), z.unknown()))
-              .describe(
-                'In order, e.g. [{"kind": "collateral", "code": "AR", "label": "Receivables", "collateral": "receivables", "rate": "75%"}].',
-              ),
-            tests: z
-              .array(z.record(z.string(), z.unknown()))
-              .optional()
-              .describe(
-                'e.g. [{"name": "Minimum excess availability", "metric": "BB_EXCESS", "test": "min", "threshold": "250,000"}].',
-              ),
-            outstandingReconcilesWith: z
-              .string()
-              .optional()
-              .describe(
-                'The spread item the line\'s balance is part of, e.g. "BANK_INDEBTEDNESS".',
-              ),
-            outstandingProjection: z
-              .string()
-              .optional()
-              .describe("How analyses project the line's balance."),
-            charts: z
-              .array(z.record(z.string(), z.unknown()))
-              .optional()
-              .describe("As get_borrowing_base asTyped gives them."),
-            basedOn: z
-              .record(z.string(), z.unknown())
-              .optional()
-              .describe(
-                "What it was copied from, as get_borrowing_base asTyped gives it; keep it when sending back a definition you changed.",
-              ),
-          })
-          .nullable(),
+        definition: definitionInput.nullable(),
       }),
       annotations: CHANGE,
     },

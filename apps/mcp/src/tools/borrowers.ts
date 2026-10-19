@@ -15,7 +15,7 @@ import * as z from "zod";
 import { borrowerId } from "../fields";
 import { figure } from "../format";
 import { describeDebtSchedule } from "../loans";
-import { describeLatest } from "./borrowing-bases";
+import { describeLatest } from "../borrowing-bases";
 import { describeCovenants } from "./covenants";
 import { describeCreditLines } from "./credit-lines";
 import { describeControls } from "./spreads";
