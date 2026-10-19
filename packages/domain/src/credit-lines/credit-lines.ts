@@ -11,6 +11,7 @@ import {
   type FinancingPeriod,
   type FinancingValue,
 } from "../financing/common";
+import { parseValue } from "../spreads/values";
 import { checkDefinition } from "../borrowing-bases/compile";
 import {
   definitionAsTyped,
@@ -31,9 +32,12 @@ import {
 // interest in analyses: each month, the usage assumed (a share of that
 // month's limit, or an amount drawn) at the line's rate. A scenario can
 // propose the deal's lines: a new limit or rate, a new line, a line closed.
+// A line in another currency than the analysis's is converted at the rate
+// the analysis assumes for it.
 
 export type CreditLine = typeof schema.creditLines.$inferSelect;
 export type LineUsage = schema.LineUsage;
+export type ExchangeRates = schema.ExchangeRates;
 export type ProposedLine = schema.ProposedLine;
 
 // A line as analyses read it: one in force, a consolidated client's
@@ -322,13 +326,48 @@ export function mergeLineUsage(base: LineUsage, over: LineUsage): LineUsage {
   return result;
 }
 
+// Checks and makes canonical exchange rates as typed, by currency code:
+// { USD: "1.37" }. Blank or null rates are dropped.
+export function normalizeExchangeRates(input: unknown): ExchangeRates {
+  if (input === null || input === undefined) return {};
+  if (typeof input !== "object" || Array.isArray(input))
+    throw invalid('Exchange rates are given by currency: { USD: "1.37" }.');
+  const result: ExchangeRates = {};
+  for (const [code, raw] of Object.entries(input as Record<string, unknown>)) {
+    const currency = parseCurrency(code, "Exchange rate");
+    const parsed = parseValue(String(raw ?? ""), "amount");
+    if ("error" in parsed) throw invalid(`${currency} rate: ${parsed.error}`);
+    if (parsed.value === null) continue;
+    if (!new Dec(parsed.value).gt(0))
+      throw invalid(`${currency} rate: give a rate above zero.`);
+    result[currency] = parsed.value;
+  }
+  return result;
+}
+
 // The lines a run reads: those in force, and those the scenario proposes,
-// from the month after `proposedAfter`.
+// from the month after `proposedAfter`; and what converts those in another
+// currency than the run's.
 export interface RunLines {
   inForce: readonly LineTerms[];
   proposed?: readonly ProposedLine[] | null;
   proposedAfter?: number | null;
   usage: LineUsage;
+  // The run's currency; without one, lines count as they are.
+  currency?: string | null;
+  rates?: ExchangeRates;
+}
+
+// The rate converting a line's amounts into the run's currency: none when
+// it's in it, or null when its currency has no rate, so it counts nothing.
+type Conversion = { rate: Amount } | null;
+function conversionOf(
+  line: LineTerms,
+  lines: Pick<RunLines, "currency" | "rates">,
+): Conversion | undefined {
+  if (!lines.currency || line.currency === lines.currency) return undefined;
+  const rate = lines.rates?.[line.currency];
+  return rate === undefined ? null : { rate: new Dec(rate) };
 }
 
 export const LINE_CODES = [
@@ -435,21 +474,38 @@ function windowFigures(
 const interestOf = (cost: Amount, w: Window) => cost.times(w.scale).div(144);
 
 const cell = (): FinancingValue => ({ value: new Dec(0), parts: [] });
-function add(target: FinancingValue, line: LineTerms, amount: Amount) {
-  target.value = target.value!.plus(amount);
+// Adds a line's amount, in its own currency, converted into the run's.
+function add(
+  target: FinancingValue,
+  line: LineTerms,
+  amount: Amount,
+  conversion: Conversion | undefined,
+) {
+  if (conversion === null) return;
+  const value = conversion ? amount.times(conversion.rate) : amount;
+  target.value = target.value!.plus(value);
   if (!amount.isZero())
     target.parts.push({
       id: line.id,
       name: line.name,
-      value: amount.toFixed(),
+      value: value.toFixed(),
+      ...(conversion
+        ? {
+            converted: {
+              currency: line.currency,
+              amount: amount.toFixed(),
+              rate: conversion.rate.toFixed(),
+            },
+          }
+        : {}),
     });
 }
 
 // The lines' built-in inputs in each period of a run: interest, the limit at
-// the period's end and the average drawn, each with a part per line; blank
-// in actual periods, and everywhere when there are no lines. In a
-// post-project run (`closing` given), PROFORMA_LINE_INTEREST is what the
-// proposed lines add to the interest of those in force.
+// the period's end and the average drawn, each with a part per line, in the
+// run's currency; blank in actual periods, and everywhere when there are no
+// lines. In a post-project run (`closing` given), PROFORMA_LINE_INTEREST is
+// what the proposed lines add to the interest of those in force.
 export function creditLineValues(
   lines: RunLines,
   periods: readonly FinancingPeriod[],
@@ -477,12 +533,18 @@ export function creditLineValues(
     const interest = cell();
     const average = cell();
     for (const { line, cost, usage } of figures.values()) {
-      add(interest, line, interestOf(cost, w));
-      add(average, line, usage.div(months));
+      const conversion = conversionOf(line, lines);
+      add(interest, line, interestOf(cost, w), conversion);
+      add(average, line, usage.div(months), conversion);
     }
     const authorized = cell();
     for (const line of linesIn(lines, w.at))
-      add(authorized, line, new Dec(termIn(line.limit, w.at).value));
+      add(
+        authorized,
+        line,
+        new Dec(termIn(line.limit, w.at).value),
+        conversionOf(line, lines),
+      );
     result.LINE_INTEREST.push(interest);
     result.LINE_AUTHORIZED.push(authorized);
     result.LINE_AVERAGE_USAGE.push(average);
@@ -493,18 +555,46 @@ export function creditLineValues(
         const after = figures.get(id);
         const was = before.get(id);
         const line = after?.line ?? was!.line;
-        add(
-          proforma,
-          line,
-          interestOf(
-            (after?.cost ?? new Dec(0)).minus(was?.cost ?? new Dec(0)),
-            w,
-          ),
-        );
+        if (!after || !was || after.line.currency === was.line.currency) {
+          add(
+            proforma,
+            line,
+            interestOf(
+              (after?.cost ?? new Dec(0)).minus(was?.cost ?? new Dec(0)),
+              w,
+            ),
+            conversionOf(line, lines),
+          );
+          continue;
+        }
+        // The deal moves the line to another currency: each side converts
+        // at its own rate.
+        const converted = (side: typeof after) => {
+          const conversion = conversionOf(side.line, lines);
+          const amount = interestOf(side.cost, w);
+          return conversion === null
+            ? new Dec(0)
+            : conversion
+              ? amount.times(conversion.rate)
+              : amount;
+        };
+        add(proforma, line, converted(after).minus(converted(was)), undefined);
       }
     }
   }
   return result;
+}
+
+// The lines a run counts in another currency with no rate to convert them:
+// they count as nothing.
+export function linesWithoutRate(
+  lines: readonly LineTerms[],
+  currency: string,
+  rates: ExchangeRates,
+): LineTerms[] {
+  return lines.filter(
+    (l) => !l.closed && l.currency !== currency && rates[l.currency] === undefined,
+  );
 }
 
 // The lines a run counts with no usage assumed: their interest counts as

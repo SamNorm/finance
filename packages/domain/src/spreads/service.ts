@@ -603,6 +603,9 @@ export async function getSpread(
 // The borrower's lines of credit (its members', for a consolidated client)
 // against the spread's authorized line at the latest fiscal year end: their
 // limits then, added up, should match it. A gap is flagged, not blocked.
+// The spread has no exchange rate for that day: with lines in another
+// currency open, only those in the statements' are added, and flagged when
+// they're more than the authorized line on their own.
 export async function addLineLimitChecks(
   db: Db,
   spread: Spread,
@@ -625,12 +628,15 @@ export async function addLineLimitChecks(
     (l) => !l.closedOn || monthIndex(l.closedOn) >= month,
   );
   if (!open.length) return;
-  const limits = open.reduce(
+  const same = open.filter((l) => l.currency === year.currency);
+  const others = open.length > same.length;
+  const limits = same.reduce(
     (sum, l) => sum.plus(termIn(l.limit, month).value),
     new Dec(0),
   );
   const authorized = new Dec(raw);
-  if (limits.minus(authorized).abs().lte(TOLERANCE)) return;
+  const gap = limits.minus(authorized);
+  if (others ? gap.lte(TOLERANCE) : gap.abs().lte(TOLERANCE)) return;
   const show = (value: InstanceType<typeof Dec>) =>
     Number(value.toFixed(2)).toLocaleString("en-CA", {
       maximumFractionDigits: 2,
@@ -639,7 +645,9 @@ export async function addLineLimitChecks(
     severity: "warning",
     code: "line_limits",
     itemCode: code,
-    message: `The lines of credit's limits add up to ${show(limits)} at ${year.periodEnd}, but the spread's authorized line is ${show(authorized)}.`,
+    message: others
+      ? `The lines of credit in ${year.currency} alone add up to ${show(limits)} at ${year.periodEnd}, more than the spread's authorized line of ${show(authorized)}.`
+      : `The lines of credit's limits add up to ${show(limits)} at ${year.periodEnd}, but the spread's authorized line is ${show(authorized)}.`,
   });
 }
 

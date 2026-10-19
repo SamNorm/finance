@@ -159,7 +159,8 @@ export interface RunInput {
   capex?: readonly CapexItem[];
   // The lines of credit, the usage assumed, and any the scenario proposes:
   // from closing in a post-project run, or else from the first projected
-  // month. `proposedAfter` is set here.
+  // month. `proposedAfter` is set here. Lines in another currency than the
+  // run's convert at its rates.
   creditLines?: Omit<RunLines, "proposedAfter">;
   // Items of the scoring model version the model is bound to.
   items: readonly { code: string; label: string; numeric: boolean }[];
@@ -246,6 +247,8 @@ export function runModel(input: RunInput): AnalysisRun {
       proposedAfter:
         closing ?? (lastActual ? monthIndex(lastActual.end) : null),
       usage: input.creditLines?.usage ?? {},
+      currency: input.creditLines?.currency,
+      rates: input.creditLines?.rates,
     },
     info,
     closing,

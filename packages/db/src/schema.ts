@@ -617,6 +617,11 @@ export type LineUsage = Record<
   { share?: string; months?: Record<string, string> }
 >;
 
+// Rates converting lines of credit in another currency into an analysis's,
+// its statements': by currency code, the analysis's units for one of that
+// currency, e.g. { USD: "1.37" }.
+export type ExchangeRates = Record<string, string>;
+
 // A line of credit as a scenario proposes it for its deal: one of the lines
 // in force (by its id), changed or closed, or a new line. Lines in force it
 // doesn't list stay as they are.
@@ -992,6 +997,8 @@ export const analyses = pgTable(
     postProjectKeys: text().array(),
     // The usage the base case assumes for each line of credit.
     lineUsage: jsonb().$type<LineUsage>().notNull().default({}),
+    // What converts lines in other currencies, in the base case.
+    exchangeRates: jsonb().$type<ExchangeRates>().notNull().default({}),
     // How it projects each margined line's borrowing base, by line id.
     borrowingBases: jsonb()
       .$type<Record<string, ProjectedBorrowingBase>>()
@@ -1127,6 +1134,8 @@ export const analysisScenarios = pgTable(
     // Usage assumed for lines of credit, over the analysis's: a share or
     // months given here replace its own.
     lineUsage: jsonb().$type<LineUsage>().notNull().default({}),
+    // Exchange rates over the analysis's, by currency.
+    exchangeRates: jsonb().$type<ExchangeRates>().notNull().default({}),
     // Changes to projected borrowing bases, by line id.
     borrowingBases: jsonb()
       .$type<Record<string, ScenarioBorrowingBase>>()

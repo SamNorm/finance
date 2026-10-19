@@ -26,6 +26,9 @@ export interface FinancingPart {
   id: string;
   name: string;
   value: string;
+  // A line of credit in another currency: its amount in its own, and the
+  // rate the value was converted at.
+  converted?: { currency: string; amount: string; rate: string };
 }
 
 // A built-in input in one period; null where it doesn't apply, so formulas

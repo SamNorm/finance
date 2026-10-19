@@ -53,6 +53,7 @@ import {
   setBorrowingBaseValues,
   startBorrowingBase,
   updateAnalysis,
+  type ExchangeRates,
   type LineUsage,
   type ChartDefinition,
   type CreditLineInput,
@@ -222,17 +223,26 @@ async function financialModel(
 async function analysis(
   input: Parameters<typeof createAnalysis>[2],
   scenarios: ScenarioInput[],
-  lineUsage?: LineUsage,
+  lines?: { usage: LineUsage; rates: ExchangeRates },
 ) {
   const created = await createAnalysis(db, ctx, input);
-  if (lineUsage) await updateAnalysis(db, ctx, created.id, { lineUsage });
+  if (lines)
+    await updateAnalysis(db, ctx, created.id, {
+      lineUsage: lines.usage,
+      exchangeRates: lines.rates,
+    });
   for (const scenario of scenarios)
     await addScenario(db, ctx, created.id, scenario);
   return created;
 }
 
+// Canadian dollars for a US dollar, as analyses of a borrower with a line
+// in US dollars assume.
+const USD_RATE = "1.37";
+
 // Each line of a borrower drawn as its operating line was at its latest
-// fiscal year end, on average: the balance over the authorized line.
+// fiscal year end, on average: the balance over the authorized line; and
+// the rate for lines in US dollars.
 async function usageOf(
   entityId: string,
   periods: readonly { months: number; values: Record<string, string> }[],
@@ -250,6 +260,9 @@ async function usageOf(
     usage: Object.fromEntries(
       lines.map((l) => [l.id, { share: `${Math.round(share * 100)}%` }]),
     ) as LineUsage,
+    rates: (lines.some((l) => l.currency === "USD")
+      ? { USD: USD_RATE }
+      : {}) as ExchangeRates,
   };
 }
 
@@ -284,7 +297,7 @@ async function seed() {
   for (const [i, company] of companies.entries()) {
     const { entity } = borrowers[i]!;
     const actual = company.periods.filter((p) => p.quality !== "projected");
-    const { lines, usage } = await usageOf(entity.id, actual);
+    const { lines, usage, rates } = await usageOf(entity.id, actual);
     const scenarios = [
       ...demoScenarios(
         actual.at(-1)!.values.SHAREHOLDER_LOANS ?? "0",
@@ -302,7 +315,7 @@ async function seed() {
         projectionYears: 2,
       },
       scenarios,
-      usage,
+      { usage, rates },
     );
     reviews.push(review.id);
     // Laurentian Foods' review is done, so the overview shows one.
@@ -318,7 +331,7 @@ async function seed() {
           projectionMode: "client",
         },
         scenarios.filter((s) => s.project),
-        usage,
+        { usage, rates },
       );
     }
   }
@@ -376,7 +389,7 @@ async function seed() {
       String(groupDividends),
       groupLines.lines[0],
     ),
-    groupLines.usage,
+    groupLines,
   );
   console.log(
     "Consolidated: Laurentian Foods and its landlord, with a group review.",

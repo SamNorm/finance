@@ -38,6 +38,8 @@ import {
 } from "../spreads/service";
 import {
   creditLineValues,
+  linesWithoutRate,
+  normalizeExchangeRates,
   normalizeLineUsage,
   normalizeProposedLines,
   type LineTerms,
@@ -293,6 +295,67 @@ describe("creditLineValues", () => {
     expect(show(none, "LINE_INTEREST")).toEqual([null, null, null, null, null]);
   });
 
+  it("converts lines in another currency at the run's rates", () => {
+    const usd: LineTerms = {
+      id: "usd",
+      name: "USD line",
+      currency: "USD",
+      limit: { value: "500000" },
+      rate: "0.08",
+    };
+    const lines = {
+      inForce: [operating, usd],
+      usage: { ...usage, usd: { share: "0.4" } },
+      currency: "CAD",
+    };
+    // 200,000 drawn at 8% is USD 16,000 of interest, CAD 21,920 at 1.37.
+    const values = creditLineValues(
+      { ...lines, rates: { USD: "1.37" } },
+      periods,
+      null,
+    );
+    expect(show(values, "LINE_INTEREST")[3]).toBe("109820.00");
+    expect(values.LINE_INTEREST[3]!.parts).toEqual([
+      { id: "operating", name: "Operating line", value: "87900" },
+      {
+        id: "usd",
+        name: "USD line",
+        value: "21920",
+        converted: { currency: "USD", amount: "16000", rate: "1.37" },
+      },
+    ]);
+    expect(show(values, "LINE_AUTHORIZED")[3]).toBe("3185000.00");
+    expect(values.LINE_AVERAGE_USAGE[3]!.parts[1]).toMatchObject({
+      value: "274000",
+      converted: { amount: "200000" },
+    });
+
+    // With no rate, the USD line counts nothing, and is named.
+    const unconverted = creditLineValues(lines, periods, null);
+    expect(show(unconverted, "LINE_INTEREST")[3]).toBe("87900.00");
+    expect(show(unconverted, "LINE_AUTHORIZED")[3]).toBe("2500000.00");
+    expect(linesWithoutRate(lines.inForce, "CAD", {})).toEqual([usd]);
+    expect(linesWithoutRate(lines.inForce, "CAD", { USD: "1.37" })).toEqual([]);
+
+    // A deal moving the line to Canadian dollars at closing: what it adds
+    // is CAD 20,000 at 10%, less the USD interest it no longer pays.
+    const moved = creditLineValues(
+      {
+        ...lines,
+        rates: { USD: "1.37" },
+        proposed: [
+          { ...usd, currency: "CAD", limit: { value: "500000" }, rate: "0.1" },
+        ],
+        proposedAfter: closing,
+      },
+      periods,
+      closing,
+    );
+    expect(moved.PROFORMA_LINE_INTEREST[3]!.parts).toEqual([
+      { id: "usd", name: "USD line", value: "-1920" },
+    ]);
+  });
+
   it("reaches models as built-in inputs, with each line in the lineage", () => {
     const line = (code: string, l: Partial<ModelLine>): ModelLine => ({
       code,
@@ -334,6 +397,19 @@ describe("creditLineValues", () => {
       source: "line",
       parts: [{ id: "operating", name: "Operating line", value: "87900" }],
     });
+  });
+});
+
+describe("normalizeExchangeRates", () => {
+  it("keeps a rate above zero for each currency", () => {
+    expect(
+      normalizeExchangeRates({ usd: "1,37", EUR: "1.4823", GBP: "" }),
+    ).toEqual({ USD: "1.37", EUR: "1.4823" });
+    expect(normalizeExchangeRates(null)).toEqual({});
+    expect(() => normalizeExchangeRates({ USD: "0" })).toThrow(/above zero/);
+    expect(() => normalizeExchangeRates({ USD: "abc" })).toThrow(/USD rate/);
+    expect(() => normalizeExchangeRates({ US: "1.3" })).toThrow(/its code/);
+    expect(() => normalizeExchangeRates(["1.3"])).toThrow(/by currency/);
   });
 });
 
@@ -475,6 +551,21 @@ describe("lines of credit service", () => {
     // Closed before the year end, it no longer counts.
     await updateCreditLine(db, ctx, usd.id, { closedOn: "2024-06-30" });
     expect(await issues()).toEqual([]);
+
+    // In US dollars, it can't be added with no rate for the year end: only
+    // lines in Canadian dollars beyond the authorized line are flagged.
+    await updateCreditLine(db, ctx, usd.id, {
+      currency: "USD",
+      closedOn: null,
+    });
+    expect(await issues()).toEqual([]);
+    await setValue(db, ctx, period.id, "OPERATING_LINE_AUTHORIZED", "2400000");
+    expect(await issues()).toMatchObject([
+      {
+        message:
+          "The lines of credit in CAD alone add up to 2,500,000 at 2024-12-31, more than the spread's authorized line of 2,400,000.",
+      },
+    ]);
   });
 
   it("reads a consolidated client's lines from its members", async () => {
@@ -622,14 +713,35 @@ describe("lines of credit service", () => {
       lineUsage: { [usd]: { share: "40%" } },
     });
     results = await runAnalysis(db, ctx, analysis.id, deal.id);
+    // The analysis counts in its statements' Canadian dollars: with no USD
+    // rate, the USD line counts nothing, and it's flagged.
+    expect(results.creditLines.currency).toBe("CAD");
+    expect(results.creditLines.withoutRate).toEqual([
+      { id: usd, name: "USD line", currency: "USD" },
+    ]);
+    expect(value(results.project!, "LINES")).toEqual([null, "60000", "60000"]);
+    await rejects(
+      updateAnalysis(db, ctx, analysis.id, { exchangeRates: { USD: "-1" } }),
+      "invalid",
+    );
+    await updateAnalysis(db, ctx, analysis.id, {
+      exchangeRates: { USD: "1.4" },
+    });
+    await updateScenario(db, ctx, deal.id, { exchangeRates: { USD: "1.25" } });
+    results = await runAnalysis(db, ctx, analysis.id, deal.id);
     // As is, the deal's lines wait for closing; post-project, the USD line
-    // adds 200,000 at 8%.
+    // adds 200,000 at 8%, USD 16,000, at the scenario's 1.25.
+    expect(results.creditLines).toMatchObject({
+      rates: { USD: "1.25" },
+      withoutRate: [],
+    });
     expect(value(results.scenario!, "LINES")).toEqual([null, null, "60000"]);
-    expect(value(results.project!, "LINES")).toEqual([null, "76000", "76000"]);
-    expect(value(results.project!, "ADDED")).toEqual(["0", "16000", "16000"]);
+    expect(value(results.project!, "LINES")).toEqual([null, "80000", "80000"]);
+    expect(value(results.project!, "ADDED")).toEqual(["0", "20000", "20000"]);
     const copy = await duplicateScenario(db, ctx, deal.id);
     expect(copy.lines).toEqual(deal.lines);
     expect(copy.lineUsage).toEqual({ [usd]: { share: "0.4" } });
+    expect(copy.exchangeRates).toEqual({ USD: "1.25" });
 
     // Dropping the new line drops its usage.
     const kept = await updateScenario(db, ctx, deal.id, { lines: null });

@@ -27,11 +27,14 @@ import { marginedLines } from "../borrowing-bases/lines";
 import {
   checkProposedTerms,
   lineUsageAsTyped,
+  linesWithoutRate,
   linesWithoutUsage,
   proposedLinesAsTyped,
   mergeLineUsage,
+  normalizeExchangeRates,
   normalizeLineUsage,
   normalizeProposedLines,
+  type ExchangeRates,
   type LineUsage,
   type ProposedLine,
   type ProposedLineInput,
@@ -290,6 +293,9 @@ export async function updateAnalysis(
     // The usage assumed for each of the borrower's lines of credit, as
     // typed: their share of the limit, and amounts drawn by month.
     lineUsage?: unknown;
+    // Rates converting lines in other currencies, as typed, by currency:
+    // { USD: "1.37" }. They replace the analysis's.
+    exchangeRates?: unknown;
   },
 ): Promise<Analysis> {
   const analysis = await findAnalysis(db, ctx, analysisId);
@@ -297,6 +303,10 @@ export async function updateAnalysis(
     patch.lineUsage === undefined
       ? undefined
       : await checkLineUsage(db, ctx, analysis.entityId, patch.lineUsage);
+  const exchangeRates =
+    patch.exchangeRates === undefined
+      ? undefined
+      : normalizeExchangeRates(patch.exchangeRates);
   checkSettings(patch);
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) {
     throw new DomainError("invalid", `"${patch.status}" isn't a status.`);
@@ -327,6 +337,7 @@ export async function updateAnalysis(
       projectionYears: patch.projectionYears,
       postProjectKeys,
       lineUsage,
+      exchangeRates,
       status: patch.status,
       // Completing again keeps the first date.
       completedAt:
@@ -352,6 +363,19 @@ export function analyzedPeriods(
   return spread.periods
     .filter((p) => !chosen.size || chosen.has(p.id))
     .filter((p) => client || p.quality !== "projected");
+}
+
+// The currency an analysis counts in: its statements', the latest period's.
+// Lines of credit in another convert into it.
+export function analysisCurrency(
+  spread: Spread,
+  settings: Pick<Analysis, "periodIds" | "projectionMode">,
+): string {
+  return (
+    analyzedPeriods(spread, settings).at(-1)?.currency ??
+    spread.periods.at(-1)?.currency ??
+    "CAD"
+  );
 }
 
 // Critical errors in the periods an analysis runs on: a balance sheet that
@@ -620,6 +644,8 @@ export interface ScenarioInput {
   // Usage assumed for lines, over the analysis's: by line, a share and
   // amounts drawn by month.
   lineUsage?: unknown;
+  // Exchange rates over the analysis's, by currency: { USD: "1.45" }.
+  exchangeRates?: unknown;
   // Changes to projected borrowing bases, as saved, when a scenario is
   // copied; set a line's with setScenarioBorrowingBase.
   borrowingBases?: Scenario["borrowingBases"];
@@ -744,6 +770,7 @@ export async function addScenario(
       covenants: input.covenants ? normalizeCovenants(input.covenants) : null,
       lines,
       lineUsage,
+      exchangeRates: normalizeExchangeRates(input.exchangeRates),
       borrowingBases: input.borrowingBases ?? {},
     })
     .returning();
@@ -821,6 +848,10 @@ export async function updateScenario(
           : patch.covenants && normalizeCovenants(patch.covenants),
       lines: patch.lines === undefined ? undefined : lines,
       lineUsage,
+      exchangeRates:
+        patch.exchangeRates === undefined
+          ? undefined
+          : normalizeExchangeRates(patch.exchangeRates),
     })
     .where(eq(scenarios.id, scenarioId))
     .returning();
@@ -867,6 +898,7 @@ export async function duplicateScenario(
     // Stored rates go back as typed, so 100% stays 100%.
     lines: source.lines && proposedLinesAsTyped(source.lines),
     lineUsage: lineUsageAsTyped(source.lineUsage),
+    exchangeRates: source.exchangeRates,
     borrowingBases: source.borrowingBases,
   });
 }
@@ -892,11 +924,16 @@ export interface AnalysisResults {
   capex: CapexYear[];
   // The borrower's lines of credit in force, the usage the shown run
   // assumes (the scenario's over the analysis's), and the lines it counts
-  // with none, whose interest counts as zero.
+  // with none, whose interest counts as zero. Lines in another currency
+  // than the analysis's convert at the run's rates (the scenario's over the
+  // analysis's); those with none count as nothing.
   creditLines: {
     inForce: OwnedLine[];
     usage: LineUsage;
     withoutUsage: { id: string; name: string }[];
+    currency: string;
+    rates: ExchangeRates;
+    withoutRate: { id: string; name: string; currency: string }[];
   };
   base: AnalysisRun;
   // The chosen scenario, when one is.
@@ -937,6 +974,11 @@ export async function runAnalysis(
     detail.analysis.lineUsage,
     scenario?.lineUsage ?? {},
   );
+  const currency = analysisCurrency(spread, detail.analysis);
+  const rates = {
+    ...detail.analysis.exchangeRates,
+    ...scenario?.exchangeRates,
+  };
   const { projectionMode, projectionYears } = detail.analysis;
   const client = projectionMode === "client";
   // Projections come either from the client, as spread periods, or from the
@@ -973,12 +1015,14 @@ export async function runAnalysis(
       periodOverrides: scenario?.periodOverrides,
       project,
       capex,
-      // The base case assumes the analysis's usage; a scenario, its own
-      // over it.
+      // The base case assumes the analysis's usage and rates; a scenario,
+      // its own over them.
       creditLines: {
         inForce,
         proposed,
         usage: scenario ? usage : detail.analysis.lineUsage,
+        currency,
+        rates: scenario ? rates : detail.analysis.exchangeRates,
       },
       debtSchedules: debt.map((d) => d.schedule),
       items: items
@@ -1028,6 +1072,11 @@ export async function runAnalysis(
         id,
         name,
       })),
+      currency,
+      rates,
+      withoutRate: linesWithoutRate(counted, currency, rates).map(
+        ({ id, name, currency }) => ({ id, name, currency }),
+      ),
     },
     capex: scenarioRun
       ? capexYears(
@@ -1218,6 +1267,7 @@ export async function repinAnalysis(
         ),
         postProjectKeys: detail.analysis.postProjectKeys,
         lineUsage: detail.analysis.lineUsage,
+        exchangeRates: detail.analysis.exchangeRates,
         borrowingBases: detail.analysis.borrowingBases,
       })
       .where(eq(analyses.id, copy.id));
@@ -1241,6 +1291,7 @@ export async function repinAnalysis(
         covenants: scenario.covenants,
         lines: scenario.lines,
         lineUsage: scenario.lineUsage,
+        exchangeRates: scenario.exchangeRates,
         borrowingBases: scenario.borrowingBases,
       });
     }

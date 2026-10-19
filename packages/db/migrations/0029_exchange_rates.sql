@@ -1,0 +1,2 @@
+ALTER TABLE "analyses" ADD COLUMN "exchange_rates" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "analysis_scenarios" ADD COLUMN "exchange_rates" jsonb DEFAULT '{}'::jsonb NOT NULL;

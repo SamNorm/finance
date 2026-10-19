@@ -204,6 +204,13 @@
       "when": 1792372874565,
       "tag": "0028_document_credit_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792415855848,
+      "tag": "0029_exchange_rates",
+      "breakpoints": true
     }
   ]
 }
