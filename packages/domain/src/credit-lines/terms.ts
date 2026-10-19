@@ -1,16 +1,21 @@
-import type { schema } from "@finance/db";
 import { DomainError } from "../errors";
-import { monthIndex } from "../financing/amortization";
 import { parseAmount, parseRate } from "../financing/common";
 import { parseValue } from "../spreads/values";
+import type { Season, Term } from "./term-values";
 
 // Terms of a line of credit and its borrowing base (borrowing-base-plan.md
 // §5.3): a limit, an advance rate or a cap that can differ in some calendar
 // months every year, for a season, and step from a month, for an amendment.
 // A step replaces the value and its seasons from its month on.
 
-export type Term = schema.Term;
-export type Season = schema.Season;
+export {
+  isPlain,
+  monthNumber,
+  termIn,
+  type Season,
+  type Term,
+  type TermValue,
+} from "./term-values";
 
 // A term as typed: a plain value, or the value with its seasons and steps.
 // Seasons' months are calendar months, 1 to 12, as a list ([10, 11, 12, 1,
@@ -43,9 +48,6 @@ export function parseMonth(raw: unknown, what: string): string {
     throw invalid(`${what}: give the month as YYYY-MM, such as 2026-06.`);
   return `${match[1]}-${match[2]}`;
 }
-
-// The month a "YYYY-MM" stands for, counted as monthIndex counts dates.
-export const monthNumber = (month: string) => monthIndex(`${month}-01`);
 
 function parseMonths(raw: unknown, what: string): number[] {
   let months: number[];
@@ -144,28 +146,3 @@ export function parseTerm(raw: unknown, what: string, kind: TermKind): Term {
     ...(steps.length ? { steps } : {}),
   };
 }
-
-export interface TermValue {
-  value: string;
-  // The step in force, by the month it started; null before any.
-  from: string | null;
-  // The season's months, when one applies.
-  season: number[] | null;
-}
-
-// A term's value in a month, counted as monthIndex counts dates.
-export function termIn(term: Term, month: number): TermValue {
-  const step = term.steps?.findLast((s) => monthNumber(s.from) <= month);
-  const { value, seasons } = step ?? term;
-  const calendar = (((month % 12) + 12) % 12) + 1;
-  const season = seasons?.find((s) => s.months.includes(calendar));
-  return {
-    value: season?.value ?? value,
-    from: step?.from ?? null,
-    season: season?.months ?? null,
-  };
-}
-
-// Whether a term ever changes: by season or step.
-export const isPlain = (term: Term) =>
-  !term.seasons?.length && !term.steps?.length;

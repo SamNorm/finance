@@ -1,5 +1,6 @@
 import type { LineUsage, ProposedLine, Term } from "@finance/domain";
 import { monthIndex } from "@finance/domain/amortization";
+import { termIn as termValue } from "@finance/domain/terms";
 import { Dec } from "@finance/engine";
 import { formatFigure } from "./format";
 
@@ -79,14 +80,9 @@ export function describeTerm(term: Term): string {
   ].join(" · ");
 }
 
-// A term's value in a month, counted as monthIndex counts dates: the step
-// in force, then its season, as the domain's termIn reads it.
-export function termIn(term: Term, month: number): string {
-  const step = term.steps?.findLast((s) => monthIndex(`${s.from}-01`) <= month);
-  const { value, seasons } = step ?? term;
-  const calendar = (((month % 12) + 12) % 12) + 1;
-  return seasons?.find((s) => s.months.includes(calendar))?.value ?? value;
-}
+// A term's value in a month, counted as monthIndex counts dates.
+export const termIn = (term: Term, month: number) =>
+  termValue(term, month).value;
 
 // A term as typed: its value, its seasons, and its steps, each with seasons
 // of its own.

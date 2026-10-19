@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./amortization": "./src/financing/amortization.ts",
+    "./terms": "./src/credit-lines/term-values.ts",
     "./demo/*": "./src/demo/*.ts"
   },
   "scripts": {
