@@ -499,6 +499,38 @@ export const borrowingBaseQuality = pgEnum("borrowing_base_quality", [
   "verified",
 ]);
 
+// An organization's own borrowing base structures (borrowing-base-plan.md
+// §5.1, §5.7), which a line's borrowing base starts from: a draft, and the
+// definition published for analysts to copy, as document templates have.
+// No version history: each line's copy is its own once made.
+export const borrowingBaseTemplates = pgTable(
+  "borrowing_base_templates",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    description: text(),
+    // The built-in's id, or the template's, it was copied from.
+    basedOn: text(),
+    draft: jsonb().$type<BorrowingBaseDefinition>().notNull(),
+    published: jsonb().$type<BorrowingBaseDefinition>(),
+    publishedAt: timestamp({ withTimezone: true }),
+    // No longer offered to start from; lines copied from it keep theirs.
+    archivedAt: timestamp({ withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("borrowing_base_templates_organization").on(t.organizationId),
+    check(
+      "borrowing_base_templates_published_at",
+      sql`(${t.published} is null) = (${t.publishedAt} is null)`,
+    ),
+  ],
+).enableRLS();
+
 // What a consolidated client's borrowing base adds up each month across its
 // members' margined lines (borrowing-base-plan.md §7.5): sums of totals, not
 // of line codes, since members' lines differ.

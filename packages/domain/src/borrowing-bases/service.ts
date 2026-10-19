@@ -10,6 +10,7 @@ import { parseDate } from "../financing/common";
 import { parseValue } from "../spreads/values";
 import type { ChartDefinition } from "../financial-models/charts";
 import { BUILT_IN_BORROWING_BASES, chartsOf } from "./builtins";
+import { templateToStart } from "./templates";
 import {
   borrowingBaseCycle,
   overdueMonths,
@@ -293,14 +294,22 @@ export async function setBorrowingBaseDefinition(
   return { line: updated!, issues };
 }
 
-// Starts a line's borrowing base from a built-in one or another line's,
-// replacing any it has. It's the line's own from then on.
+// Starts a line's borrowing base from a built-in one, an organization's
+// published template or another line's, replacing any it has. It's the
+// line's own from then on.
 export async function startBorrowingBase(
   db: Db,
   ctx: Context,
   lineId: string,
-  from: { builtIn: string } | { lineId: string },
+  from: { builtIn: string } | { templateId: string } | { lineId: string },
 ): Promise<{ line: CreditLine; issues: Issue[] }> {
+  if ("templateId" in from) {
+    const template = await templateToStart(db, ctx, from.templateId);
+    return setBorrowingBaseDefinition(db, ctx, lineId, {
+      ...template.definition,
+      basedOn: { kind: "template", id: from.templateId, name: template.name },
+    });
+  }
   if ("builtIn" in from) {
     const builtIn = BUILT_IN_BORROWING_BASES.find((b) => b.id === from.builtIn);
     if (!builtIn)

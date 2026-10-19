@@ -10,3 +10,4 @@ export * from "./lines";
 export * from "./projection";
 export * from "./settings";
 export * from "./group";
+export * from "./templates";

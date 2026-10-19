@@ -47,6 +47,9 @@ import {
   setAnalysisBorrowingBase,
   setBorrowingBaseMonth,
   setGroupBorrowingBaseAdjustments,
+  createBorrowingBaseTemplate,
+  updateBorrowingBaseTemplate,
+  publishBorrowingBaseTemplate,
   setBorrowingBaseValues,
   startBorrowingBase,
   updateAnalysis,
@@ -415,6 +418,39 @@ async function seed() {
   console.log(
     `Borrowing base: ${certificates.length} months of certificates for Northwind's operating line.`,
   );
+
+  // The organization's own template for distributors: the built-in, and a
+  // test that inventory never lends more than receivables do.
+  const distributors = await createBorrowingBaseTemplate(db, ctx, {
+    name: "Distributors",
+    description:
+      "Receivables and inventory for wholesale distributors, with inventory lending at most what receivables do.",
+    from: "receivables-inventory",
+  });
+  await updateBorrowingBaseTemplate(db, ctx, distributors.id, {
+    definition: {
+      ...distributors.draft,
+      lines: [
+        ...distributors.draft.lines,
+        {
+          kind: "calculation",
+          code: "INVENTORY_SHARE",
+          label: "Inventory against receivables",
+          format: "percent",
+          formula: "IFERROR(INVENTORY.MARGINED / RECEIVABLES.MARGINED, 0)",
+        },
+      ],
+      tests: [
+        {
+          name: "Inventory at most receivables",
+          metric: "INVENTORY_SHARE",
+          test: "max",
+          threshold: "100%",
+        },
+      ],
+    },
+  });
+  await publishBorrowingBaseTemplate(db, ctx, distributors.id);
 
   // Laurentian Foods margins its CAD line too; it comes within a whisker of
   // its borrowing base each September. Its consolidated group takes out

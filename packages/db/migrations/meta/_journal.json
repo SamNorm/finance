@@ -190,6 +190,13 @@
       "when": 1792371916097,
       "tag": "0026_group_borrowing_bases",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792372113516,
+      "tag": "0027_borrowing_base_templates",
+      "breakpoints": true
     }
   ]
 }
