@@ -2,16 +2,25 @@ import { DomainError } from "@finance/domain";
 import { previewDocument } from "@finance/documents";
 import { getContext, getDb } from "@/lib/server";
 
-// A document as HTML, rendered from the analysis as it stands and not kept:
-// a quick look before generating the PDF. The browser's print gives the same
-// pages. ?analysis=…&template=…, &scenario=… for a scenario, and &draft=1
-// for an organization template's draft, as its editor previews it.
+// A document as HTML, rendered from the analysis or the margined line as it
+// stands and not kept: a quick look before generating the PDF. The
+// browser's print gives the same pages. ?analysis=…&template=…, &scenario=…
+// for a scenario; or ?line=…&template=…, &month=… for a month other than
+// the latest; and &draft=1 for an organization template's draft, as its
+// editor previews it.
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
   try {
     const { html } = await previewDocument(getDb(), await getContext(), {
-      analysisId: query.get("analysis") ?? "",
-      scenarioId: query.get("scenario") || null,
+      ...(query.get("line")
+        ? {
+            creditLineId: query.get("line"),
+            month: query.get("month") || null,
+          }
+        : {
+            analysisId: query.get("analysis") ?? "",
+            scenarioId: query.get("scenario") || null,
+          }),
       template: query.get("template") ?? "",
       draft: query.get("draft") === "1",
     });

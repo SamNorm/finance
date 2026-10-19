@@ -8,6 +8,7 @@ import {
   listMarginedLines,
   runBorrowingBaseOf,
 } from "@finance/domain";
+import { listDocuments, listPrintableTemplates } from "@finance/documents";
 import { Building2, Gauge } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -21,7 +22,9 @@ import { formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
 import { BorrowingBaseActions } from "../_components/bb-actions";
 import { BorrowingBaseCharts } from "../_components/bb-charts";
+import { documentRows } from "../../documents/rows";
 import { BorrowingBaseData } from "../_components/bb-data";
+import { BorrowingBaseDocuments } from "../_components/bb-documents";
 import { BorrowingBaseResults } from "../_components/bb-results";
 import { BorrowingBaseTerms } from "../_components/bb-terms";
 import { MarginLine, type MarginSources } from "../_components/margin-line";
@@ -56,12 +59,15 @@ async function LineView({ params, searchParams }: Props) {
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
-  const [spread, margined, templates, results] = await Promise.all([
-    getSpread(db, ctx, line.entityId),
-    listMarginedLines(db, ctx),
-    listBorrowingBaseTemplates(db, ctx),
-    line.borrowingBase ? runBorrowingBaseOf(db, ctx, line.id) : null,
-  ]);
+  const [spread, margined, templates, results, printable, documents] =
+    await Promise.all([
+      getSpread(db, ctx, line.entityId),
+      listMarginedLines(db, ctx),
+      listBorrowingBaseTemplates(db, ctx),
+      line.borrowingBase ? runBorrowingBaseOf(db, ctx, line.id) : null,
+      listPrintableTemplates(db, ctx, null, "line"),
+      listDocuments(db, ctx, { creditLineId: line.id }),
+    ]);
   const { entity } = spread;
   const sources: MarginSources = {
     builtIns: BUILT_IN_BORROWING_BASES.map(({ id, name, description }) => ({
@@ -228,6 +234,21 @@ async function LineView({ params, searchParams }: Props) {
                 years={years}
                 yearEndMonth={yearEndMonth}
                 figures={figures}
+              />
+            ),
+          },
+          {
+            value: "documents",
+            label: "Documents",
+            count: documents.length,
+            content: (
+              <BorrowingBaseDocuments
+                lineId={line.id}
+                months={run.months
+                  .filter((m) => m.quality !== null)
+                  .map((m) => m.month)}
+                templates={printable}
+                documents={documentRows(documents)}
               />
             ),
           },

@@ -16,7 +16,7 @@ import {
   type Language,
   type Orientation,
 } from "@finance/documents";
-import { getAnalysis } from "@finance/domain";
+import { getAnalysis, getCreditLine } from "@finance/domain";
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
@@ -35,6 +35,25 @@ export async function generateDocumentAction(
     const document = await generateDocument(db, ctx, {
       analysisId: String(analysisId),
       scenarioId: scenarioId ? String(scenarioId) : null,
+      template: String(template),
+    });
+    return { id: document.id };
+  });
+  if (result.ok) refresh();
+  return result;
+}
+
+// Prints a document from a margined line in a month, the latest with a
+// certificate when none is given, and keeps it; returns its id.
+export async function generateLineDocumentAction(
+  lineId: string,
+  month: string | null,
+  template: string,
+): Promise<ActionResult<{ id: string }>> {
+  const result = await attempt(async (db, ctx) => {
+    const document = await generateDocument(db, ctx, {
+      creditLineId: String(lineId),
+      month: month ? String(month) : null,
       template: String(template),
     });
     return { id: document.id };
@@ -72,6 +91,13 @@ export async function createTemplateAction(
       name: text(form, "name"),
       description: text(form, "description"),
       from: text(form, "from") || null,
+      // A copy prints from what it copies; a blank one from what's picked.
+      source:
+        text(form, "from") || !text(form, "source")
+          ? undefined
+          : text(form, "source") === "line"
+            ? "line"
+            : "analysis",
       financialModelId: text(form, "financialModelId") || null,
     }),
   );
@@ -177,6 +203,32 @@ export async function copyForAnalysisAction(
     `${editor(result.value.id)}?${new URLSearchParams({
       analysis: result.value.analysisId,
       ...(scenarioId ? { scenario: String(scenarioId) } : {}),
+    })}`,
+  );
+}
+
+// A copy of a built-in from a line's Documents tab; opens in the editor,
+// previewing that line and month.
+export async function copyForLineAction(
+  lineId: string,
+  month: string | null,
+  template: string,
+): Promise<ActionResult> {
+  const result = await attempt(async (db, ctx) => {
+    const builtIn = templateOf(String(template));
+    if (!builtIn) throw invalid("Only a built-in document copies from here.");
+    const line = await getCreditLine(db, ctx, String(lineId));
+    const copy = await createTemplate(db, ctx, {
+      name: `Copy of ${builtIn.name}`,
+      from: builtIn.key,
+    });
+    return { id: copy.id, lineId: line.id };
+  });
+  if (!result.ok) return result;
+  redirect(
+    `${editor(result.value.id)}?${new URLSearchParams({
+      line: result.value.lineId,
+      ...(month ? { month: String(month) } : {}),
     })}`,
   );
 }

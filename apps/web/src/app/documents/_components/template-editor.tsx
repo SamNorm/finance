@@ -1,5 +1,6 @@
 "use client";
 
+import { TOTALS } from "@finance/domain/borrowing-bases";
 import {
   CONDITIONS,
   LANGUAGES,
@@ -9,6 +10,7 @@ import {
   type Condition,
   type Definition,
   type Orientation,
+  type Source,
 } from "@finance/documents/templates";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
@@ -21,9 +23,10 @@ import type { ActionFailure } from "@/lib/action-result";
 import { saveTemplateAction } from "../actions";
 import { FieldPicker } from "./field-picker";
 
-// A document's draft: its title and orientation, and its sections in order.
-// Every change saves straight away; the page comes back with the draft's
-// issues and a fresh preview.
+// A document's draft: its title and orientation, and its sections in order,
+// those that fit what it prints from: an analysis, or a margined line and
+// a month. Every change saves straight away; the page comes back with the
+// draft's issues and a fresh preview.
 
 export interface ModelChoices {
   name: string;
@@ -35,13 +38,39 @@ export interface ModelChoices {
 const GROUPS: { label: string; types: BlockType[] }[] = [
   { label: "Figures", types: ["facts", "lines", "covenants", "charts"] },
   { label: "Deal and debt", types: ["sourcesUses", "debt", "amortization"] },
+  {
+    label: "Borrowing base",
+    types: [
+      "bbWaterfall",
+      "bbHistory",
+      "bbTests",
+      "bbCycle",
+      "bbProjection",
+      "bbSignature",
+    ],
+  },
   { label: "Text", types: ["heading", "text"] },
   { label: "Layout", types: ["pageBreak"] },
 ];
 
 // Sections with settings open their dialog when added; the rest go straight
 // in.
-const SETTINGS = new Set<BlockType>(["heading", "text", "lines", "charts"]);
+const SETTINGS = new Set<BlockType>([
+  "heading",
+  "text",
+  "lines",
+  "charts",
+  "bbHistory",
+  "bbTests",
+  "bbProjection",
+  "bbSignature",
+]);
+
+// The months a line's sections cover, up to the month printed.
+const MAX_MONTHS = 24;
+
+const totalLabel = (code: string) =>
+  TOTALS.find((t) => t.code === code)?.label ?? code;
 
 const ORIENTATIONS: Record<Orientation, string> = {
   portrait: "Portrait",
@@ -49,7 +78,11 @@ const ORIENTATIONS: Record<Orientation, string> = {
 };
 
 // What a block is set to, the way the section list sums it up.
-function summary(block: Block, model: ModelChoices | null): string {
+function summary(
+  block: Block,
+  model: ModelChoices | null,
+  source: Source,
+): string {
   const named = <T,>(
     ids: string[],
     find: (id: string) => T | undefined,
@@ -83,6 +116,8 @@ function summary(block: Block, model: ModelChoices | null): string {
         .filter(Boolean)
         .join(" · ");
     case "charts":
+      if (source === "line")
+        return `Every chart of the borrowing base, ${block.months ?? 12} months`;
       return block.charts
         ? named(
             block.charts,
@@ -90,6 +125,26 @@ function summary(block: Block, model: ModelChoices | null): string {
             (c) => c.title,
           )
         : "Every chart, the model's and the analysis's";
+    case "bbHistory":
+      return [
+        block.lines
+          ? named(block.lines, (code) => code, totalLabel)
+          : "The main totals",
+        `${block.months ?? 12} months`,
+      ].join(" · ");
+    case "bbTests":
+      return block.months === 1
+        ? "The month's tests"
+        : `Each test, ${block.months ?? 12} months`;
+    case "bbProjection":
+      return block.lines
+        ? named(block.lines, (code) => code, totalLabel)
+        : "The main totals";
+    case "bbSignature":
+      return (
+        block.text?.replace(/\s+/g, " ").trim() ||
+        "The app's statement, then signature lines"
+      );
     default:
       return SECTIONS[block.type].description;
   }
@@ -98,10 +153,13 @@ function summary(block: Block, model: ModelChoices | null): string {
 export function TemplateEditor({
   templateId,
   draft,
+  source,
   model,
 }: {
   templateId: string;
   draft: Definition;
+  // What it prints from; its sections are those that fit.
+  source: Source;
   // The model it reads; null for none.
   model: ModelChoices | null;
 }) {
@@ -146,13 +204,18 @@ export function TemplateEditor({
           <TitleField
             key={draft.title}
             initial={draft.title}
+            source={source}
             lines={model?.lines ?? []}
             disabled={pending}
             onSave={(title) => save({ title })}
           />
           <Field
             label="Orientation"
-            hint="Landscape fits every period of an analysis."
+            hint={
+              source === "line"
+                ? "Landscape fits a year of months."
+                : "Landscape fits every period of an analysis."
+            }
             group
           >
             <Segmented
@@ -181,7 +244,11 @@ export function TemplateEditor({
 
       <Card
         title="Sections"
-        description="In the order they print. Each reads the analysis and scenario printed."
+        description={
+          source === "line"
+            ? "In the order they print. Each reads the line and month printed."
+            : "In the order they print. Each reads the analysis and scenario printed."
+        }
         flush
         actions={
           <Menu
@@ -197,22 +264,29 @@ export function TemplateEditor({
               </button>
             }
           >
-            {GROUPS.map((group, i) => (
-              <div key={group.label}>
-                {i > 0 && <MenuSeparator />}
-                <MenuLabel>{group.label}</MenuLabel>
-                {group.types.map((type) => (
-                  <MenuItem key={type} onSelect={() => add(type)}>
-                    <span className="flex flex-col">
-                      <span>{SECTIONS[type].label}</span>
-                      <span className="text-xs text-muted">
-                        {SECTIONS[type].description}
+            {GROUPS.map((group) => ({
+              ...group,
+              types: group.types.filter((t) =>
+                SECTIONS[t].sources.includes(source),
+              ),
+            }))
+              .filter((group) => group.types.length)
+              .map((group, i) => (
+                <div key={group.label}>
+                  {i > 0 && <MenuSeparator />}
+                  <MenuLabel>{group.label}</MenuLabel>
+                  {group.types.map((type) => (
+                    <MenuItem key={type} onSelect={() => add(type)}>
+                      <span className="flex flex-col">
+                        <span>{SECTIONS[type].label}</span>
+                        <span className="text-xs text-muted">
+                          {SECTIONS[type].description}
+                        </span>
                       </span>
-                    </span>
-                  </MenuItem>
-                ))}
-              </div>
-            ))}
+                    </MenuItem>
+                  ))}
+                </div>
+              ))}
           </Menu>
         }
       >
@@ -238,7 +312,7 @@ export function TemplateEditor({
                     )}
                   </span>
                   <span className="truncate text-xs text-muted">
-                    {summary(block, model)}
+                    {summary(block, model, source)}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center">
@@ -306,6 +380,7 @@ export function TemplateEditor({
           <SectionForm
             key={`${editing.index}`}
             initial={editing.block}
+            source={source}
             model={model}
             pending={pending}
             failure={failure}
@@ -327,11 +402,13 @@ export function TemplateEditor({
 
 function TitleField({
   initial,
+  source,
   lines,
   disabled,
   onSave,
 }: {
   initial: string;
+  source: Source;
   lines: { code: string; label: string }[];
   disabled: boolean;
   onSave: (title: string) => void;
@@ -368,6 +445,7 @@ function TitleField({
             if (value.trim() !== initial) onSave(value);
           }}
           lines={lines}
+          source={source}
         />
       </div>
     </Field>
@@ -377,6 +455,7 @@ function TitleField({
 // One section's settings, and when it shows.
 function SectionForm({
   initial,
+  source,
   model,
   pending,
   failure,
@@ -385,6 +464,7 @@ function SectionForm({
   onSave,
 }: {
   initial: Block;
+  source: Source;
   model: ModelChoices | null;
   pending: boolean;
   failure: ActionFailure | null;
@@ -394,7 +474,20 @@ function SectionForm({
 }) {
   const { type } = initial;
   const [text, setText] = useState(
-    initial.type === "heading" || initial.type === "text" ? initial.text : "",
+    initial.type === "heading" ||
+      initial.type === "text" ||
+      initial.type === "bbSignature"
+      ? (initial.text ?? "")
+      : "",
+  );
+  // A line's sections: the months they cover, and the figures they show.
+  const [months, setMonths] = useState(
+    "months" in initial && initial.months ? String(initial.months) : "",
+  );
+  const [codes, setCodes] = useState<string[] | null>(
+    initial.type === "bbHistory" || initial.type === "bbProjection"
+      ? (initial.lines ?? null)
+      : null,
   );
   const [title, setTitle] = useState(
     initial.type === "lines" ? (initial.title ?? "") : "",
@@ -417,10 +510,28 @@ function SectionForm({
 
   function block(): Block {
     const condition = when ? { when } : {};
+    const covering = Number(months) ? { months: Number(months) } : {};
     switch (type) {
       case "heading":
       case "text":
         return { type, text, ...condition };
+      case "bbSignature":
+        return { type, ...(text.trim() ? { text } : {}), ...condition };
+      case "bbHistory":
+        return {
+          type,
+          ...(codes?.length ? { lines: codes } : {}),
+          ...covering,
+          ...condition,
+        };
+      case "bbTests":
+        return { type, ...covering, ...condition };
+      case "bbProjection":
+        return {
+          type,
+          ...(codes?.length ? { lines: codes } : {}),
+          ...condition,
+        };
       case "lines":
         return {
           type,
@@ -430,7 +541,9 @@ function SectionForm({
           ...condition,
         };
       case "charts":
-        return { type, ...(picked ? { charts: picked } : {}), ...condition };
+        return source === "line"
+          ? { type, ...covering }
+          : { type, ...(picked ? { charts: picked } : {}), ...condition };
       default:
         return { type, ...condition } as Block;
     }
@@ -483,6 +596,7 @@ function SectionForm({
                 value={text}
                 onChange={setText}
                 lines={lines}
+                source={source}
               />
             </div>
           </Field>
@@ -499,6 +613,7 @@ function SectionForm({
                 value={text}
                 onChange={setText}
                 lines={lines}
+                source={source}
               />
               <textarea
                 ref={textRef}
@@ -545,7 +660,105 @@ function SectionForm({
             </Field>
           </>
         )}
-        {(type === "lines" || type === "charts") && (
+        {type === "bbSignature" && (
+          <Field
+            label="Statement (optional)"
+            hint="Printed above the signature lines. Blank for the app's: that the information above is true and complete."
+            group
+          >
+            <div className="flex flex-col gap-2">
+              <FieldPicker
+                target={textRef}
+                value={text}
+                onChange={setText}
+                lines={[]}
+                source={source}
+              />
+              <textarea
+                ref={textRef}
+                value={text}
+                aria-label="Statement"
+                autoFocus
+                rows={4}
+                onChange={(e) => setText(e.target.value)}
+                className={input}
+              />
+            </div>
+          </Field>
+        )}
+        {(type === "bbHistory" || type === "bbProjection") && (
+          <Field
+            label="Figures"
+            hint="Month by month, in this order. Any borrowing base's line codes work too, such as AR.MARGINED."
+            group
+          >
+            <Segmented
+              name="figures"
+              options={{ all: "The main totals", picked: "Those I pick" }}
+              value={codes ? "picked" : "all"}
+              onChange={(v) => setCodes(v === "all" ? null : (codes ?? []))}
+            />
+            {codes && (
+              <>
+                <div className="max-h-56 overflow-y-auto rounded-md border border-line">
+                  {TOTALS.map((t) => (
+                    <Check
+                      key={t.code}
+                      checked={codes.includes(t.code)}
+                      onChange={() =>
+                        setCodes(
+                          codes.includes(t.code)
+                            ? codes.filter((c) => c !== t.code)
+                            : [...codes, t.code],
+                        )
+                      }
+                      label={t.label}
+                      code={t.code}
+                    />
+                  ))}
+                </div>
+                <input
+                  value={codes
+                    .filter((c) => !TOTALS.some((t) => t.code === c))
+                    .join(", ")}
+                  onChange={(e) =>
+                    setCodes([
+                      ...codes.filter((c) => TOTALS.some((t) => t.code === c)),
+                      ...e.target.value
+                        .split(",")
+                        .map((c) => c.trim().toUpperCase())
+                        .filter(Boolean),
+                    ])
+                  }
+                  aria-label="Other codes"
+                  placeholder="Other codes, such as AR.MARGINED, INVENTORY.MARGINED"
+                  className={`${input} font-mono text-xs`}
+                />
+              </>
+            )}
+          </Field>
+        )}
+        {(type === "bbHistory" ||
+          type === "bbTests" ||
+          (type === "charts" && source === "line")) && (
+          <Field
+            label="Months"
+            hint={
+              type === "bbTests"
+                ? `Up to the month printed, 1 to ${MAX_MONTHS}; 1 for the month's tests alone. 12 when blank.`
+                : `Up to the month printed, 1 to ${MAX_MONTHS}. 12 when blank.`
+            }
+          >
+            <input
+              value={months}
+              onChange={(e) => setMonths(e.target.value.replace(/\D/g, ""))}
+              inputMode="numeric"
+              placeholder="12"
+              className={`${input.replace("w-full ", "")} w-24 text-right tabular-nums`}
+            />
+          </Field>
+        )}
+        {(type === "lines" || (type === "charts" && source === "analysis")) && (
           <Field
             label={type === "lines" ? "Lines" : "Charts"}
             hint={!model ? noModel : undefined}
@@ -602,22 +815,25 @@ function SectionForm({
             )}
           </Field>
         )}
-        <Field label="Show">
-          <select
-            value={when}
-            onChange={(e) => setWhen(e.target.value as Condition | "")}
-            className={input}
-          >
-            <option value="">Always</option>
-            {(Object.entries(CONDITIONS) as [Condition, string][]).map(
-              ([value, label]) => (
-                <option key={value} value={value}>
-                  Only when: {label.toLowerCase()}
-                </option>
-              ),
-            )}
-          </select>
-        </Field>
+        {/* Conditions are about an analysis; a line's sections always show. */}
+        {source === "analysis" && (
+          <Field label="Show">
+            <select
+              value={when}
+              onChange={(e) => setWhen(e.target.value as Condition | "")}
+              className={input}
+            >
+              <option value="">Always</option>
+              {(Object.entries(CONDITIONS) as [Condition, string][]).map(
+                ([value, label]) => (
+                  <option key={value} value={value}>
+                    Only when: {label.toLowerCase()}
+                  </option>
+                ),
+              )}
+            </select>
+          </Field>
+        )}
         {failure && (
           <div className="flex flex-col gap-2 rounded-md bg-danger-soft p-3">
             <p className="text-sm font-medium text-danger">{failure.message}</p>

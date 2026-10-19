@@ -1,23 +1,31 @@
 "use client";
 
+import { SOURCES, type Source } from "@finance/documents/templates";
 import { Copy } from "lucide-react";
 import { useActionState, useState } from "react";
 import { button, input } from "@/components/styles";
-import { Field, Icon, keepFields, Modal } from "@/components/ui";
+import { Field, Icon, keepFields, Modal, Segmented } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
 import { createTemplateAction } from "../actions";
 
 // A new document, blank or copied from a built-in or one of the
-// organization's, reading a financial model or none. A copy of one that
-// reads a model reads it too, unless another is picked.
+// organization's. It prints from an analysis, reading a financial model or
+// none, or from a margined line of credit and a month. A copy prints from
+// what it copies, and one that reads a model reads it too, unless another
+// is picked.
 export function NewDocument({
   builtIns,
   templates,
   models,
   copy,
 }: {
-  builtIns: { key: string; name: string }[];
-  templates: { id: string; name: string; financialModelId: string | null }[];
+  builtIns: { key: string; name: string; source: Source }[];
+  templates: {
+    id: string;
+    name: string;
+    source: Source;
+    financialModelId: string | null;
+  }[];
   models: { id: string; name: string }[];
   // Opens on a copy of this one, from its own button.
   copy?: { from: string; name: string };
@@ -27,6 +35,12 @@ export function NewDocument({
   const [model, setModel] = useState(
     templates.find((t) => t.id === copy?.from)?.financialModelId ?? "",
   );
+  const [blank, setBlank] = useState<Source>("analysis");
+  // A copy prints from what it copies.
+  const source =
+    builtIns.find((t) => t.key === from)?.source ??
+    templates.find((t) => t.id === from)?.source ??
+    blank;
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) =>
       createTemplateAction(form),
@@ -98,24 +112,45 @@ export function NewDocument({
                 )}
               </select>
             </Field>
-            <Field
-              label="Reads"
-              hint="Pick a financial model to name its lines and charts; the document then prints for analyses on that model. With none, its sections show whole, for any analysis."
-            >
-              <select
-                name="financialModelId"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className={input}
+            {from ? (
+              <p className="text-sm text-muted">
+                Prints from {SOURCES[source].toLowerCase()}, as the document it
+                copies does.
+              </p>
+            ) : (
+              <Field
+                label="Prints from"
+                hint="An analysis and a scenario, or a margined line of credit and a month, such as a borrowing base certificate."
+                group
               >
-                <option value="">No model in particular</option>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+                <Segmented
+                  name="source"
+                  options={SOURCES}
+                  value={blank}
+                  onChange={setBlank}
+                />
+              </Field>
+            )}
+            {source === "analysis" && (
+              <Field
+                label="Reads"
+                hint="Pick a financial model to name its lines and charts; the document then prints for analyses on that model. With none, its sections show whole, for any analysis."
+              >
+                <select
+                  name="financialModelId"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className={input}
+                >
+                  <option value="">No model in particular</option>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Description (optional)">
               <textarea
                 name="description"

@@ -2,6 +2,7 @@ import {
   BUILT_IN_TEMPLATES,
   listTemplates,
   SECTIONS,
+  sourceOf,
   type TemplateSummary,
 } from "@finance/documents";
 import { getOrganization, listFinancialModels } from "@finance/domain";
@@ -45,10 +46,15 @@ async function DocumentsView({
     listFinancialModels(db, ctx),
   ]);
   const newDocument = {
-    builtIns: BUILT_IN_TEMPLATES.map(({ key, name }) => ({ key, name })),
+    builtIns: BUILT_IN_TEMPLATES.map((t) => ({
+      key: t.key,
+      name: t.name,
+      source: sourceOf(t),
+    })),
     templates: templates.map((t) => ({
       id: t.id,
       name: t.name,
+      source: t.source,
       financialModelId: t.financialModel?.id ?? null,
     })),
     models: models.map(({ id, name }) => ({ id, name })),
@@ -57,7 +63,7 @@ async function DocumentsView({
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Documents"
-        description="The PDFs analysts print from an analysis for the credit file: the built-in ones, and your own made from the same sections. Analysts print them from an analysis's Documents tab."
+        description="The PDFs analysts print for the credit file: the built-in ones, and your own made from the same sections. Analysts print them from an analysis's Documents tab, or from a margined line's, such as a borrowing base certificate."
         actions={<NewDocument {...newDocument} />}
       />
       <Tabs
@@ -72,7 +78,7 @@ async function DocumentsView({
                 <Templates templates={templates} />
                 <Card
                   title="Built in"
-                  description="Ready to print from any analysis. Copy one to change its sections or wording, and hide one your own replaces."
+                  description="Ready to print from any analysis, or any margined line. Copy one to change its sections or wording, and hide one your own replaces."
                   flush
                 >
                   <ul className="divide-y divide-line">
@@ -84,6 +90,9 @@ async function DocumentsView({
                         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                           <span className="flex items-center gap-2 text-sm font-medium">
                             {t.name}
+                            {sourceOf(t) === "line" && (
+                              <Badge tone="accent">From a line</Badge>
+                            )}
                             {organization.hiddenBuiltIns.includes(t.key) && (
                               <Badge>Hidden from analysts</Badge>
                             )}
@@ -186,7 +195,9 @@ function Templates({ templates }: { templates: TemplateSummary[] }) {
                   )}
                 </td>
                 <td className={`${table.td} text-muted`}>
-                  {t.financialModel?.name ?? "Any analysis"}
+                  {t.source === "line"
+                    ? "A margined line"
+                    : (t.financialModel?.name ?? "Any analysis")}
                 </td>
                 <td className={table.td}>
                   <TemplateStatus status={t.status} changed={t.changed} />

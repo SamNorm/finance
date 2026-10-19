@@ -7,8 +7,10 @@ import {
 import {
   DomainError,
   getAnalysis,
+  getBorrowingBase,
   listAnalyses,
   listFinancialModels,
+  listMarginedLines,
 } from "@finance/domain";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -69,13 +71,22 @@ async function TemplateView({
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
-  const [models, analyses, model] = await Promise.all([
+  const fromLine = template.source === "line";
+  const [models, analyses, model, lines] = await Promise.all([
     listFinancialModels(db, ctx),
-    listAnalyses(db, ctx),
+    fromLine ? [] : listAnalyses(db, ctx),
     template.financialModel
       ? templateModel(db, ctx, template.financialModel.id)
       : null,
+    fromLine ? listMarginedLines(db, ctx) : [],
   ]);
+  // A line template previews with a margined line and one of its months
+  // with a certificate, the latest unless another is picked.
+  const line = lines.find((l) => l.lineId === query.line) ?? lines[0] ?? null;
+  const months = line
+    ? (await getBorrowingBase(db, ctx, line.lineId)).months.map((m) => m.month)
+    : [];
+  const month = months.find((m) => m === query.month) ?? months.at(-1) ?? null;
   // Analyses it can print for: on its model, or any when it reads none.
   const fitting = analyses.filter(
     (a) => !template.financialModel || a.modelId === template.financialModel.id,
@@ -105,7 +116,9 @@ async function TemplateView({
         description={template.description}
         meta={
           <>
-            {template.financialModel ? (
+            {fromLine ? (
+              <span>Prints from a margined line of credit</span>
+            ) : template.financialModel ? (
               <span>
                 Reads{" "}
                 <Link
@@ -135,6 +148,7 @@ async function TemplateView({
               name: template.name,
               description: template.description,
               financialModelId: template.financialModel?.id ?? null,
+              source: template.source,
               status: template.status,
               published: template.published !== null,
               changed: template.changed,
@@ -160,6 +174,7 @@ async function TemplateView({
           <TemplateEditor
             templateId={template.id}
             draft={template.draft}
+            source={template.source}
             model={model && choices(model)}
           />
         </div>
@@ -167,15 +182,32 @@ async function TemplateView({
           templateId={template.id}
           version={template.updatedAt.toISOString()}
           orientation={template.draft.orientation}
-          analyses={fitting.map((a) => ({
-            id: a.id,
-            name: a.name,
-            borrower: a.entityName,
-          }))}
-          analysisId={analysis?.id ?? null}
-          scenarios={scenarios}
-          scenarioId={scenario?.id ?? null}
-          modelName={template.financialModel?.name ?? null}
+          from={
+            fromLine
+              ? {
+                  source: "line",
+                  lines: lines.map((l) => ({
+                    id: l.lineId,
+                    name: l.name,
+                    borrower: l.entity.name,
+                  })),
+                  lineId: line?.lineId ?? null,
+                  months,
+                  month,
+                }
+              : {
+                  source: "analysis",
+                  analyses: fitting.map((a) => ({
+                    id: a.id,
+                    name: a.name,
+                    borrower: a.entityName,
+                  })),
+                  analysisId: analysis?.id ?? null,
+                  scenarios,
+                  scenarioId: scenario?.id ?? null,
+                  modelName: template.financialModel?.name ?? null,
+                }
+          }
         />
       </div>
     </div>

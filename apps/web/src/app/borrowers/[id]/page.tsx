@@ -911,8 +911,8 @@ function Analyses({
   );
 }
 
-// Every document printed from the borrower's analyses. They're printed from
-// an analysis, which says the scenario and the figures they show.
+// Every document printed from the borrower's analyses and its margined
+// lines. An analysis's says the scenario it shows; a line's, its month.
 function Documents({
   documents,
   analyses,
@@ -938,14 +938,15 @@ function Documents({
         }
       >
         Print an analysis report, a deal summary or a debt summary from an
-        analysis&apos;s Documents tab. Each is kept here as printed.
+        analysis&apos;s Documents tab, and a borrowing base certificate from a
+        margined line&apos;s. Each is kept here as printed.
       </EmptyState>
     );
   }
   return (
     <PrintedDocuments
       documents={documentRows(documents)}
-      description="From all of the borrower's analyses, kept as they were printed. Print more from an analysis's Documents tab."
+      description="From all of the borrower's analyses and margined lines, kept as they were printed. Print more from an analysis's or a line's Documents tab."
       showAnalysis
     />
   );

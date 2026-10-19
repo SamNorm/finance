@@ -34,6 +34,8 @@ export function TemplateActions({
     name: string;
     description: string | null;
     financialModelId: string | null;
+    // A line's documents read no financial model.
+    source: "analysis" | "line";
     status: "draft" | "published" | "archived";
     published: boolean;
     changed: boolean;
@@ -183,11 +185,13 @@ export function TemplateActions({
                 className={input}
               />
             </Field>
-            <ModelField
-              models={models}
-              value={template.financialModelId}
-              locked={template.published}
-            />
+            {template.source === "analysis" && (
+              <ModelField
+                models={models}
+                value={template.financialModelId}
+                locked={template.published}
+              />
+            )}
             {detailsState && !detailsState.ok && (
               <p className="text-sm text-danger">{detailsState.message}</p>
             )}
@@ -208,8 +212,8 @@ export function TemplateActions({
           <input type="hidden" name="from" value={template.id} />
           <div className="flex flex-col gap-4 px-5 py-4">
             <p className="text-sm text-muted">
-              The copy starts with the draft&apos;s title and sections. It can
-              read another model.
+              The copy starts with the draft&apos;s title and sections
+              {template.source === "analysis" && ". It can read another model"}.
             </p>
             <Field label="Name">
               <input
@@ -220,11 +224,13 @@ export function TemplateActions({
                 className={input}
               />
             </Field>
-            <ModelField
-              models={models}
-              value={template.financialModelId}
-              locked={false}
-            />
+            {template.source === "analysis" && (
+              <ModelField
+                models={models}
+                value={template.financialModelId}
+                locked={false}
+              />
+            )}
             {copyState && !copyState.ok && (
               <p className="text-sm text-danger">{copyState.message}</p>
             )}

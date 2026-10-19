@@ -8,7 +8,8 @@ import { button, table } from "@/components/styles";
 import { deleteDocumentAction } from "../actions";
 
 // Documents printed before, kept as they were for the credit file: an
-// analysis's, or all of a borrower's with the analysis each came from.
+// analysis's or a line's, or all of a borrower's with the analysis or the
+// line and month each came from.
 
 export interface DocumentRow {
   id: string;
@@ -18,6 +19,10 @@ export interface DocumentRow {
   analysisName: string | null;
   // The scenario's name when printed; null for the base case.
   scenarioName: string | null;
+  // Or the margined line it printed, and its month, "YYYY-MM".
+  creditLineId: string | null;
+  lineName: string | null;
+  month: string | null;
   pages: number;
   size: number;
   // ISO timestamp.
@@ -34,6 +39,14 @@ const when = new Intl.DateTimeFormat("en-CA", {
 
 export const pdfUrl = (id: string) => `/documents/${id}/pdf`;
 
+// "2024-12" → "Dec 2024".
+const monthOf = (month: string) =>
+  new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-CA", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
 export function PrintedDocuments({
   documents,
   description,
@@ -45,6 +58,14 @@ export function PrintedDocuments({
 }) {
   const [failure, setFailure] = useState<string | null>(null);
   const [deleting, startDelete] = useTransition();
+  // A line's documents print a month; an analysis's, a scenario.
+  const fromLines = documents.filter((d) => d.creditLineId).length;
+  const which =
+    fromLines === documents.length
+      ? "Month"
+      : fromLines
+        ? "Scenario or month"
+        : "Scenario";
   return (
     <Card title="Printed documents" description={description} flush>
       <div className="overflow-x-auto">
@@ -52,8 +73,8 @@ export function PrintedDocuments({
           <thead>
             <tr className={table.head}>
               <th className={table.th}>Document</th>
-              {showAnalysis && <th className={table.th}>Analysis</th>}
-              <th className={table.th}>Scenario</th>
+              {showAnalysis && <th className={table.th}>From</th>}
+              <th className={table.th}>{which}</th>
               <th className={`${table.th} text-right`}>Pages</th>
               <th className={`${table.th} text-right`}>Printed</th>
               <th className={table.th} />
@@ -87,13 +108,24 @@ export function PrintedDocuments({
                       >
                         {d.analysisName}
                       </Link>
+                    ) : d.creditLineId ? (
+                      <Link
+                        href={`/borrowing-bases/${d.creditLineId}?tab=documents`}
+                        className="text-accent hover:underline"
+                      >
+                        {d.lineName}
+                      </Link>
                     ) : (
                       <span className="text-muted">–</span>
                     )}
                   </td>
                 )}
-                <td className={`${table.td} text-muted`}>
-                  {d.scenarioName ?? "Base case"}
+                <td className={`${table.td} whitespace-nowrap text-muted`}>
+                  {d.creditLineId
+                    ? d.month
+                      ? monthOf(d.month)
+                      : "–"
+                    : (d.scenarioName ?? "Base case")}
                 </td>
                 <td className={`${table.td} text-right tabular-nums`}>
                   {d.pages}
