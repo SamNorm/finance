@@ -16,12 +16,14 @@ import { parseArgs } from "node:util";
 import { eq, inArray, schema } from "@finance/db";
 import {
   addConsolidatedPeriod,
+  addCreditLine,
   addScenario,
   createAnalysis,
   createConsolidatedClient,
   createEntity,
   createFinancialModel,
   createScoringModel,
+  getCreditLines,
   devContext,
   ensureDevOrganization,
   getSpread,
@@ -42,7 +44,9 @@ import {
   setPeriodControls,
   setModelInput,
   updateAnalysis,
+  type LineUsage,
   type ChartDefinition,
+  type CreditLineInput,
   type DebtSchedule,
   type CheckItems,
   type FinancingItems,
@@ -116,6 +120,7 @@ async function borrower(
       values: Record<string, string>;
     }[];
     debtSchedule: DebtSchedule;
+    creditLines?: CreditLineInput[];
   },
 ) {
   const entity = await createEntity(db, ctx, {
@@ -157,8 +162,10 @@ async function borrower(
       years: loan.months / 12,
     })),
   });
+  for (const line of data.creditLines ?? [])
+    await addCreditLine(db, ctx, entity.id, line);
   console.log(
-    `Borrower ${data.name}: ${data.periods.length} periods, ${figures} figures.`,
+    `Borrower ${data.name}: ${data.periods.length} periods, ${figures} figures${data.creditLines?.length ? `, ${data.creditLines.length} ${data.creditLines.length === 1 ? "line" : "lines"} of credit` : ""}.`,
   );
   // Oldest first, as pasted. Each period gets what its statements say beyond
   // the figures: net income as printed, unless it's a projection, and the
@@ -209,11 +216,35 @@ async function financialModel(
 async function analysis(
   input: Parameters<typeof createAnalysis>[2],
   scenarios: ScenarioInput[],
+  lineUsage?: LineUsage,
 ) {
   const created = await createAnalysis(db, ctx, input);
+  if (lineUsage) await updateAnalysis(db, ctx, created.id, { lineUsage });
   for (const scenario of scenarios)
     await addScenario(db, ctx, created.id, scenario);
   return created;
+}
+
+// Each line of a borrower drawn as its operating line was at its latest
+// fiscal year end, on average: the balance over the authorized line.
+async function usageOf(
+  entityId: string,
+  periods: readonly { months: number; values: Record<string, string> }[],
+) {
+  const year = periods.findLast(
+    (p) => p.months === 12 && p.values.OPERATING_LINE_AUTHORIZED,
+  );
+  const share = year
+    ? Number(year.values.BANK_INDEBTEDNESS ?? 0) /
+      Number(year.values.OPERATING_LINE_AUTHORIZED)
+    : 0.5;
+  const lines = await getCreditLines(db, ctx, entityId);
+  return {
+    lines,
+    usage: Object.fromEntries(
+      lines.map((l) => [l.id, { share: `${Math.round(share * 100)}%` }]),
+    ) as LineUsage,
+  };
 }
 
 async function seed() {
@@ -227,7 +258,11 @@ async function seed() {
         "A generic commercial banking template for demos and tests. Not any real institution's model.",
     },
     { longTermDebt: "LONG_TERM_DEBT", currentDebt: "CPLTD", cash: "CASH" },
-    { netIncome: "NET_INCOME", retainedEarnings: "RETAINED_EARNINGS" },
+    {
+      netIncome: "NET_INCOME",
+      retainedEarnings: "RETAINED_EARNINGS",
+      lineAuthorized: "OPERATING_LINE_AUTHORIZED",
+    },
   );
   const companies = demoCompanies();
   const borrowers = [];
@@ -246,10 +281,12 @@ async function seed() {
   for (const [i, company] of companies.entries()) {
     const { entity } = borrowers[i]!;
     const actual = company.periods.filter((p) => p.quality !== "projected");
+    const { lines, usage } = await usageOf(entity.id, actual);
     const scenarios = [
       ...demoScenarios(
         actual.at(-1)!.values.SHAREHOLDER_LOANS ?? "0",
         actual.findLast((p) => p.months === 12)!.values.CF_DIVIDENDS,
+        lines[0],
       ),
       // Northwind plans a second line.
       ...(i === 0 ? [DEMO_CAPEX_SCENARIO] : []),
@@ -262,6 +299,7 @@ async function seed() {
         projectionYears: 2,
       },
       scenarios,
+      usage,
     );
     // The client's own projections, against the bank's in the analysis above.
     if (actual.length < company.periods.length) {
@@ -273,6 +311,7 @@ async function seed() {
           projectionMode: "client",
         },
         scenarios.filter((s) => s.project),
+        usage,
       );
     }
   }
@@ -316,6 +355,8 @@ async function seed() {
       ),
     )
     .reduce((sum, n) => sum + n, 0);
+  // The group's lines are Laurentian Foods'.
+  const groupLines = await usageOf(group.id, companies[1]!.periods);
   await analysis(
     {
       entityId: group.id,
@@ -323,7 +364,12 @@ async function seed() {
       name: "Group review 2024",
       projectionYears: 2,
     },
-    demoScenarios(String(groupLoans), String(groupDividends)),
+    demoScenarios(
+      String(groupLoans),
+      String(groupDividends),
+      groupLines.lines[0],
+    ),
+    groupLines.usage,
   );
   console.log(
     "Consolidated: Laurentian Foods and its landlord, with a group review.",

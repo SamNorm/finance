@@ -106,9 +106,8 @@ export function loanPayments(loan: Amortizing, start: string) {
   };
 }
 
-// A scenario's sources and uses at closing, its line of credit increases,
-// subordinations, consolidated loans and adjustments, and whether it
-// balances. The borrower's debt schedules (a consolidated client's
+// A scenario's sources and uses at closing, its subordinations,
+// consolidated loans and adjustments, and whether it balances. The borrower's debt schedules (a consolidated client's
 // members') name the loans consolidated.
 export function describeProject(
   project: Project,
@@ -140,13 +139,6 @@ export function describeProject(
       name: u.name,
       amount: money(u.amount),
       postsTo: u.item,
-    })),
-    lineOfCreditIncreases: project.lines.map((l) => ({
-      id: l.id,
-      name: l.name,
-      increase: money(l.increase),
-      averageUsage: rate(l.usage),
-      rate: rate(l.rate),
     })),
     subordinations: project.subordinations.map((s) => ({
       id: s.id,

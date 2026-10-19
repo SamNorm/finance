@@ -27,9 +27,9 @@ import { formatDate, formatFigure } from "@/lib/format";
 import { STATEMENTS } from "@/lib/labels";
 import { saveProjectLoanAdjustmentsAction } from "../actions";
 
-// A scenario's project: a sources and uses table at closing, plus line of
-// credit increases, subordinations and adjustments, which move no funds at
-// closing.
+// A scenario's project: a sources and uses table at closing, plus
+// subordinations and adjustments, which move no funds at closing. The deal's
+// lines of credit are the scenario's.
 
 export interface BalanceSheetItem {
   code: string;
@@ -65,14 +65,6 @@ interface UseDraft {
   amount: string;
   item: string;
 }
-interface LineDraft {
-  key: string;
-  id?: string;
-  name: string;
-  increase: string;
-  usage: string;
-  rate: string;
-}
 interface SubordinationDraft {
   key: string;
   id?: string;
@@ -93,7 +85,6 @@ export interface ProjectDraft {
   closing: string;
   sources: SourceDraft[];
   uses: UseDraft[];
-  lines: LineDraft[];
   subordinations: SubordinationDraft[];
   adjustments: AdjustmentDraft[];
   // The borrower's existing loans repaid or refinanced at closing, by id.
@@ -115,7 +106,7 @@ const existingLoans = (schedules: readonly DebtSchedule[]) =>
     schedule.loans.map((loan) => ({ loan, schedule })),
   );
 
-type List = "sources" | "uses" | "lines" | "subordinations" | "adjustments";
+type List = "sources" | "uses" | "subordinations" | "adjustments";
 
 const grouped = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
 const amount = (raw: string) => grouped.format(Number(raw));
@@ -129,7 +120,6 @@ export function toDraft(project: Project | null): ProjectDraft {
       closing: "",
       sources: [],
       uses: [],
-      lines: [],
       subordinations: [],
       adjustments: [],
       consolidatedLoans: [],
@@ -168,14 +158,6 @@ export function toDraft(project: Project | null): ProjectDraft {
       amount: amount(u.amount),
       item: u.item,
     })),
-    lines: project.lines.map((l) => ({
-      key: l.id,
-      id: l.id,
-      name: l.name,
-      increase: amount(l.increase),
-      usage: percent(l.usage),
-      rate: percent(l.rate),
-    })),
     subordinations: project.subordinations.map((s) => ({
       key: s.id,
       id: s.id,
@@ -200,7 +182,6 @@ export function toInput(draft: ProjectDraft) {
   const empty =
     !draft.sources.length &&
     !draft.uses.length &&
-    !draft.lines.length &&
     !draft.subordinations.length &&
     !draft.adjustments.length &&
     !draft.consolidatedLoans.length;
@@ -231,13 +212,6 @@ export function toInput(draft: ProjectDraft) {
       name,
       amount,
       item,
-    })),
-    lines: draft.lines.map(({ id, name, increase, usage, rate }) => ({
-      id,
-      name,
-      increase,
-      usage,
-      rate,
     })),
     subordinations: draft.subordinations.map(
       ({ id, name, amount, interestSaved, principalSaved }) => ({
@@ -436,22 +410,8 @@ export function SourcesUses({
           be completed until they match.
         </p>
       )}
-      {(project.lines.length > 0 || project.subordinations.length > 0) && (
+      {project.subordinations.length > 0 && (
         <ul className="flex flex-col gap-1 text-sm">
-          {project.lines.map((l) => {
-            const yearly = new Dec(l.increase).times(l.usage).times(l.rate);
-            return (
-              <li key={l.id}>
-                {l.name}: line increased by {formatFigure(l.increase, "amount")}
-                , used {percent(l.usage)} on average at {percent(l.rate)}
-                <span className="text-muted">
-                  {" "}
-                  · {formatFigure(yearly.toFixed(), "amount")} of interest a
-                  year
-                </span>
-              </li>
-            );
-          })}
           {project.subordinations.map((s) => (
             <li key={s.id}>
               {s.name}: {formatFigure(s.amount, "amount")} subordinated to
@@ -900,89 +860,6 @@ export function ProjectEditor({
         {Math.abs(sources - uses) >= 1 &&
           ` · out of balance by ${formatFigure(String(Math.abs(sources - uses)), "amount")}`}
       </p>
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-2 text-sm font-medium">
-          Line of credit increases
-          <span className="ml-2 text-xs font-normal text-muted">
-            Interest on the expected average use, in debt service
-          </span>
-        </legend>
-        {draft.lines.map((l) => (
-          <div
-            key={l.key}
-            className="grid grid-cols-2 gap-2 rounded-md border border-line p-2.5 sm:grid-cols-[minmax(8rem,1.4fr)_repeat(3,minmax(6rem,1fr))_auto]"
-          >
-            <label className="col-span-2 flex flex-col gap-1 sm:col-span-1">
-              <span className={caption}>Line</span>
-              <input
-                value={l.name}
-                onChange={(e) =>
-                  update("lines", l.key, { name: e.target.value })
-                }
-                className={input}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className={caption}>Increase</span>
-              <input
-                value={l.increase}
-                inputMode="decimal"
-                onChange={(e) =>
-                  update("lines", l.key, { increase: e.target.value })
-                }
-                className={numeric}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className={caption}>Average use</span>
-              <input
-                value={l.usage}
-                placeholder="50%"
-                onChange={(e) =>
-                  update("lines", l.key, { usage: e.target.value })
-                }
-                className={numeric}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className={caption}>Rate</span>
-              <input
-                value={l.rate}
-                placeholder="7%"
-                onChange={(e) =>
-                  update("lines", l.key, { rate: e.target.value })
-                }
-                className={numeric}
-              />
-            </label>
-            <Remove name={l.name} onClick={() => remove("lines", l.key)} />
-          </div>
-        ))}
-        <div>
-          <button
-            type="button"
-            className={button.secondary}
-            onClick={() =>
-              set({
-                lines: [
-                  ...draft.lines,
-                  {
-                    key: newKey(),
-                    name: "Operating line",
-                    increase: "",
-                    usage: "50%",
-                    rate: "",
-                  },
-                ],
-              })
-            }
-          >
-            <Icon name="plus" />
-            Line of credit increase
-          </button>
-        </div>
-      </fieldset>
 
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-2 text-sm font-medium">

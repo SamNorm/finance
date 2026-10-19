@@ -430,14 +430,6 @@ function sourcesUsesBlock(data: DocumentData, l: Locale): string {
     data.debt.flatMap((d) => d.schedule.loans.map((l) => [l.id, l.name])),
   );
   const extras = [
-    ...deal.lines.map((line) =>
-      l.w.lineIncrease(
-        escape(line.name),
-        escape(l.figure(line.increase, "amount")),
-        escape(l.rate(line.rate)),
-        escape(l.rate(line.usage)),
-      ),
-    ),
     ...deal.subordinations.map((s) =>
       l.w.subordination(escape(s.name), escape(l.figure(s.amount, "amount"))),
     ),

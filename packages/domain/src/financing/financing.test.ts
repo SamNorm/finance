@@ -25,7 +25,7 @@ const mapping: FinancingItems = {
 };
 
 // Equipment bought with a new loan, equity and cash on hand, and closing
-// costs expensed; plus a line of credit increase and postponed advances.
+// costs expensed; plus postponed advances.
 const project = normalizeProject(
   {
     closing: "2024-12-31",
@@ -49,9 +49,6 @@ const project = normalizeProject(
     uses: [
       { name: "Machinery", amount: "1500000", item: "MACHINERY" },
       { name: "Closing costs", amount: "100000", item: "RETAINED_EARNINGS" },
-    ],
-    lines: [
-      { name: "Line increase", increase: "500000", usage: "60%", rate: "7%" },
     ],
     subordinations: [
       {
@@ -114,7 +111,6 @@ describe("normalizeProject", () => {
       rate: "0.06",
       months: 120,
     });
-    expect(project.lines[0]).toMatchObject({ usage: "0.6", rate: "0.07" });
     const totals = projectTotals(project);
     expect(totals.sources.toFixed()).toBe("1600000");
     expect(totals.difference.toFixed()).toBe("0");
@@ -181,12 +177,6 @@ describe("projectValues", () => {
       "42525.00",
       "56700.00",
       "49500.00",
-    ]);
-    expect(show("PROFORMA_LINE_INTEREST")).toEqual([
-      "21000.00",
-      "15750.00",
-      "21000.00",
-      "21000.00",
     ]);
     expect(show("PROFORMA_TO_EQUITY")[3]).toBe("300000.00");
     expect(values.PROFORMA_INTEREST[0]!.parts.map((p) => p.name)).toEqual([

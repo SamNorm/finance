@@ -23,6 +23,16 @@ import {
   type CapexItem,
   type CapexYear,
 } from "../financing/capex";
+import {
+  linesWithoutUsage,
+  mergeLineUsage,
+  normalizeLineUsage,
+  normalizeProposedLines,
+  type LineUsage,
+  type ProposedLine,
+  type ProposedLineInput,
+} from "../credit-lines/credit-lines";
+import { getCreditLines, type OwnedLine } from "../credit-lines/service";
 import { parseDate } from "../financing/common";
 import {
   balanceSheetSides,
@@ -273,9 +283,16 @@ export async function updateAnalysis(
     // Periods shown with a post-project column, by run period key.
     postProjectKeys?: string[];
     status?: AnalysisStatus;
+    // The usage assumed for each of the borrower's lines of credit, as
+    // typed: their share of the limit, and amounts drawn by month.
+    lineUsage?: unknown;
   },
 ): Promise<Analysis> {
   const analysis = await findAnalysis(db, ctx, analysisId);
+  const lineUsage =
+    patch.lineUsage === undefined
+      ? undefined
+      : await checkLineUsage(db, ctx, analysis.entityId, patch.lineUsage);
   checkSettings(patch);
   if (patch.status !== undefined && !STATUSES.includes(patch.status)) {
     throw new DomainError("invalid", `"${patch.status}" isn't a status.`);
@@ -305,6 +322,7 @@ export async function updateAnalysis(
       projectionMode: patch.projectionMode,
       projectionYears: patch.projectionYears,
       postProjectKeys,
+      lineUsage,
       status: patch.status,
       // Completing again keeps the first date.
       completedAt:
@@ -520,6 +538,43 @@ function normalizePeriodOverrides(
   return result;
 }
 
+// Usage as typed, for the borrower's lines and any the scenario proposes.
+async function checkLineUsage(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  usage: unknown,
+  proposed: readonly ProposedLine[] | null = null,
+) {
+  const lines = [
+    ...(await getCreditLines(db, ctx, entityId)),
+    ...(proposed ?? []),
+  ];
+  return normalizeLineUsage(
+    usage,
+    new Set(lines.map((l) => l.id)),
+    new Map(lines.map((l) => [l.id, l.name])),
+  );
+}
+
+// Usage kept only for lines still there, once a scenario's proposed lines
+// change.
+async function keptLineUsage(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  usage: LineUsage,
+  proposed: readonly ProposedLine[] | null,
+): Promise<LineUsage> {
+  const ids = new Set([
+    ...(await getCreditLines(db, ctx, entityId)).map((l) => l.id),
+    ...(proposed ?? []).map((l) => l.id),
+  ]);
+  return Object.fromEntries(
+    Object.entries(usage).filter(([id]) => ids.has(id)),
+  );
+}
+
 export interface ScenarioInput {
   name: string;
   overrides?: Record<string, string>;
@@ -532,6 +587,12 @@ export interface ScenarioInput {
   capex?: unknown;
   // The covenants proposed for its deal; null tests the borrower's.
   covenants?: readonly CovenantInput[] | null;
+  // The lines of credit proposed for its deal, those in force by their id;
+  // null keeps the lines in force.
+  lines?: readonly ProposedLineInput[] | null;
+  // Usage assumed for lines, over the analysis's: by line, a share and
+  // amounts drawn by month.
+  lineUsage?: unknown;
 }
 
 // What a project's items are checked against: the balance sheet of the
@@ -627,6 +688,14 @@ export async function addScenario(
   const detail = await getAnalysis(db, ctx, analysisId);
   if (!input.name.trim())
     throw new DomainError("invalid", "Give the scenario a name.");
+  const lines = input.lines ? normalizeProposedLines(input.lines) : null;
+  const lineUsage = await checkLineUsage(
+    db,
+    ctx,
+    detail.entity.id,
+    input.lineUsage ?? {},
+    lines,
+  );
   const [scenario] = await db
     .insert(scenarios)
     .values({
@@ -641,6 +710,8 @@ export async function addScenario(
       project: await checkProject(db, ctx, detail, input.project),
       capex: normalizeCapex(input.capex),
       covenants: input.covenants ? normalizeCovenants(input.covenants) : null,
+      lines,
+      lineUsage,
     })
     .returning();
   await touch(db, analysisId);
@@ -679,6 +750,22 @@ export async function updateScenario(
     throw new DomainError("invalid", "Give the scenario a name.");
   }
   const detail = await getAnalysis(db, ctx, scenario.analysisId);
+  const lines =
+    patch.lines === undefined
+      ? scenario.lines
+      : patch.lines && normalizeProposedLines(patch.lines);
+  const lineUsage =
+    patch.lineUsage !== undefined
+      ? await checkLineUsage(db, ctx, detail.entity.id, patch.lineUsage, lines)
+      : patch.lines !== undefined
+        ? await keptLineUsage(
+            db,
+            ctx,
+            detail.entity.id,
+            scenario.lineUsage,
+            lines,
+          )
+        : undefined;
   const [updated] = await db
     .update(scenarios)
     .set({
@@ -698,6 +785,8 @@ export async function updateScenario(
         patch.covenants === undefined
           ? undefined
           : patch.covenants && normalizeCovenants(patch.covenants),
+      lines: patch.lines === undefined ? undefined : lines,
+      lineUsage,
     })
     .where(eq(scenarios.id, scenarioId))
     .returning();
@@ -741,6 +830,8 @@ export async function duplicateScenario(
     project: source.project,
     capex: source.capex,
     covenants: source.covenants,
+    lines: source.lines,
+    lineUsage: source.lineUsage,
   });
 }
 
@@ -763,6 +854,14 @@ const touch = (db: Db, analysisId: string) =>
 export interface AnalysisResults {
   // The chosen scenario's capex plan year by year; empty without one.
   capex: CapexYear[];
+  // The borrower's lines of credit in force, the usage the shown run
+  // assumes (the scenario's over the analysis's), and the lines it counts
+  // with none, whose interest counts as zero.
+  creditLines: {
+    inForce: OwnedLine[];
+    usage: LineUsage;
+    withoutUsage: { id: string; name: string }[];
+  };
   base: AnalysisRun;
   // The chosen scenario, when one is.
   scenario: AnalysisRun | null;
@@ -792,11 +891,16 @@ export async function runAnalysis(
     : undefined;
   if (scenarioId && !scenario)
     throw new DomainError("not_found", "No such scenario.");
-  const [spread, { items, sides, mapping }, debt] = await Promise.all([
+  const [spread, { items, sides, mapping }, debt, inForce] = await Promise.all([
     getSpread(db, ctx, detail.entity.id),
     projectContext(db, ctx, detail),
     getDebtSchedules(db, ctx, detail.entity.id),
+    getCreditLines(db, ctx, detail.entity.id),
   ]);
+  const usage = mergeLineUsage(
+    detail.analysis.lineUsage,
+    scenario?.lineUsage ?? {},
+  );
   const { projectionMode, projectionYears } = detail.analysis;
   const client = projectionMode === "client";
   // Projections come either from the client, as spread periods, or from the
@@ -821,6 +925,7 @@ export async function runAnalysis(
     scenario: Pick<Scenario, "overrides" | "periodOverrides"> | null,
     project: Project | null,
     capex: readonly CapexItem[] = [],
+    proposed: readonly ProposedLine[] | null = null,
   ) =>
     runModel({
       periods: project
@@ -832,6 +937,7 @@ export async function runAnalysis(
       periodOverrides: scenario?.periodOverrides,
       project,
       capex,
+      creditLines: { inForce, proposed, usage },
       debtSchedules: debt.map((d) => d.schedule),
       items: items
         .filter((item) => item.kind !== "header")
@@ -848,12 +954,35 @@ export async function runAnalysis(
   const lastYear = base.periods.findLast(
     (p) => p.projection === null && p.months === 12,
   );
-  const scenarioRun = scenario ? run(scenario, null, scenario.capex) : null;
+  // A scenario's proposed lines apply from closing post-project; with no
+  // project, from the first projected month.
+  const scenarioRun = scenario
+    ? run(
+        scenario,
+        null,
+        scenario.capex,
+        scenario.project ? null : scenario.lines,
+      )
+    : null;
   const projectRun = scenario?.project
-    ? run(scenario, scenario.project, scenario.capex)
+    ? run(scenario, scenario.project, scenario.capex, scenario.lines)
     : null;
   const covenants = scenario?.covenants ?? spread.entity.covenants;
+  const counted = [
+    ...inForce.filter(
+      (l) => !l.closedOn && !scenario?.lines?.some((p) => p.id === l.id),
+    ),
+    ...(scenario?.lines ?? []),
+  ];
   return {
+    creditLines: {
+      inForce,
+      usage,
+      withoutUsage: linesWithoutUsage(counted, usage).map(({ id, name }) => ({
+        id,
+        name,
+      })),
+    },
     capex: scenarioRun
       ? capexYears(
           scenario!.capex,
@@ -1042,6 +1171,7 @@ export async function repinAnalysis(
           (chart) => !checkCharts([chart], lines).length,
         ),
         postProjectKeys: detail.analysis.postProjectKeys,
+        lineUsage: detail.analysis.lineUsage,
       })
       .where(eq(analyses.id, copy.id));
     for (const scenario of detail.scenarios) {
@@ -1062,6 +1192,8 @@ export async function repinAnalysis(
         project: scenario.project,
         capex: scenario.capex,
         covenants: scenario.covenants,
+        lines: scenario.lines,
+        lineUsage: scenario.lineUsage,
       });
     }
     return copy;

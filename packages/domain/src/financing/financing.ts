@@ -68,9 +68,9 @@ export const FINANCING_INPUTS = [
   },
   {
     code: "PROFORMA_LINE_INTEREST",
-    label: "Line of credit interest",
+    label: "Post-project line interest",
     description:
-      "Interest on the expected average use of line of credit increases.",
+      "What the lines of credit the scenario proposes add to line interest post-project: a new limit or rate, a new line, less a line closed. Zero elsewhere.",
   },
   {
     code: "PROFORMA_TO_EQUITY",
@@ -101,6 +101,24 @@ export const FINANCING_INPUTS = [
     label: "Existing loans: balance",
     description:
       "What the borrower's existing loans owe, from its debt schedule. Blank in actual periods except post-project.",
+  },
+  {
+    code: "LINE_INTEREST",
+    label: "Lines of credit: interest",
+    description:
+      "Interest on the borrower's lines of credit, on the usage the analysis assumes each month; post-project, on the lines the scenario proposes. Blank in actual periods except post-project, so a formula can fall back on the statements with ISBLANK.",
+  },
+  {
+    code: "LINE_AUTHORIZED",
+    label: "Lines of credit: limits",
+    description:
+      "The lines of credit's authorized limits at the period's end. Blank in actual periods except post-project.",
+  },
+  {
+    code: "LINE_AVERAGE_USAGE",
+    label: "Lines of credit: average usage",
+    description:
+      "What the lines of credit are assumed to have drawn, on average over the period. Blank in actual periods except post-project.",
   },
   {
     code: "CAPEX_SPENT",
@@ -143,10 +161,17 @@ export const FINANCING_CODES: readonly string[] = FINANCING_INPUTS.map(
 );
 export type ProjectCode = Exclude<
   FinancingCode,
-  `DEBT_SCHEDULE_${string}` | `CAPEX_${string}`
+  | `DEBT_SCHEDULE_${string}`
+  | `CAPEX_${string}`
+  | `LINE_${string}`
+  | "PROFORMA_LINE_INTEREST"
 >;
 export const PROJECT_CODES = FINANCING_CODES.filter(
-  (code) => !code.startsWith("DEBT_SCHEDULE_") && !code.startsWith("CAPEX_"),
+  (code) =>
+    !code.startsWith("DEBT_SCHEDULE_") &&
+    !code.startsWith("CAPEX_") &&
+    !code.startsWith("LINE_") &&
+    code !== "PROFORMA_LINE_INTEREST",
 ) as ProjectCode[];
 
 export type Side = "assets" | "claims";
@@ -194,7 +219,6 @@ export interface ProjectInput {
   closing?: unknown;
   sources?: readonly Record<string, unknown>[];
   uses?: readonly Record<string, unknown>[];
-  lines?: readonly Record<string, unknown>[];
   subordinations?: readonly Record<string, unknown>[];
   adjustments?: readonly Record<string, unknown>[];
   consolidatedLoans?: unknown;
@@ -231,7 +255,6 @@ export function normalizeProject(
   };
   const sources = list(input.sources);
   const uses = list(input.uses);
-  const lines = list(input.lines);
   const subordinations = list(input.subordinations);
   const adjustments = list(input.adjustments);
   // A loan since removed from the borrower's debt schedule is dropped.
@@ -245,7 +268,6 @@ export function normalizeProject(
   if (
     !sources.length &&
     !uses.length &&
-    !lines.length &&
     !subordinations.length &&
     !adjustments.length &&
     !consolidatedLoans.length
@@ -299,16 +321,6 @@ export function normalizeProject(
         name,
         amount: parseAmount(u.amount, name, "amount", true),
         item: item(u.item, name),
-      };
-    }),
-    lines: lines.map((l, i) => {
-      const name = named(l.name, `Line of credit ${i + 1}`);
-      return {
-        id: entryId(l.id),
-        name,
-        increase: parseAmount(l.increase, name, "increase", true),
-        usage: parseRate(l.usage, name, "average usage"),
-        rate: parseRate(l.rate, name),
       };
     }),
     subordinations: subordinations.map((s, i) => {
@@ -494,10 +506,6 @@ export function projectValues(
       add("PROFORMA_PREPAYMENTS", p, loan, flows.extra.times(w.share));
     }
     const open = new Dec(w.open).div(12).times(w.share);
-    for (const line of project.lines) {
-      const yearly = new Dec(line.increase).times(line.usage).times(line.rate);
-      add("PROFORMA_LINE_INTEREST", p, line, yearly.times(open));
-    }
     for (const sub of project.subordinations) {
       add("PROFORMA_TO_EQUITY", p, sub, new Dec(sub.amount));
       add(

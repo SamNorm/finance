@@ -217,7 +217,6 @@ describe("runModel", () => {
         closing: "2025-01-31",
         sources: [],
         uses: [],
-        lines: [],
         subordinations: [],
       },
     });

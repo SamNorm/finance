@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { ScenarioInput } from "../analyses/service";
+import type { LineTerms } from "../credit-lines/credit-lines";
+import type { Term } from "../credit-lines/terms";
 import type { CovenantInput } from "../covenants/covenants";
 import type { ChartDefinition } from "../financial-models/charts";
 import { assumption, calc, complete, header, type Line } from "./lines";
@@ -84,17 +87,17 @@ const LINES: Line[] = [
     "EXISTING_INTEREST",
     "Interest on existing debt",
     "amount",
-    "IF(ISBLANK(DEBT_SCHEDULE_INTEREST), TOTAL_INTEREST_EXPENSE, DEBT_SCHEDULE_INTEREST)",
-    "IF(ISBLANK(DEBT_SCHEDULE_INTEREST), PREV(EXISTING_INTEREST), DEBT_SCHEDULE_INTEREST)",
-    "From the statements; post-project and projected, the debt schedule's interest.",
+    "IF(ISBLANK(DEBT_SCHEDULE_INTEREST), TOTAL_INTEREST_EXPENSE, DEBT_SCHEDULE_INTEREST + LINE_INTEREST)",
+    "IF(ISBLANK(DEBT_SCHEDULE_INTEREST), PREV(EXISTING_INTEREST), DEBT_SCHEDULE_INTEREST + LINE_INTEREST)",
+    "From the statements; post-project and projected, the debt schedule's interest and the lines of credit's, on the usage assumed (post-project, on the lines the deal proposes).",
   ),
   calc(
     "INTEREST",
     "Interest expense",
     "amount",
-    "EXISTING_INTEREST + PROFORMA_INTEREST + PROFORMA_LINE_INTEREST + CAPEX_INTEREST",
+    "EXISTING_INTEREST + PROFORMA_INTEREST + CAPEX_INTEREST",
     null,
-    "Existing interest plus the project's new loans and line of credit, and the capex plan's loans.",
+    "Existing interest plus the project's new loans and the capex plan's loans.",
   ),
   calc(
     "CASH_TAXES",
@@ -302,17 +305,40 @@ export const DEMO_CAPEX_SCENARIO: ScenarioInput = {
   ],
 };
 
+// A limit raised by an amount, in every season and step.
+function raised(term: Term, by: number): Term {
+  const plus = (value: string) => String(Number(value) + by);
+  const seasons = (list: Term["seasons"]) =>
+    list?.map((s) => ({ ...s, value: plus(s.value) }));
+  return {
+    value: plus(term.value),
+    ...(term.seasons ? { seasons: seasons(term.seasons) } : {}),
+    ...(term.steps
+      ? {
+          steps: term.steps.map((step) => ({
+            ...step,
+            value: plus(step.value),
+            ...(step.seasons ? { seasons: seasons(step.seasons) } : {}),
+          })),
+        }
+      : {}),
+  };
+}
+
 // Scenarios added to each demo analysis: two stresses, and new equipment
-// financed by a term loan and an equity injection, with a larger operating
-// line and the shareholders' loans postponed in favour of the lender. The
-// deal proposes covenants of its own: coverage eased, and leverage given
+// financed by a term loan and an equity injection, with the operating line
+// (`line`) raised by $500,000, or a new one of that much drawn 60% on
+// average, and the shareholders' loans postponed in favour of the lender.
+// The deal proposes covenants of its own: coverage eased, and leverage given
 // room until the new line pays off. It also assumes dividends held to half
 // of the last year's (`dividends`) until 2026, then three quarters.
 export function demoScenarios(
   shareholderLoans: string,
   dividends = "0",
+  line?: Pick<LineTerms, "id" | "name" | "currency" | "limit" | "rate">,
 ): ScenarioInput[] {
   const share = (rate: number) => String(Math.round(Number(dividends) * rate));
+  const newLine = randomUUID();
   return [
     { name: "Revenue −15%", overrides: { REVENUE_GROWTH: "-0.15" } },
     { name: "Margin squeeze", overrides: { MARGIN_SHIFT: "-0.02" } },
@@ -355,14 +381,6 @@ export function demoScenarios(
             item: "RETAINED_EARNINGS",
           },
         ],
-        lines: [
-          {
-            name: "Operating line increase",
-            increase: "500000",
-            usage: "60%",
-            rate: "7.2%",
-          },
-        ],
         subordinations:
           Number(shareholderLoans) > 0
             ? [
@@ -375,6 +393,17 @@ export function demoScenarios(
               ]
             : [],
       },
+      lines: line
+        ? [{ ...line, limit: raised(line.limit, 500_000) }]
+        : [
+            {
+              id: newLine,
+              name: "Operating line",
+              limit: "500000",
+              rate: "7.2%",
+            },
+          ],
+      ...(line ? {} : { lineUsage: { [newLine]: { share: "60%" } } }),
       covenants: [
         { ...DEMO_COVENANTS[0]!, threshold: "1.20" },
         {

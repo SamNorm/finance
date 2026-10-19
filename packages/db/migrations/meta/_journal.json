@@ -162,6 +162,13 @@
       "when": 1792366063904,
       "tag": "0022_scenario_period_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792368838914,
+      "tag": "0023_credit_lines",
+      "breakpoints": true
     }
   ]
 }

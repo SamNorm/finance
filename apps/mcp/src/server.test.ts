@@ -266,7 +266,6 @@ describe("MCP server", () => {
       add_project_loan: "adds",
       add_project_funds: "adds",
       add_project_use: "adds",
-      add_line_of_credit_increase: "adds",
       add_subordination: "adds",
       add_project_adjustment: "adds",
       update_project_entry: "changes",
@@ -479,13 +478,6 @@ describe("MCP server", () => {
       balanced: true,
     });
     expect(equity.project).not.toHaveProperty("warning");
-    await call("add_line_of_credit_increase", {
-      scenarioId: scenario.id,
-      name: "Operating line increase",
-      increase: "250,000",
-      averageUsage: "40%",
-      rate: "7%",
-    });
     const { value: sub } = await call("add_subordination", {
       scenarioId: scenario.id,
       name: "Shareholder loans postponed",

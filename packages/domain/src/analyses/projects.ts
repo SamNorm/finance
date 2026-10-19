@@ -24,13 +24,11 @@ import {
 // whole project again, so the rules are the editor's. Sources and uses may
 // differ in between; completing the analysis needs them to match.
 
-export type ProjectList =
-  "sources" | "uses" | "lines" | "subordinations" | "adjustments";
+export type ProjectList = "sources" | "uses" | "subordinations" | "adjustments";
 
 export type ProjectEntry =
   | ProjectSource
   | ProjectUse
-  | Project["lines"][number]
   | Project["subordinations"][number]
   | ProjectAdjustment;
 
@@ -49,7 +47,6 @@ export interface ProjectLoanInput extends LoanTermsInput {
 const LISTS: ProjectList[] = [
   "sources",
   "uses",
-  "lines",
   "subordinations",
   "adjustments",
 ];
@@ -63,7 +60,6 @@ const asInput = (project: Project | null): ProjectInput => ({
   closing: project?.closing,
   sources: project?.sources ?? [],
   uses: project?.uses ?? [],
-  lines: project?.lines ?? [],
   subordinations: project?.subordinations ?? [],
   adjustments: project?.adjustments ?? [],
 });
@@ -87,8 +83,7 @@ const saved = (scenario: Scenario, entryId: string) =>
   find(scenario.project, entryId).entry;
 
 // Adds an entry to one of the project's lists: a source (a loan, or other
-// funds such as equity), a use, a line of credit increase, a subordination
-// or an adjustment. A scenario without a project starts one, closing on the date
+// funds such as equity), a use, a subordination or an adjustment. A scenario without a project starts one, closing on the date
 // given; one with a project keeps its closing date.
 export async function addProjectEntry(
   db: Db,

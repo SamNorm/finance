@@ -1,6 +1,7 @@
 export * from "./analyses";
 export * from "./context";
 export * from "./covenants";
+export * from "./credit-lines";
 export * from "./errors";
 export * from "./financial-models";
 export * from "./financing";

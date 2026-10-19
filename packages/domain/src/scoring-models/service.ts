@@ -225,7 +225,7 @@ export async function setCheckItems(
   modelId: string,
   input: Partial<Record<keyof CheckItems, string | null>>,
 ): Promise<ScoringModel> {
-  await findModel(db, ctx, modelId);
+  const current = await findModel(db, ctx, modelId);
   const version = await getLatestPublishedVersion(db, ctx, modelId);
   if (!version)
     throw new DomainError("conflict", "Publish the scoring model first.");
@@ -247,6 +247,17 @@ export async function setCheckItems(
       );
     return code;
   };
+  // The authorized line is an amount on any statement, often supplementary.
+  const authorizedLine = (raw: string | null) => {
+    const code = raw?.trim() || null;
+    const item = code && items.find((i) => i.code === code);
+    if (code && (!item || item.kind !== "input" || item.dataType !== "amount"))
+      throw new DomainError(
+        "invalid",
+        "The authorized line of credit must be an amount entered in the spread.",
+      );
+    return code;
+  };
   const [model] = await db
     .update(scoringModels)
     .set({
@@ -257,6 +268,11 @@ export async function setCheckItems(
           "balance_sheet",
           "Retained earnings",
         ),
+        // Kept when not given: models set before it don't send it.
+        lineAuthorized:
+          input.lineAuthorized === undefined
+            ? (current.checkItems.lineAuthorized ?? null)
+            : authorizedLine(input.lineAuthorized),
       },
     })
     .where(eq(scoringModels.id, modelId))

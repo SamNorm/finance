@@ -33,8 +33,8 @@ import { describeProject } from "../loans";
 import { ADD, CHANGE, invalid, READ, respond } from "../respond";
 
 // A scenario's project, an entry at a time: sources (new loans and other
-// funds) and uses at closing, line of credit increases, subordinations and
-// adjustments.
+// funds) and uses at closing, subordinations and adjustments. The deal's
+// lines of credit are the scenario's.
 // Every edit returns the project as it stands, with its totals, so the model
 // can tell the user when sources and uses don't match yet.
 
@@ -58,7 +58,6 @@ const FIELDS = {
   ],
   funds: ["name", "amount", "postsTo"],
   use: ["name", "amount", "postsTo"],
-  line: ["name", "increase", "averageUsage", "rate"],
   subordination: ["name", "amount", "interestSaved", "principalSaved"],
   adjustment: ["name", "amount", "postsTo"],
 } as const;
@@ -67,7 +66,6 @@ function kindOf(project: Project | null, id: string) {
   const source = project?.sources.find((s) => s.id === id);
   if (source) return source.kind;
   if (project?.uses.some((u) => u.id === id)) return "use";
-  if (project?.lines.some((l) => l.id === id)) return "line";
   if (project?.subordinations.some((s) => s.id === id)) return "subordination";
   if (project?.adjustments?.some((a) => a.id === id)) return "adjustment";
   return null;
@@ -89,7 +87,6 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
         ? [
             ...project.sources,
             ...project.uses,
-            ...project.lineOfCreditIncreases,
             ...project.subordinations,
             ...project.adjustments,
           ].find((e) => e.id === id)
@@ -232,35 +229,6 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
   );
 
   server.registerTool(
-    "add_line_of_credit_increase",
-    {
-      title: "Add a line of credit increase to a project",
-      description:
-        "Adds an increase of the borrower's authorized line of credit. It moves no funds at closing, so it isn't a source; debt service counts interest on its expected average use.",
-      inputSchema: z.object({
-        scenarioId,
-        name: z.string().describe('e.g. "Operating line increase".'),
-        increase: amount("How much the authorized line increases"),
-        averageUsage: rate("Its expected average use"),
-        rate: rate(),
-        closing,
-      }),
-      annotations: ADD,
-    },
-    ({ scenarioId, averageUsage, ...input }) =>
-      respond(async () => {
-        const { scenario, entry } = await addProjectEntry(
-          db,
-          ctx,
-          scenarioId,
-          "lines",
-          { ...input, usage: averageUsage },
-        );
-        return edited(scenario, entry.id);
-      }),
-  );
-
-  server.registerTool(
     "add_subordination",
     {
       title: "Add a subordination to a project",
@@ -333,8 +301,8 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Change a project entry",
       description: [
-        "Changes some fields of a project's loan, other funds, use, line of credit increase, subordination or adjustment; the others stay.",
-        "Fields by kind: a loan has name, amount, rate, repayment, years, frequency and moratorium (null removes it); funds, uses and adjustments have name, amount and postsTo; a line of credit increase has name, increase, averageUsage and rate; a subordination has name, amount, interestSaved and principalSaved.",
+        "Changes some fields of a project's loan, other funds, use, subordination or adjustment; the others stay.",
+        "Fields by kind: a loan has name, amount, rate, repayment, years, frequency and moratorium (null removes it); funds, uses and adjustments have name, amount and postsTo; a subordination has name, amount, interestSaved and principalSaved.",
         BALANCE,
       ].join(" "),
       inputSchema: z.object({
@@ -348,8 +316,6 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
         years: years.optional(),
         frequency: frequency.optional(),
         moratorium: moratorium.nullable().optional(),
-        increase: amount("The line's increase").optional(),
-        averageUsage: rate("The line's expected average use").optional(),
         interestSaved: amount("Interest saved a year").optional(),
         principalSaved: amount("Principal saved a year").optional(),
       }),
@@ -369,7 +335,7 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
           throw invalid(
             `${kind === "adjustment" ? "An" : "A"} ${kind === "funds" ? "funds source" : kind} has no ${wrong.join(", ")}; its fields are ${fields.join(", ")}.`,
           );
-        const { postsTo, averageUsage, ...rest } = changes;
+        const { postsTo, ...rest } = changes;
         const { scenario } = await updateProjectEntry(
           db,
           ctx,
@@ -378,7 +344,6 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
           {
             ...rest,
             ...(postsTo !== undefined ? { item: postsTo } : {}),
-            ...(averageUsage !== undefined ? { usage: averageUsage } : {}),
           },
         );
         return edited(scenario, entryId);
@@ -413,7 +378,7 @@ export function projectTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Remove a project entry",
       description:
-        "Removes a loan, other funds, use, line of credit increase, subordination or adjustment from a scenario's project. A project left with nothing is removed. Confirm with the user first.",
+        "Removes a loan, other funds, use, subordination or adjustment from a scenario's project. A project left with nothing is removed. Confirm with the user first.",
       inputSchema: z.object({ scenarioId, entryId }),
       annotations: CHANGE,
     },

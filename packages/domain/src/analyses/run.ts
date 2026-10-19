@@ -7,6 +7,7 @@ import {
   type Projection,
   type Value,
 } from "@finance/engine";
+import { creditLineValues, type RunLines } from "../credit-lines/credit-lines";
 import { assumptionValue } from "../financial-models/validate";
 import type { ModelLine } from "../financial-models/types";
 import { monthIndex } from "../financing/amortization";
@@ -61,7 +62,7 @@ export interface LineageRef extends ResultValue {
   // Where the value came from: a model line, an assumption, a figure entered
   // in the spread or for the model, a subtotal summed from its lines, the
   // scenario's financing, the borrower's debt schedule, the scenario's capex
-  // plan, or nothing.
+  // plan, the lines of credit, or nothing.
   source:
     | "calculation"
     | "assumption"
@@ -70,6 +71,7 @@ export interface LineageRef extends ResultValue {
     | "adjustment"
     | "schedule"
     | "capex"
+    | "line"
     | "blank";
   // For financing and items the project adjusted: each entry's share.
   parts?: FinancingPart[];
@@ -143,6 +145,10 @@ export interface RunInput {
   debtSchedules?: readonly DebtSchedule[];
   // The scenario's purchases planned in projected years.
   capex?: readonly CapexItem[];
+  // The lines of credit, the usage assumed, and any the scenario proposes:
+  // from closing in a post-project run, or else from the first projected
+  // month. `proposedAfter` is set here.
+  creditLines?: Omit<RunLines, "proposedAfter">;
   // Items of the scoring model version the model is bound to.
   items: readonly { code: string; label: string; numeric: boolean }[];
 }
@@ -219,6 +225,21 @@ export function runModel(input: RunInput): AnalysisRun {
   );
   financing.DEBT_SCHEDULE_BALANCE = schedule.balance.map((v) => v ?? blank);
   Object.assign(financing, capexValues(input.capex ?? [], info));
+  const lastActual = periods.findLast((p) => p.projection === null);
+  const closing = project ? monthIndex(project.closing) : null;
+  const lines = creditLineValues(
+    {
+      inForce: input.creditLines?.inForce ?? [],
+      proposed: input.creditLines?.proposed,
+      proposedAfter:
+        closing ?? (lastActual ? monthIndex(lastActual.end) : null),
+      usage: input.creditLines?.usage ?? {},
+    },
+    info,
+    closing,
+  );
+  for (const [code, values] of Object.entries(lines))
+    financing[code as FinancingCode] = values.map((v) => v ?? blank);
   const isFinancing = (code: string): code is FinancingCode =>
     FINANCING_CODES.includes(code);
   const financingLabels = new Map<string, string>(
@@ -293,7 +314,9 @@ export function runModel(input: RunInput): AnalysisRun {
         ? "schedule"
         : code.startsWith("CAPEX_")
           ? "capex"
-          : "adjustment";
+          : code.startsWith("LINE_") || code === "PROFORMA_LINE_INTEREST"
+            ? "line"
+            : "adjustment";
     const line = lineByCode.get(code);
     if (line?.kind === "input") {
       if (periods[p]?.projection === "assumptions" && line.projectionFormula)

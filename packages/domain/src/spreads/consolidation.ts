@@ -22,6 +22,7 @@ import {
 } from "./checks";
 import { checkPeriodInput, findDuplicate, findPeriod, UUID } from "./periods";
 import {
+  addLineLimitChecks,
   createEntity,
   getEntity,
   getSpread,
@@ -272,7 +273,7 @@ function consolidationIssues(
 }
 
 // The members, in order, of a consolidated client.
-async function memberRows(db: Db, entityId: string) {
+export async function memberRows(db: Db, entityId: string) {
   return db
     .select({
       id: entities.id,
@@ -461,6 +462,11 @@ export async function consolidatedSpread(
       }),
     ];
   }
+  await addLineLimitChecks(
+    db,
+    spread,
+    memberList.map((m) => m.id),
+  );
   return spread;
 }
 

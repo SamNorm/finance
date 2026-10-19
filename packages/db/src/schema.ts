@@ -118,10 +118,13 @@ export interface FinancingItems {
 
 // The items the spread's statement checks read, as item codes of the model:
 // net income, compared with the figure printed on the statements, and
-// retained earnings, rolled forward from one period to the next.
+// retained earnings, rolled forward from one period to the next; and the
+// authorized line of credit, compared with the borrower's lines' limits.
+// Absent in models saved before it.
 export interface CheckItems {
   netIncome: string | null;
   retainedEarnings: string | null;
+  lineAuthorized?: string | null;
 }
 
 export const scoringModels = pgTable(
@@ -336,6 +339,70 @@ export const entities = pgTable(
     index("entities_scoring_model").on(t.scoringModelId),
   ],
 ).enableRLS();
+
+// A term of a line of credit (borrowing-base-plan.md §5.3): a value that can
+// differ in some calendar months every year, for a season, and step from a
+// month, for an amendment. A step replaces the value and its seasons from
+// its month on. Values are canonical decimal strings; months are "YYYY-MM".
+export interface Season {
+  // Calendar months, 1 to 12.
+  months: number[];
+  value: string;
+}
+
+export interface Term {
+  value: string;
+  seasons?: Season[];
+  // In order, each from a later month.
+  steps?: { from: string; value: string; seasons?: Season[] }[];
+}
+
+// A borrower's lines of credit (borrowing-base-plan.md §4): what's real, with
+// their terms in force. A consolidated client's are its members'. The balance
+// isn't kept: the spread holds it at each period end.
+export const creditLines = pgTable(
+  "credit_lines",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    name: text().notNull(),
+    // ISO 4217, e.g. "CAD".
+    currency: text().notNull().default("CAD"),
+    // The authorized limit, an amount, which can step and be seasonal.
+    limit: jsonb().$type<Term>().notNull(),
+    // Annual rate, e.g. "0.072".
+    rate: text().notNull(),
+    position: integer().notNull().default(0),
+    // The day it was closed; analyses no longer count it after.
+    closedOn: date({ mode: "string" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("credit_lines_entity").on(t.entityId, t.position)],
+).enableRLS();
+
+// The usage an analysis or a scenario assumes for each line of credit, by
+// line id: its average share of the limit, and any month's amount drawn
+// instead, by month ("YYYY-MM"). Interest on lines comes from it.
+export type LineUsage = Record<
+  string,
+  { share?: string; months?: Record<string, string> }
+>;
+
+// A line of credit as a scenario proposes it for its deal: one of the lines
+// in force (by its id), changed or closed, or a new line. Lines in force it
+// doesn't list stay as they are.
+export interface ProposedLine {
+  id: string;
+  name: string;
+  currency: string;
+  limit: Term;
+  rate: string;
+  // Closed at the deal: from closing, or from the first projected month.
+  closed?: boolean;
+}
 
 export const statementQuality = pgEnum("statement_quality", [
   "audited",
@@ -666,6 +733,8 @@ export const analyses = pgTable(
     // Periods shown with a post-project column next to them, by run period
     // key; null means the default, the last fiscal year.
     postProjectKeys: text().array(),
+    // The usage the base case assumes for each line of credit.
+    lineUsage: jsonb().$type<LineUsage>().notNull().default({}),
     status: analysisStatus().notNull().default("in_progress"),
     completedAt: timestamp({ withTimezone: true }),
     createdAt: createdAt(),
@@ -689,9 +758,9 @@ export const analyses = pgTable(
 // The project a scenario finances, as a sources and uses table at closing:
 // sources (new loans, equity, cash on hand) equal uses (assets bought, debt
 // refinanced, costs). Each posts to a balance sheet item, so the post-project
-// balance sheet balances. Line of credit increases and subordinations sit
-// outside the table: they move no funds at closing. Amounts and rates are
-// canonical decimal strings.
+// balance sheet balances. Subordinations sit outside the table: they move no
+// funds at closing. A deal's lines of credit are the scenario's (`lines`).
+// Amounts and rates are canonical decimal strings.
 export interface Project {
   closing: string;
   sources: (
@@ -714,14 +783,6 @@ export interface Project {
     | { kind: "funds"; id: string; name: string; amount: string; item: string }
   )[];
   uses: { id: string; name: string; amount: string; item: string }[];
-  // An increase of the authorized line, and its expected average use.
-  lines: {
-    id: string;
-    name: string;
-    increase: string;
-    usage: string;
-    rate: string;
-  }[];
   // Debt postponed in favour of the lender and treated as equity, with the
   // annual interest and principal it no longer costs.
   subordinations: {
@@ -797,6 +858,13 @@ export const analysisScenarios = pgTable(
     // The covenants proposed for its deal, tested instead of the borrower's
     // in force; null tests the borrower's.
     covenants: jsonb().$type<Covenant[]>(),
+    // The lines of credit proposed for its deal; null keeps those in force.
+    // With a project they apply from closing; without, from the first
+    // projected month.
+    lines: jsonb().$type<ProposedLine[]>(),
+    // Usage assumed for lines of credit, over the analysis's: a share or
+    // months given here replace its own.
+    lineUsage: jsonb().$type<LineUsage>().notNull().default({}),
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],

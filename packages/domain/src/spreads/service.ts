@@ -11,6 +11,8 @@ import {
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError, hasErrors, type Issue } from "../errors";
+import { termIn } from "../credit-lines/terms";
+import { monthIndex } from "../financing/amortization";
 import { entryId } from "../financing/common";
 import { normalizeDebtSchedule } from "../financing/debt-schedule";
 import {
@@ -594,7 +596,51 @@ export async function getSpread(
       }),
     ];
   }
+  await addLineLimitChecks(db, spread, [entity.id]);
   return spread;
+}
+
+// The borrower's lines of credit (its members', for a consolidated client)
+// against the spread's authorized line at the latest fiscal year end: their
+// limits then, added up, should match it. A gap is flagged, not blocked.
+export async function addLineLimitChecks(
+  db: Db,
+  spread: Spread,
+  entityIds: readonly string[],
+) {
+  const code = spread.checkItems.lineAuthorized;
+  const year = spread.periods.findLast(
+    (p) => p.months === 12 && p.quality !== "projected",
+  );
+  if (!code || !year || !entityIds.length) return;
+  const raw =
+    spread.values[year.id]?.[code] ?? spread.computed[year.id]?.[code];
+  if (raw === undefined) return;
+  const lines = await db
+    .select()
+    .from(schema.creditLines)
+    .where(inArray(schema.creditLines.entityId, [...entityIds]));
+  const month = monthIndex(year.periodEnd);
+  const open = lines.filter(
+    (l) => !l.closedOn || monthIndex(l.closedOn) >= month,
+  );
+  if (!open.length) return;
+  const limits = open.reduce(
+    (sum, l) => sum.plus(termIn(l.limit, month).value),
+    new Dec(0),
+  );
+  const authorized = new Dec(raw);
+  if (limits.minus(authorized).abs().lte(TOLERANCE)) return;
+  const show = (value: InstanceType<typeof Dec>) =>
+    Number(value.toFixed(2)).toLocaleString("en-CA", {
+      maximumFractionDigits: 2,
+    });
+  (spread.checks[year.id] ??= []).push({
+    severity: "warning",
+    code: "line_limits",
+    itemCode: code,
+    message: `The lines of credit's limits add up to ${show(limits)} at ${year.periodEnd}, but the spread's authorized line is ${show(authorized)}.`,
+  });
 }
 
 // A period's figures from the statements themselves, which its checks

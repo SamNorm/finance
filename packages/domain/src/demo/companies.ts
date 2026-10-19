@@ -1,3 +1,4 @@
+import type { CreditLineInput } from "../credit-lines/credit-lines";
 import type { DebtSchedule } from "../financing/debt-schedule";
 import type { StatementQuality } from "../spreads/service";
 
@@ -41,6 +42,9 @@ export interface DemoCompany {
   periods: DemoPeriod[];
   // Its term debt as of its latest actual period.
   debtSchedule: DebtSchedule;
+  // Its lines of credit, whose limits at its fiscal year end add up to the
+  // authorized line in its spread.
+  creditLines: CreditLineInput[];
 }
 
 interface Profile {
@@ -81,6 +85,9 @@ interface Profile {
   debtRate: number;
   lineAuthorized: number;
   lineRate: number;
+  // How the authorized line splits into lines of credit; one line of it all
+  // when absent.
+  creditLines?: CreditLineInput[];
   arDays: number;
   inventoryDays: number;
   apDays: number;
@@ -128,6 +135,18 @@ const PROFILES: Profile[] = [
     debtRate: 0.06,
     lineAuthorized: 2_500_000,
     lineRate: 0.072,
+    // Raised for the winter, when shipments to customers' fiscal year ends
+    // swell receivables.
+    creditLines: [
+      {
+        name: "Operating line",
+        limit: {
+          value: "2000000",
+          seasons: [{ months: [10, 11, 12, 1, 2, 3], value: "2500000" }],
+        },
+        rate: "7.2%",
+      },
+    ],
     arDays: 52,
     inventoryDays: 70,
     apDays: 45,
@@ -174,6 +193,16 @@ const PROFILES: Profile[] = [
     debtRate: 0.065,
     lineAuthorized: 4_000_000,
     lineRate: 0.075,
+    // Imports paid in US dollars draw on a line of their own.
+    creditLines: [
+      { name: "Operating line, CAD", limit: "3200000", rate: "7.5%" },
+      {
+        name: "Operating line, USD",
+        currency: "USD",
+        limit: "800000",
+        rate: "8.25%",
+      },
+    ],
     arDays: 32,
     inventoryDays: 28,
     apDays: 30,
@@ -544,6 +573,13 @@ export function demoCompanies(): DemoCompany[] {
       riskRating: p.riskRating,
       notes: p.notes,
       periods,
+      creditLines: p.creditLines ?? [
+        {
+          name: "Operating line",
+          limit: String(p.lineAuthorized),
+          rate: String(p.lineRate),
+        },
+      ],
       debtSchedule: {
         asOf: latest.end,
         loans: balance

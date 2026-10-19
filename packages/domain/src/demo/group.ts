@@ -110,6 +110,7 @@ export function demoPropertyCompany(): DemoCompany {
     notes:
       "Holds the warehouse leased to Laurentian Foods, under the same shareholders. March year end.",
     periods,
+    creditLines: [],
     debtSchedule: {
       asOf: periods.at(-1)!.end,
       loans: [

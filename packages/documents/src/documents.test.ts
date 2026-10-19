@@ -72,7 +72,6 @@ describe("documents", () => {
     expect(deal).toContain("Proposed for Post-project: new equipment");
     expect(deal).toContain("Equipment loan");
     expect(deal).toContain("2,000,000");
-    expect(deal).toContain("Line of credit increase");
     expect(deal).toContain("Post-project");
     // The base case finances nothing.
     expect(await html("deal-summary", null)).toContain(
