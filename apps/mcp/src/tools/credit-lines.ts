@@ -1,11 +1,13 @@
 import type { Db } from "@finance/db";
 import {
   addCreditLine,
+  analysisCurrency,
   getAnalysis,
   getCreditLine,
   getCreditLines,
   getEntity,
   getScenario,
+  getSpread,
   isPlain,
   mergeLineUsage,
   parseMonth,
@@ -182,6 +184,8 @@ export function describeScenarioLines(
       line: names.get(id) ?? id,
       ...describeUsage(usage),
     })),
+    // Over the analysis's, currency by currency.
+    exchangeRates: s.exchangeRates,
     // The deal's lines; null keeps the lines in force.
     proposedLinesOfCredit:
       s.lines && describeProposed(s.lines, inForce, definitions),
@@ -488,6 +492,89 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
           line: line.name,
           // null counts no interest.
           usage: describeUsage(updated.lineUsage[lineId]),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "set_exchange_rates",
+    {
+      title: "Set exchange rates for lines of credit",
+      description: [
+        "Sets the rates converting lines of credit in another currency into the analysis's, its statements' currency (get_analysis gives it): an analysis's (analysisId), which its base case and every scenario use, or one scenario's (scenarioId), over the analysis's, such as to stress a weaker Canadian dollar.",
+        'A rate is the analysis\'s currency for one unit of the line\'s: {"USD": "1.37"} in a CAD analysis. The line\'s interest, limit and average usage convert at it; its usage, entered with set_line_usage, and its borrowing base stay in its own currency.',
+        "Currencies given are set and the others stay; null removes one. A line in another currency with no rate counts nothing, and run_analysis flags it. Ask the user for the rate rather than inventing it.",
+      ].join(" "),
+      inputSchema: z.object({
+        analysisId: z
+          .string()
+          .optional()
+          .describe(
+            "For the analysis's rates, from list_analyses or get_borrower.",
+          ),
+        scenarioId: scenarioId
+          .optional()
+          .describe("For a scenario's rates, over the analysis's."),
+        rates: z
+          .record(z.string(), z.string().nullable())
+          .describe(
+            'Currency code → the analysis\'s currency for one unit of it, e.g. {"USD": "1.37"}; null removes it.',
+          ),
+      }),
+      annotations: CHANGE,
+    },
+    ({ analysisId, scenarioId, rates }) =>
+      respond(async () => {
+        if (!analysisId === !scenarioId)
+          throw invalid(
+            "Pass analysisId for the analysis's rates, which its base case and scenarios use, or scenarioId for one scenario's.",
+          );
+        const scenario = scenarioId
+          ? await getScenario(db, ctx, scenarioId)
+          : null;
+        const detail = await getAnalysis(
+          db,
+          ctx,
+          scenario?.analysisId ?? analysisId!,
+        );
+        const currency = analysisCurrency(
+          await getSpread(db, ctx, detail.entity.id),
+          detail.analysis,
+        );
+        const own: Record<string, string> = {
+          ...(scenario?.exchangeRates ?? detail.analysis.exchangeRates),
+        };
+        for (const [raw, rate] of Object.entries(rates)) {
+          const code = raw.trim().toUpperCase();
+          if (code === currency)
+            throw invalid(
+              `${currency} is the analysis's currency: lines in it need no rate.`,
+            );
+          if (rate === null || !rate.trim()) delete own[code];
+          else own[code] = rate;
+        }
+        if (scenario) {
+          const updated = await updateScenario(db, ctx, scenario.id, {
+            exchangeRates: own,
+          });
+          return {
+            scenario: updated.name,
+            currency,
+            // The scenario's own, and what it uses with the analysis's.
+            rates: updated.exchangeRates,
+            applied: {
+              ...detail.analysis.exchangeRates,
+              ...updated.exchangeRates,
+            },
+          };
+        }
+        const updated = await updateAnalysis(db, ctx, detail.analysis.id, {
+          exchangeRates: own,
+        });
+        return {
+          analysis: updated.name,
+          currency,
+          rates: updated.exchangeRates,
         };
       }),
   );

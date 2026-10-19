@@ -6,6 +6,7 @@ import {
   getDebtSchedules,
   getEntity,
   getFinancialModel,
+  analysisCurrency,
   getSpread,
   imbalance,
   listAnalyses,
@@ -142,7 +143,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get an analysis",
       description:
-        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, how it projects each margined line's borrowing base (its source, months and assumption values), and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit over the analysis's, the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal, with any borrowing base terms it changes), and its changes to projected borrowing bases. The base case is the borrower as is and isn't a scenario.",
+        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, its currency and the exchange rates lines in another convert at, how it projects each margined line's borrowing base (its source, months and assumption values), and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit and exchange rates over the analysis's, the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal, with any borrowing base terms it changes), and its changes to projected borrowing bases. The base case is the borrower as is and isn't a scenario.",
       inputSchema: z.object({ analysisId }),
       annotations: READ,
     },
@@ -150,11 +151,13 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
-        const [debtSchedules, creditLines, definitions] = await Promise.all([
-          getDebtSchedules(db, ctx, detail.entity.id),
-          getCreditLines(db, ctx, detail.entity.id),
-          marginedDefinitions(db, ctx, detail.entity.id),
-        ]);
+        const [debtSchedules, creditLines, definitions, spread] =
+          await Promise.all([
+            getDebtSchedules(db, ctx, detail.entity.id),
+            getCreditLines(db, ctx, detail.entity.id),
+            marginedDefinitions(db, ctx, detail.entity.id),
+            getSpread(db, ctx, detail.entity.id),
+          ]);
         // New margined lines its scenarios propose project too.
         const projected = new Map(definitions);
         for (const s of detail.scenarios)
@@ -207,6 +210,10 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
             creditLines,
             analysis.lineUsage,
           ),
+          // The analysis's currency, its statements', and the rates lines in
+          // another convert into it at, by currency (set_exchange_rates).
+          currency: analysisCurrency(spread, analysis),
+          exchangeRates: analysis.exchangeRates,
           // How the analysis projects each margined line's borrowing base
           // (run_analysis_borrowing_bases runs them).
           borrowingBases: [...projected].map(([key, { name, definition }]) =>
@@ -229,7 +236,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Run an analysis",
       description:
-        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested each fiscal year (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. Lines of credit reach the model through built-in inputs (LINE_INTEREST, LINE_AUTHORIZED, LINE_AVERAGE_USAGE, PROFORMA_LINE_INTEREST) on the usage assumed; a line with none is flagged. Values are rounded as the app shows them; flags read Pass or Fail.",
+        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested each fiscal year (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. Lines of credit reach the model through built-in inputs (LINE_INTEREST, LINE_AUTHORIZED, LINE_AVERAGE_USAGE, PROFORMA_LINE_INTEREST) on the usage assumed, in the analysis's currency: a line in another converts at the run's exchange rate. A line with no usage, or no rate, is flagged. Values are rounded as the app shows them; flags read Pass or Fail.",
       inputSchema: z.object({
         analysisId,
         scenarioId: z
@@ -282,11 +289,20 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
             (line) =>
               `${line.name} has no usage assumed, so its interest counts as zero. Ask the user for it, then set it with set_line_usage.`,
           ),
+          ...results.creditLines.withoutRate.map(
+            (line) =>
+              `${line.name} is in ${line.currency}, with no ${line.currency} rate into ${results.creditLines.currency}, so it counts nothing. Ask the user for the rate, then set it with set_exchange_rates.`,
+          ),
         ];
         return {
           analysis: detail.analysis.name,
           borrower: detail.entity.name,
           scenario: scenario?.name ?? "Base case",
+          // Amounts are in it; lines in another currency convert at these.
+          currency: results.creditLines.currency,
+          ...(Object.keys(results.creditLines.rates).length
+            ? { exchangeRates: results.creditLines.rates }
+            : {}),
           ...(warnings.length ? { warnings } : {}),
           // The scenario's capex plan year by year, when it has one.
           ...(results.capex.length

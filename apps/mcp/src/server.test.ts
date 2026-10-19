@@ -342,6 +342,7 @@ describe("MCP server", () => {
       update_line_of_credit: "changes",
       remove_line_of_credit: "changes",
       set_line_usage: "changes",
+      set_exchange_rates: "changes",
       set_proposed_line: "changes",
       remove_proposed_line: "changes",
       use_lines_in_force: "changes",
@@ -1884,6 +1885,57 @@ describe("MCP server", () => {
     expect(more.code).toBe("ADDED");
     expect(more.postProject).toEqual([null, "27,000", "27,000"]);
 
+    // In US dollars, the new line counts nothing until it has a rate: the
+    // analysis's, then the scenario's over it.
+    await call("set_proposed_line", {
+      scenarioId: deal.id,
+      lineId: equipment,
+      currency: "USD",
+    });
+    results = await run(deal.id);
+    expect(results.currency).toBe("CAD");
+    expect(results.warnings).toEqual([
+      "Equipment line is in USD, with no USD rate into CAD, so it counts nothing. Ask the user for the rate, then set it with set_exchange_rates.",
+    ]);
+    expect(results.lines[1].postProject).toEqual([null, "15,000", "15,000"]);
+    expect(
+      await call("set_exchange_rates", {
+        analysisId: analysis.id,
+        rates: { CAD: "1" },
+      }),
+    ).toEqual({
+      error: "CAD is the analysis's currency: lines in it need no rate.",
+    });
+    const { value: rated } = await call("set_exchange_rates", {
+      analysisId: analysis.id,
+      rates: { usd: "1.25" },
+    });
+    expect(rated).toEqual({
+      analysis: "Lines",
+      currency: "CAD",
+      rates: { USD: "1.25" },
+    });
+    results = await run(deal.id);
+    expect(results).not.toHaveProperty("warnings");
+    expect(results.exchangeRates).toEqual({ USD: "1.25" });
+    // USD 12,000 at 1.25.
+    expect(results.lines[1].postProject).toEqual([null, "30,000", "30,000"]);
+    const { value: weaker } = await call("set_exchange_rates", {
+      scenarioId: deal.id,
+      rates: { USD: "1.5" },
+    });
+    expect(weaker).toEqual({
+      scenario: "Deal",
+      currency: "CAD",
+      rates: { USD: "1.5" },
+      applied: { USD: "1.5" },
+    });
+    expect((await run(deal.id)).lines[1].postProject).toEqual([
+      null,
+      "33,000",
+      "33,000",
+    ]);
+
     const { value: detail } = await call("get_analysis", {
       analysisId: analysis.id,
     });
@@ -1897,8 +1949,13 @@ describe("MCP server", () => {
         usage: { averageUsage: "50%" },
       },
     ]);
+    expect(detail).toMatchObject({
+      currency: "CAD",
+      exchangeRates: { USD: "1.25" },
+    });
     expect(detail.scenarios[1]).toMatchObject({
       name: "Deal",
+      exchangeRates: { USD: "1.5" },
       lineOfCreditUsage: [
         { lineId: equipment, line: "Equipment line", averageUsage: "50%" },
       ],
