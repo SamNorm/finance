@@ -67,6 +67,11 @@ export interface GroupMonth {
   issues: Issue[];
 }
 
+const show = (raw: string) =>
+  Number(new Dec(raw).toFixed(2)).toLocaleString("en-CA", {
+    maximumFractionDigits: 2,
+  });
+
 const dec = (raw: string | null | undefined) =>
   raw === null || raw === undefined ? null : new Dec(raw);
 
@@ -266,7 +271,7 @@ export function groupWorksheet(
       issues.push({
         severity: "warning",
         code: "override_limit",
-        message: `The group certificate for ${month} gives limits of ${override.limit}, but the members' lines add up to ${sum.limit}.`,
+        message: `The group certificate for ${month} gives limits of ${show(override.limit)}, but the members' lines add up to ${show(sum.limit)}.`,
       });
     return {
       month,
@@ -529,6 +534,8 @@ export async function setGroupBorrowingBaseOverride(
 
 export interface GroupSummary {
   entity: { id: string; name: string };
+  // Its members whose lines it adds up.
+  members: { id: string; name: string }[];
   lines: number;
   latest: { month: string; figures: GroupFigures; overridden: boolean } | null;
   deficitMonths: number;
@@ -559,6 +566,11 @@ export async function listGroupBorrowingBases(
     const latest = worksheet.months.at(-1);
     result.push({
       entity: group,
+      members: [
+        ...new Map(
+          worksheet.members.map((m) => [m.member.id, m.member] as const),
+        ).values(),
+      ],
       lines: worksheet.members.length,
       latest: latest
         ? {

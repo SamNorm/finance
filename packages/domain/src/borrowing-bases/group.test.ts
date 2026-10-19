@@ -259,6 +259,10 @@ describe("consolidated borrowing bases", () => {
         (g) => g.entity.id === group.id,
       ),
     ).toMatchObject({
+      members: [
+        { id: foods.id, name: "Foods" },
+        { id: props.id, name: "Props" },
+      ],
       lines: 2,
       latest: { month: "2025-02", overridden: false },
     });
