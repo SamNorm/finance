@@ -10,6 +10,7 @@ import {
   getSpread,
   imbalance,
   listAnalyses,
+  listComments,
   listFinancialModels,
   repinAnalysis,
   runAnalysis,
@@ -33,6 +34,7 @@ import {
   marginedDefinitions,
 } from "../borrowing-bases";
 import { describeCapexYears } from "./capex";
+import { describeComments } from "./comments";
 import { describeCovenantResults } from "./covenants";
 import { describeLinesInAnalysis } from "./credit-lines";
 import { describeScenario } from "./scenarios";
@@ -143,7 +145,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get an analysis",
       description:
-        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, its currency and the exchange rates lines in another convert at, how it projects each margined line's borrowing base (its source, months and assumption values), and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit and exchange rates over the analysis's, the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal, with any borrowing base terms it changes), and its changes to projected borrowing bases. The base case is the borrower as is and isn't a scenario.",
+        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, its currency and the exchange rates lines in another convert at, how it projects each margined line's borrowing base (its source, months and assumption values), and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit and exchange rates over the analysis's, the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal, with any borrowing base terms it changes), and its changes to projected borrowing bases; and the analyst's comments on it, newest first (the borrower's own are on get_borrower). The base case is the borrower as is and isn't a scenario.",
       inputSchema: z.object({ analysisId }),
       annotations: READ,
     },
@@ -151,12 +153,13 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
-        const [debtSchedules, creditLines, definitions, spread] =
+        const [debtSchedules, creditLines, definitions, spread, comments] =
           await Promise.all([
             getDebtSchedules(db, ctx, detail.entity.id),
             getCreditLines(db, ctx, detail.entity.id),
             marginedDefinitions(db, ctx, detail.entity.id),
             getSpread(db, ctx, detail.entity.id),
+            listComments(db, ctx, { analysisId: analysis.id }),
           ]);
         // New margined lines its scenarios propose project too.
         const projected = new Map(definitions);
@@ -227,6 +230,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
           scenarios: detail.scenarios.map((s) =>
             describeScenario(s, lines, debtSchedules, creditLines, definitions),
           ),
+          comments: describeComments(comments),
         };
       }),
   );

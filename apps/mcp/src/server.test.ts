@@ -300,6 +300,9 @@ describe("MCP server", () => {
       update_covenant: "changes",
       remove_covenant: "changes",
       use_covenants_in_force: "changes",
+      add_comment: "adds",
+      update_comment: "changes",
+      remove_comment: "changes",
       list_document_templates: "reads",
       generate_document: "adds",
       list_documents: "reads",
@@ -1206,6 +1209,60 @@ describe("MCP server", () => {
       borrowerId: ids.acme,
       loanId: mortgage.loan.id,
     });
+  });
+
+  it("keeps comments on the borrower, and on an analysis", async () => {
+    const call = await connect();
+    const { value: added } = await call("add_comment", {
+      borrowerId: ids.acme,
+      text: "The owner guarantees all borrowings.",
+    });
+    expect(added.comments).toEqual([
+      {
+        id: added.comment,
+        text: "The owner guarantees all borrowings.",
+        written: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      },
+    ]);
+    await call("add_comment", {
+      analysisId: ids.analysis,
+      text: "Coverage recovered in 2024.",
+    });
+    const { value: borrower } = await call("get_borrower", {
+      borrowerId: ids.acme,
+    });
+    // The borrower's own; the analysis keeps its.
+    expect(borrower.comments.map((c: { text: string }) => c.text)).toEqual([
+      "The owner guarantees all borrowings.",
+    ]);
+    const { value: analysis } = await call("get_analysis", {
+      analysisId: ids.analysis,
+    });
+    expect(analysis.comments).toMatchObject([
+      { text: "Coverage recovered in 2024." },
+    ]);
+    const { value: changed } = await call("update_comment", {
+      commentId: added.comment,
+      text: "Both shareholders guarantee all borrowings.",
+    });
+    expect(changed.text).toBe("Both shareholders guarantee all borrowings.");
+    expect(
+      (
+        await call("add_comment", {
+          borrowerId: ids.acme,
+          analysisId: ids.analysis,
+          text: "Both?",
+        })
+      ).error,
+    ).toMatch(/^Pass borrowerId/);
+    expect(
+      (await call("add_comment", { borrowerId: ids.acme, text: " " })).error,
+    ).toBe("Write the comment.");
+    for (const c of [...borrower.comments, ...analysis.comments])
+      await call("remove_comment", { commentId: c.id });
+    expect(
+      (await call("get_borrower", { borrowerId: ids.acme })).value.comments,
+    ).toEqual([]);
   });
 
   it("keeps covenants on the borrower, and a deal's own on its scenario", async () => {
