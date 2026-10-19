@@ -2,7 +2,9 @@ import type { Db } from "@finance/db";
 import {
   COLLATERAL_TYPES,
   DEFAULT_PROJECTED_MONTHS,
+  GROUP_TOTALS,
   TOTALS,
+  parseMonth,
   isPlain,
   marginedLines,
   type AnalysisBorrowingBase,
@@ -17,6 +19,8 @@ import {
   type BorrowingBaseRun,
   type BorrowingBaseSummary,
   type CycleFigure,
+  type GroupFigures,
+  type GroupMonth,
   type Issue,
   type LineOf,
   type Term,
@@ -337,7 +341,6 @@ export const figureIn = (
 // a certificate show no values; projected months do.
 export function describeRun(
   run: BorrowingBaseRun,
-  definition: BorrowingBaseDefinition,
   shownMonths: readonly number[],
   options: { name: string; details?: boolean; codes?: readonly string[] },
 ) {
@@ -353,22 +356,6 @@ export function describeRun(
     throw invalid(
       `Not figures of ${options.name}'s borrowing base: ${unknown.join(", ")}.`,
     );
-  // A foreign collateral line's detail is in its own currency, until it's
-  // margined.
-  const foreign = new Map(
-    definition.lines.flatMap((l) =>
-      l.kind === "collateral" && l.currency
-        ? [[l.code, l.currency] as const]
-        : [],
-    ),
-  );
-  const currencyOf = (row: WaterfallRow) => {
-    if (row.currency) return row.currency;
-    const [line, suffix] = row.code.split(".");
-    return suffix && ["INELIGIBLE", "ELIGIBLE", "AGED_OUT"].includes(suffix)
-      ? foreign.get(line!)
-      : undefined;
-  };
   const valued = (p: number) =>
     Boolean(run.months[p]!.quality || run.months[p]!.projected);
   const formats = new Map(figures.map((r) => [r.code, r.format]));
@@ -381,7 +368,7 @@ export function describeRun(
           : options.details || r.kind !== "detail",
       )
       .map((r) => {
-        const currency = currencyOf(r);
+        const currency = r.currency;
         return {
           code: r.code,
           label: r.label,
@@ -684,4 +671,152 @@ export function monthsOfLine(
       surplus: value("BB_SURPLUS"),
     };
   });
+}
+
+// The months of a run to show: from and to, or the last twelve.
+export function monthRange(
+  months: readonly { month: string }[],
+  from?: string,
+  to?: string,
+) {
+  const first = from && parseMonth(from, "from");
+  const last = to && parseMonth(to, "to");
+  const all = months.map((_, p) => p);
+  if (!first && !last) return all.slice(-12);
+  return all.filter(
+    (p) =>
+      (!first || months[p]!.month >= first) &&
+      (!last || months[p]!.month <= last),
+  );
+}
+
+// A consolidated client's figures, in a line's waterfall order: its
+// members' totals, then what follows from them.
+const GROUP_ROWS: {
+  key: keyof GroupFigures;
+  label: string;
+  member?: boolean;
+  percent?: boolean;
+}[] = [
+  ...GROUP_TOTALS.slice(0, 3).map((t) => ({ ...t, member: true })),
+  { key: "gross", label: "Gross borrowing base" },
+  ...GROUP_TOTALS.slice(3, 5).map((t) => ({ ...t, member: true })),
+  { key: "total", label: "Borrowing base", member: true },
+  { key: "limit", label: "Authorized limits", member: true },
+  { key: "available", label: "Availability", member: true },
+  ...GROUP_TOTALS.slice(6).map((t) => ({ ...t, member: true })),
+  { key: "usage", label: "Usage" },
+  { key: "surplus", label: "Margin surplus (deficit)" },
+  { key: "excess", label: "Excess availability" },
+  { key: "utilization", label: "Utilization", percent: true },
+];
+
+const groupFigure = (row: (typeof GROUP_ROWS)[number], value?: string | null) =>
+  figure(value ?? null, row.percent ? "percent" : "amount");
+
+// One month of a consolidated client: its members' sum, the adjustments
+// and any group certificate, and the figures that result.
+export function describeGroupMonth(month: GroupMonth) {
+  const figures = (f: GroupFigures) =>
+    Object.fromEntries(
+      GROUP_ROWS.map((r) => [r.key, groupFigure(r, f[r.key])]),
+    );
+  return {
+    month: month.month,
+    ...(month.note ? { note: month.note } : {}),
+    sum: figures(month.sum),
+    adjustments: month.adjustments.map((a) => ({
+      id: a.id,
+      name: a.name,
+      total: a.total,
+      amount: figure(a.amount, "amount"),
+    })),
+    ...(month.override
+      ? {
+          groupCertificate: Object.fromEntries(
+            Object.entries(month.override).map(([k, v]) => [
+              k,
+              figure(v, "amount"),
+            ]),
+          ),
+        }
+      : {}),
+    // The sum adjusted, or the group certificate's totals where it gives
+    // them.
+    consolidated: figures(month.consolidated),
+    issues: month.issues.map(issueText),
+  };
+}
+
+// A consolidated client's months, by index: its member lines' totals when
+// given, the sum when adjustments or a group certificate change it, and the
+// consolidated figures, each row's values following the months.
+export function describeGroup(
+  worksheet: readonly GroupMonth[],
+  shownMonths: readonly number[],
+  members?: readonly { key: string; name: string }[],
+) {
+  const months = shownMonths.map((p) => worksheet[p]!);
+  const rows = (
+    pick: (m: GroupMonth) => Partial<GroupFigures> | null | undefined,
+    list: typeof GROUP_ROWS,
+  ) =>
+    list.map((r) => ({
+      total: r.key,
+      label: r.label,
+      values: months.map((m) => {
+        const figures = pick(m);
+        return figures ? groupFigure(r, figures[r.key]) : null;
+      }),
+    }));
+  const changed = months.some((m) => m.adjustments.length || m.override);
+  return {
+    months: months.map((m) => ({
+      month: m.month,
+      ...(m.projected ? { projected: true } : {}),
+      ...(m.override ? { groupCertificate: true } : {}),
+      ...(m.note ? { note: m.note } : {}),
+    })),
+    // Each member line's totals; null in a month it has no certificate.
+    ...(members
+      ? {
+          members: members.map((l) => ({
+            lineId: l.key,
+            line: l.name,
+            rows: rows(
+              (m) => m.members[l.key],
+              GROUP_ROWS.filter((r) => r.member),
+            ).filter((r) => r.values.some((v) => v !== null && v !== "0")),
+          })),
+        }
+      : {}),
+    // The members added up, before adjustments and certificates.
+    ...(changed ? { sum: rows((m) => m.sum, GROUP_ROWS) } : {}),
+    consolidated: rows((m) => m.consolidated, GROUP_ROWS),
+    adjustments: months.flatMap((m) =>
+      m.adjustments.map((a) => ({
+        month: m.month,
+        id: a.id,
+        name: a.name,
+        total: a.total,
+        amount: figure(a.amount, "amount"),
+      })),
+    ),
+    groupCertificates: months.flatMap((m) =>
+      m.override
+        ? [
+            {
+              month: m.month,
+              totals: Object.fromEntries(
+                Object.entries(m.override).map(([k, v]) => [
+                  k,
+                  figure(v, "amount"),
+                ]),
+              ),
+            },
+          ]
+        : [],
+    ),
+    issues: months.flatMap((m) => m.issues.map(issueText)),
+  };
 }

@@ -3,11 +3,13 @@ import {
   fillLineUsage,
   fillSeasonalAssumption,
   getAnalysis,
+  getEntity,
   getScenario,
   importProjectedBorrowingBasePaste,
   parseMonth,
   previewProjectedBorrowingBasePaste,
   runAnalysisBorrowingBases,
+  runAnalysisGroupBorrowingBase,
   setAnalysisBorrowingBase,
   setProjectedBorrowingBaseValues,
   setScenarioBorrowingBase,
@@ -17,6 +19,7 @@ import {
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import {
+  describeGroup,
   describeProjectionSettings,
   describeRun,
   describeScenarioBorrowingBases,
@@ -74,20 +77,6 @@ const entriesOf = (
     })),
   );
 
-// Months given that a line doesn't project, so change nothing.
-function outside(line: AnalysisBorrowingBase, months: readonly string[]) {
-  const ahead = new Set(
-    line.run.months.filter((m) => m.projected).map((m) => m.month),
-  );
-  const summary = projectionSummary(line);
-  const missed = [...new Set(months)].filter((m) => !ahead.has(m)).sort();
-  return missed.length
-    ? [
-        `${missed.join(", ")} ${missed.length > 1 ? "aren't" : "isn't"} among ${line.name}'s projected months${summary ? ` (${summary.from} to ${summary.to})` : ""}, so ${missed.length > 1 ? "they change" : "it changes"} nothing.`,
-      ]
-    : [];
-}
-
 // A line projected in an analysis, as run_analysis_borrowing_bases shows it.
 function describeProjectedLine(
   line: AnalysisBorrowingBase,
@@ -99,7 +88,7 @@ function describeProjectedLine(
   const summary = projectionSummary(line);
   const asIs =
     line.asIs &&
-    describeRun(line.asIs, line.definition, shown, {
+    describeRun(line.asIs, shown, {
       name: line.name,
       codes: MAIN,
     });
@@ -121,6 +110,8 @@ function describeProjectedLine(
           : "the definition's projection formulas and assumptions",
       months: line.settings.months,
       ...(summary ? { from: summary.from, to: summary.to } : {}),
+      // The line closes, in force or at the deal: not projected past it.
+      ...(line.until ? { until: line.until } : {}),
     },
     // Lines the client's figures don't cover every month, so estimated.
     ...(line.estimated.length ? { estimated: line.estimated } : {}),
@@ -135,7 +126,7 @@ function describeProjectedLine(
         ...(dealFrom && m.month >= dealFrom ? { dealTerms: true } : {}),
       };
     }),
-    ...describeRun(run, line.definition, shown, {
+    ...describeRun(run, shown, {
       name: line.name,
       ...options,
     }),
@@ -199,14 +190,13 @@ export function projectedBorrowingBaseTools(
       line: line.name,
       figures: count,
       months: monthsOfLine(line, months),
-      warnings: [
-        ...(line.settings.source === "client"
-          ? []
-          : [
-              `${line.name} is projected from assumptions: these figures count once set_analysis_borrowing_base sets its source to client.`,
-            ]),
-        ...outside(line, months),
-      ],
+      ...(line.settings.source === "client"
+        ? {}
+        : {
+            warning: `${line.name} is projected from assumptions: these figures count once set_analysis_borrowing_base sets its source to client.`,
+          }),
+      // Such as figures for months the projection doesn't reach.
+      issues: line.issues.map(issueText),
     };
   };
 
@@ -216,7 +206,8 @@ export function projectedBorrowingBaseTools(
       title: "Run an analysis's borrowing bases",
       description: [
         "Projects each margined line's borrowing base in an analysis, for the base case or a scenario: the last 12 months of certificates, then the months ahead (12 by default) from the client's projected figures or from the definition's projection formulas and assumptions. Each row's values follow the months, rounded as the app shows them; months are marked projected, and dealTerms from the month the scenario's deal terms apply (its new limit, advance rates and caps: from closing with a project, else from the first projected month).",
-        "With them: the margin, overline and the definition's tests month by month, projected months included; the lines the client didn't project, which are estimated; the usage check, the balance projected against the usage the analysis assumes for interest; when the deal changes the line, its main totals as is; and the issues. A new margined line a scenario proposes is projected from its definition alone.",
+        "With them: the margin, overline and the definition's tests month by month, projected months included; the lines the client didn't project, which are estimated; the usage check, the balance projected against the usage the analysis assumes for interest; when the deal changes the line, its main totals as is; and the issues. A new margined line a scenario proposes is projected from its definition alone; a line that closes isn't projected past it.",
+        "For a consolidated client, group adds up its members' lines month by month, with the group's adjustments and certificates in the months they cover.",
         "Report its figures as given: never compute a borrowing base yourself.",
       ].join(" "),
       inputSchema: z.object({
@@ -259,6 +250,34 @@ export function projectedBorrowingBaseTools(
           throw invalid(
             "That isn't a margined line of this analysis: get_analysis lists them under borrowingBases.",
           );
+        // A consolidated client's members' lines, added up: the last twelve
+        // months of history, then the projection.
+        const { kind } = await getEntity(db, ctx, detail.entity.id);
+        const summed =
+          kind === "consolidated" && !lineId
+            ? await runAnalysisGroupBorrowingBase(
+                db,
+                ctx,
+                analysisId,
+                scenarioId,
+              )
+            : null;
+        let group = null;
+        if (summed) {
+          const first = summed.months.findIndex((m) => m.projected);
+          const from = Math.max(
+            0,
+            (first === -1 ? summed.months.length : first) - 12,
+          );
+          const described = describeGroup(
+            summed.months,
+            summed.months.map((_, p) => p).slice(from),
+          );
+          group = {
+            ...described,
+            issues: [...summed.issues.map(issueText), ...described.issues],
+          };
+        }
         return {
           analysis: detail.analysis.name,
           borrower: detail.entity.name,
@@ -269,6 +288,7 @@ export function projectedBorrowingBaseTools(
                 note: "The borrower has no margined line: start one with start_borrowing_base.",
               }),
           lines: shown.map((l) => describeProjectedLine(l, { details, codes })),
+          ...(group ? { group } : {}),
         };
       }),
   );
@@ -458,14 +478,8 @@ export function projectedBorrowingBaseTools(
           // Null when the scenario changes nothing of the line.
           changes: changes ?? null,
           projection: projectionSummary(line),
-          ...(given
-            ? {
-                warnings: outside(
-                  line,
-                  Object.keys(given).map((m) => parseMonth(m, "Scenario")),
-                ),
-              }
-            : {}),
+          // Such as figures for months the projection doesn't reach.
+          issues: line.issues.map(issueText),
         };
       }),
   );

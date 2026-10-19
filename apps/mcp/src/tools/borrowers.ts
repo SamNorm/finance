@@ -66,17 +66,26 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     ({ borrowerId }) =>
       respond(async () => {
         const entity = await getEntity(db, ctx, borrowerId);
-        const [spread, scoringModel, analyses, debt, lines, margined] =
-          await Promise.all([
+        const [spread, scoringModel, analyses, debt, lines] = await Promise.all(
+          [
             getSpread(db, ctx, entity.id),
             getScoringModel(db, ctx, entity.scoringModelId),
             listAnalyses(db, ctx, { entityId: entity.id }),
             getDebtSchedules(db, ctx, entity.id),
             getCreditLines(db, ctx, entity.id),
-            listBorrowingBases(db, ctx),
-          ]);
-        // A consolidated client's lines are keyed "member/line".
-        const bases = new Map(margined.map((b) => [b.lineId, b]));
+          ],
+        );
+        // The borrower's margined lines, or each member's; a consolidated
+        // client's lines are keyed "member/line".
+        const owners = [
+          ...new Set(lines.map((l) => l.member?.id ?? entity.id)),
+        ];
+        const margined = await Promise.all(
+          owners.map((id) =>
+            listBorrowingBases(db, ctx, undefined, { entityId: id }),
+          ),
+        );
+        const bases = new Map(margined.flat().map((b) => [b.lineId, b]));
         const baseOf = (id: string) =>
           bases.get(id.slice(id.lastIndexOf("/") + 1));
         const { consolidation } = spread;

@@ -14,6 +14,7 @@ import {
   importBorrowingBasePaste,
   listBorrowingBaseTemplates,
   listBorrowingBases,
+  listGroupBorrowingBases,
   parseBorrowingBasePaste,
   parseMonth,
   parseValue,
@@ -48,6 +49,7 @@ import {
   figureIn,
   issueText,
   issuesOf,
+  monthRange,
   shown,
 } from "../borrowing-bases";
 import { MONTHS, termInWords } from "../terms";
@@ -174,23 +176,6 @@ const TERMS =
 // Functions that read annual periods mean nothing month by month.
 const ANNUAL_ONLY = new Set(["CAGR", "TTM"]);
 
-// The months of a run to show: from and to, or the last twelve.
-function monthRange(
-  months: readonly { month: string }[],
-  from?: string,
-  to?: string,
-) {
-  const first = from && parseMonth(from, "from");
-  const last = to && parseMonth(to, "to");
-  const all = months.map((_, p) => p);
-  if (!first && !last) return all.slice(-12);
-  return all.filter(
-    (p) =>
-      (!first || months[p]!.month >= first) &&
-      (!last || months[p]!.month <= last),
-  );
-}
-
 export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
   // A line's borrowing base after it's set up: its definition, the codes
   // entered each month, and the warnings it was saved with.
@@ -266,12 +251,12 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "List borrowing bases",
       description:
-        "Every margined line of credit, for monitoring: its borrower, its latest month's borrowing base, limit, usage, surplus (negative when short) and utilization as the app computes them, the months in deficit over the last 12, and the months whose certificate is overdue.",
+        "Every margined line of credit, for monitoring: its borrower, its latest month's borrowing base, limit, usage, surplus (negative when short) and utilization as the app computes them, the months in deficit over the last 12, and the months whose certificate is overdue. Each consolidated client with margined members has a row of its own (group: true) with its latest consolidated month, from get_group_borrowing_base.",
       inputSchema: z.object({
         borrowerId: borrowerId
           .optional()
           .describe(
-            "Only this borrower's lines; a consolidated client's members'.",
+            "Only this borrower's lines; for a consolidated client, its members' and its own row.",
           ),
         search: z
           .string()
@@ -287,20 +272,50 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
               (await getCreditLines(db, ctx, borrowerId)).map((l) => own(l.id)),
             )
           : null;
-        return (await listBorrowingBases(db, ctx))
-          .filter(
-            (s) =>
-              (!lines || lines.has(s.lineId)) &&
-              (matches(s.lineName, search) || matches(s.entity.name, search)),
-          )
-          .map((s) => ({
-            lineId: s.lineId,
-            line: s.lineName,
-            borrower: s.entity.name,
-            borrowerId: s.entity.id,
-            currency: s.currency,
-            ...describeLatest(s),
-          }));
+        const [margined, groups] = await Promise.all([
+          listBorrowingBases(db, ctx),
+          listGroupBorrowingBases(db, ctx),
+        ]);
+        const rows = [
+          ...margined
+            .filter(
+              (s) =>
+                (!lines || lines.has(s.lineId)) &&
+                (matches(s.lineName, search) || matches(s.entity.name, search)),
+            )
+            .map((s) => ({
+              lineId: s.lineId,
+              line: s.lineName,
+              borrower: s.entity.name,
+              borrowerId: s.entity.id,
+              currency: s.currency,
+              ...describeLatest(s),
+            })),
+          ...groups
+            .filter(
+              (g) =>
+                (!borrowerId || g.entity.id === borrowerId) &&
+                matches(g.entity.name, search),
+            )
+            .map((g) => ({
+              group: true,
+              borrower: g.entity.name,
+              borrowerId: g.entity.id,
+              lines: g.lines,
+              latest: g.latest && {
+                month: g.latest.month,
+                ...(g.latest.overridden ? { groupCertificate: true } : {}),
+                borrowingBase: figure(g.latest.figures.total, "amount"),
+                limit: figure(g.latest.figures.limit, "amount"),
+                usage: figure(g.latest.figures.usage, "amount"),
+                surplus: figure(g.latest.figures.surplus, "amount"),
+                utilization: figure(g.latest.figures.utilization, "percent"),
+              },
+              deficitMonthsLast12: g.deficitMonths,
+            })),
+        ];
+        // By borrower, a group beside its members' lines.
+        return rows.sort((a, b) => a.borrower.localeCompare(b.borrower));
       }),
   );
 
@@ -517,7 +532,7 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
             month: run.months[p]!.month,
             quality: run.months[p]!.quality,
           })),
-          ...describeRun(run, detail.definition, shownMonths, {
+          ...describeRun(run, shownMonths, {
             name: detail.line.name,
             details,
             codes,
@@ -603,16 +618,22 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
       title: "Write a line's borrowing base",
       description: [
         "Sets a line's whole borrowing base definition, replacing the one it has: its lines, tests and spread items, as describe_borrowing_base_lines describes them. To change one, get it with get_borrowing_base asTyped, change it and send it back whole. A definition with errors isn't saved: the errors come back to fix. Returns it with its warnings.",
-        "Months keep their figures; a line removed leaves its figures unread, and a line added shows blank in months without its figure. For one rate, cap or reserve from a month, set_borrowing_base_term is simpler.",
+        "Months keep their figures; a line removed leaves its figures unread, and a line added shows blank in months without its figure. A line whose code changes takes its figures with it when renames says so, in the history and analyses' projections alike. For one rate, cap or reserve from a month, set_borrowing_base_term is simpler.",
         "null stops margining the line; its months are kept, in case it's margined again. Confirm with the user before replacing a definition or stopping one.",
       ].join(" "),
       inputSchema: z.object({
         lineId,
         definition: definitionInput.nullable(),
+        renames: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'Lines whose code changes, old code → new, e.g. {"AR": "AR_CAD"}: their figures move with them, and those of the codes they compute (AR.AGE1).',
+          ),
       }),
       annotations: CHANGE,
     },
-    ({ lineId, definition }) =>
+    ({ lineId, definition, renames }) =>
       respond(async () => {
         const id = own(lineId);
         const { line, issues } = await setBorrowingBaseDefinition(
@@ -620,6 +641,7 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
           ctx,
           id,
           definition,
+          renames,
         );
         if (!definition)
           return {
@@ -882,7 +904,7 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Import a pasted borrowing base",
       description:
-        "Saves a certificate or history previewed with preview_borrowing_base_paste, once the user has confirmed it: the same text and the confirmation it returned, with the month of any column whose header didn't read as one, or was misread. A pasted figure replaces the one held; blank cells change nothing. Months it adds are reported; set_borrowing_base_month marks one verified. Returns each month's borrowing base, usage and surplus, and its checks.",
+        "Saves a certificate or history previewed with preview_borrowing_base_paste, once the user has confirmed it: the same text and the confirmation it returned, with the month of any column whose header didn't read as one, or was misread, and any columns to leave out. A pasted figure replaces the one held; blank cells change nothing. Months it adds are reported; set_borrowing_base_month marks one verified. Returns each month's borrowing base, usage and surplus, and its checks.",
       inputSchema: z.object({
         lineId,
         text: z.string().describe("The same text as previewed."),
@@ -905,10 +927,16 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
           .describe(
             "Months for columns the preview couldn't date, or misread.",
           ),
+        skip: z
+          .array(z.number().int())
+          .optional()
+          .describe(
+            "Columns to leave out, by their number from the preview, e.g. a year-to-date column.",
+          ),
       }),
       annotations: CHANGE,
     },
-    ({ lineId, text, confirmation, months }) =>
+    ({ lineId, text, confirmation, months, skip }) =>
       respond(async () => {
         const id = own(lineId);
         if (confirmation !== fingerprint(id, text))
@@ -921,6 +949,7 @@ export function borrowingBaseTools(server: McpServer, db: Db, ctx: Context) {
           id,
           text,
           Object.fromEntries((months ?? []).map((m) => [m.column, m.month])),
+          skip,
         );
         return {
           figures: imported.figures,

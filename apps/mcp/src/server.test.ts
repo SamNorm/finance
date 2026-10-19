@@ -328,6 +328,9 @@ describe("MCP server", () => {
       import_projected_borrowing_base_paste: "changes",
       fill_line_usage: "changes",
       fill_seasonal_assumption: "changes",
+      get_group_borrowing_base: "reads",
+      set_group_borrowing_base_adjustments: "changes",
+      set_group_borrowing_base_override: "changes",
     });
   });
 
@@ -2760,8 +2763,8 @@ describe("MCP server", () => {
           surplus: null,
         },
       ],
-      warnings: [
-        "2028-01 isn't among Operating line's projected months (2026-01 to 2026-12), so it changes nothing.",
+      issues: [
+        "warning: Operating line: The client's projected figures for 2028-01 fall outside the months projected, so they're left out.",
       ],
     });
     await call("set_projected_borrowing_base_values", {
@@ -2803,7 +2806,7 @@ describe("MCP server", () => {
         { month: "2026-02", borrowingBase: "2,525,000", surplus: "25,000" },
         { month: "2026-03", borrowingBase: "2,450,000", surplus: "50,000" },
       ],
-      warnings: [],
+      issues: [],
     });
     [ahead] = (await run()).lines;
     expect(ahead.projection.source).toBe(
@@ -2927,7 +2930,7 @@ describe("MCP server", () => {
         assumptions: [{ code: "GROWTH", value: "-15.0%" }],
         figures: { "2026-01": { PRIORITY: "400,000" } },
       },
-      warnings: [],
+      issues: [],
     });
     underDeal = await run({ scenarioId: deal.id, lines: ["BB_TOTAL"] });
     expect(underDeal.lines[0].rows[0].values[3]).toBe("2,520,000");
@@ -2977,6 +2980,371 @@ describe("MCP server", () => {
       clear: true,
     });
     expect(cleared.changes).toBeNull();
+  });
+
+  it("adds up a consolidated client's borrowing bases, adjusted and certified", async () => {
+    const call = await connect();
+    const member = async (
+      name: string,
+      lineName: string,
+      limit: string,
+      lines: Record<string, unknown>[],
+    ) => {
+      const { value: borrower } = await call("create_borrower", { name });
+      const { value: added } = await call("add_line_of_credit", {
+        borrowerId: borrower.id,
+        name: lineName,
+        limit,
+        rate: "7%",
+      });
+      await call("set_borrowing_base_definition", {
+        lineId: added.line.id,
+        definition: { lines },
+      });
+      return { id: borrower.id as string, line: added.line.id as string };
+    };
+    const foods = await member("Birch Foods", "Operating line", "3,000,000", [
+      {
+        kind: "collateral",
+        code: "AR",
+        label: "Receivables",
+        collateral: "receivables",
+        rate: "75%",
+      },
+      { kind: "prior_claim", code: "TAXES", label: "Taxes" },
+      { kind: "usage", code: "LCS", label: "Letters of credit" },
+    ]);
+    const props = await member("Birch Props", "Inventory line", "1,000,000", [
+      {
+        kind: "collateral",
+        code: "INV",
+        label: "Inventory",
+        collateral: "inventory",
+        rate: "50%",
+      },
+    ]);
+    await call("set_borrowing_base_values", {
+      lineId: foods.line,
+      months: {
+        "2025-01": {
+          AR: "2,000,000",
+          TAXES: "100,000",
+          BB_OUTSTANDING: "1,000,000",
+          LCS: "50,000",
+        },
+        "2025-02": {
+          AR: "2,400,000",
+          TAXES: "120,000",
+          BB_OUTSTANDING: "1,500,000",
+        },
+      },
+    });
+    // Props has no certificate for February.
+    await call("set_borrowing_base_values", {
+      lineId: props.line,
+      months: { "2025-01": { INV: "1,200,000", BB_OUTSTANDING: "400,000" } },
+    });
+    const { value: group } = await call("create_consolidated_client", {
+      name: "Birch Group",
+      memberIds: [foods.id, props.id],
+    });
+
+    const { value: worksheet } = await call("get_group_borrowing_base", {
+      consolidatedClientId: group.id,
+    });
+    expect(worksheet.group).toBe("Birch Group");
+    expect(worksheet.lines).toEqual([
+      {
+        lineId: `${foods.id}/${foods.line}`,
+        line: "Operating line (Birch Foods)",
+        member: "Birch Foods",
+      },
+      {
+        lineId: `${props.id}/${props.line}`,
+        line: "Inventory line (Birch Props)",
+        member: "Birch Props",
+      },
+    ]);
+    expect(worksheet.months).toEqual([
+      { month: "2025-01" },
+      { month: "2025-02" },
+    ]);
+    // Each member's totals; zeros left out.
+    expect(worksheet.members[1]).toEqual({
+      lineId: `${props.id}/${props.line}`,
+      line: "Inventory line (Birch Props)",
+      rows: [
+        {
+          total: "inventory",
+          label: "Inventory, margined",
+          values: ["600,000", null],
+        },
+        { total: "total", label: "Borrowing base", values: ["600,000", null] },
+        {
+          total: "limit",
+          label: "Authorized limits",
+          values: ["1,000,000", null],
+        },
+        {
+          total: "available",
+          label: "Availability",
+          values: ["600,000", null],
+        },
+        {
+          total: "outstanding",
+          label: "Lines outstanding",
+          values: ["400,000", null],
+        },
+      ],
+    });
+    const consolidated = (sheet: typeof worksheet) =>
+      Object.fromEntries(
+        sheet.consolidated.map((r: { total: string; values: unknown[] }) => [
+          r.total,
+          r.values,
+        ]),
+      );
+    expect(consolidated(worksheet)).toMatchObject({
+      receivables: ["1,500,000", "1,800,000"],
+      inventory: ["600,000", "0"],
+      gross: ["2,100,000", "1,800,000"],
+      total: ["2,000,000", "1,680,000"],
+      limit: ["4,000,000", "3,000,000"],
+      usage: ["1,450,000", "1,500,000"],
+      surplus: ["550,000", "180,000"],
+      utilization: ["36.25%", "50.0%"],
+    });
+    expect(worksheet).not.toHaveProperty("sum");
+    expect(worksheet.issues).toEqual([
+      "warning: No certificate for Inventory line (Birch Props) in 2025-02: the group's figures leave it out.",
+    ]);
+
+    // Intercompany receivables out of January.
+    const { value: adjusted } = await call(
+      "set_group_borrowing_base_adjustments",
+      {
+        consolidatedClientId: group.id,
+        month: "2025-01",
+        adjustments: [
+          {
+            name: "Intercompany receivables",
+            total: "receivables",
+            amount: "-200,000",
+          },
+        ],
+      },
+    );
+    expect(adjusted).toMatchObject({
+      month: "2025-01",
+      sum: { receivables: "1,500,000", total: "2,000,000" },
+      adjustments: [
+        {
+          name: "Intercompany receivables",
+          total: "receivables",
+          amount: "-200,000",
+        },
+      ],
+      consolidated: {
+        receivables: "1,300,000",
+        total: "1,800,000",
+        available: "1,800,000",
+        surplus: "350,000",
+      },
+    });
+    // A certificate for the group in February replaces the sum.
+    const { value: certified } = await call(
+      "set_group_borrowing_base_override",
+      {
+        consolidatedClientId: group.id,
+        month: "2025-02",
+        totals: {
+          total: "1,600,000",
+          limit: "4,000,000",
+          outstanding: "1,500,000",
+        },
+        note: "Group certificate",
+      },
+    );
+    expect(certified).toMatchObject({
+      month: "2025-02",
+      note: "Group certificate",
+      sum: { total: "1,680,000", limit: "3,000,000" },
+      groupCertificate: {
+        total: "1,600,000",
+        limit: "4,000,000",
+        outstanding: "1,500,000",
+      },
+      consolidated: {
+        total: "1,600,000",
+        limit: "4,000,000",
+        available: "1,600,000",
+        surplus: "100,000",
+      },
+    });
+    expect(certified.issues).toContainEqual(
+      expect.stringMatching(/^warning: The group certificate for 2025-02/),
+    );
+    expect(
+      (
+        await call("set_group_borrowing_base_override", {
+          consolidatedClientId: group.id,
+          month: "2025-02",
+          totals: { nope: "1" },
+        })
+      ).error,
+    ).toMatch(/^"nope" isn't one of the group's totals/);
+    expect(
+      await call("set_group_borrowing_base_adjustments", {
+        consolidatedClientId: foods.id,
+        month: "2025-01",
+        adjustments: [],
+      }),
+    ).toEqual({
+      error:
+        "Birch Foods isn't a consolidated client: its borrowing bases are its own lines'.",
+    });
+    const { value: after } = await call("get_group_borrowing_base", {
+      consolidatedClientId: group.id,
+    });
+    expect(after.months).toEqual([
+      { month: "2025-01" },
+      { month: "2025-02", groupCertificate: true, note: "Group certificate" },
+    ]);
+    // The sum shows beside the consolidated figures.
+    expect(
+      after.sum.find((r: { total: string }) => r.total === "total").values,
+    ).toEqual(["2,000,000", "1,680,000"]);
+    expect(consolidated(after).total).toEqual(["1,800,000", "1,600,000"]);
+
+    // Monitoring lists the group beside its members' lines.
+    const { value: listed } = await call("list_borrowing_bases", {
+      search: "birch",
+    });
+    expect(
+      listed.map((r: { borrower: string; group?: boolean }) => [
+        r.borrower,
+        r.group ?? false,
+      ]),
+    ).toEqual([
+      ["Birch Foods", false],
+      ["Birch Group", true],
+      ["Birch Props", false],
+    ]);
+    expect(listed[1]).toEqual({
+      group: true,
+      borrower: "Birch Group",
+      borrowerId: group.id,
+      lines: 2,
+      latest: {
+        month: "2025-02",
+        groupCertificate: true,
+        borrowingBase: "1,600,000",
+        limit: "4,000,000",
+        usage: "1,500,000",
+        surplus: "100,000",
+        utilization: "37.5%",
+      },
+      deficitMonthsLast12: 0,
+    });
+    const { value: own } = await call("list_borrowing_bases", {
+      borrowerId: group.id,
+    });
+    expect(own).toHaveLength(3);
+    const { value: borrower } = await call("get_borrower", {
+      borrowerId: group.id,
+    });
+    expect(
+      borrower.linesOfCredit.map((l: { margined: boolean }) => l.margined),
+    ).toEqual([true, true]);
+
+    // Projected in an analysis of the consolidated client.
+    const { value: models } = await call("list_financial_models", {
+      search: "debt service",
+    });
+    const { value: analysis } = await call("create_analysis", {
+      borrowerId: group.id,
+      financialModelId: models[0].id,
+      name: "Group review",
+    });
+    const { value: projected } = await call("run_analysis_borrowing_bases", {
+      analysisId: analysis.id,
+      lines: ["BB_TOTAL"],
+    });
+    expect(projected.lines.map((l: { lineId: string }) => l.lineId)).toEqual([
+      `${foods.id}/${foods.line}`,
+      `${props.id}/${props.line}`,
+    ]);
+    // Each member projects from its own last month: Props from February.
+    expect(projected.group.months.slice(0, 2)).toEqual([
+      { month: "2025-01" },
+      {
+        month: "2025-02",
+        projected: true,
+        groupCertificate: true,
+        note: "Group certificate",
+      },
+    ]);
+    expect(projected.group.months).toHaveLength(14);
+    expect(consolidated(projected.group).total.slice(0, 2)).toEqual([
+      "1,800,000",
+      "1,600,000",
+    ]);
+    expect(
+      (
+        await call("run_analysis_borrowing_bases", {
+          analysisId: analysis.id,
+          lineId: `${foods.id}/${foods.line}`,
+        })
+      ).value,
+    ).not.toHaveProperty("group");
+
+    // A line renamed takes its figures with it; a paste can leave a
+    // column out.
+    const { value: definition } = await call("get_borrowing_base", {
+      lineId: foods.line,
+      asTyped: true,
+    });
+    await call("set_borrowing_base_definition", {
+      lineId: foods.line,
+      definition: {
+        ...definition.definition,
+        lines: definition.definition.lines.map((l: { code: string }) =>
+          l.code === "AR" ? { ...l, code: "AR_CAD" } : l,
+        ),
+      },
+      renames: { AR: "AR_CAD" },
+    });
+    const text = [
+      "\tMar-25\tYTD",
+      "AR_CAD\t2,500,000\t9",
+      "Taxes\t90,000\t9",
+    ].join("\n");
+    const { value: preview } = await call("preview_borrowing_base_paste", {
+      lineId: foods.line,
+      text,
+    });
+    await call("import_borrowing_base_paste", {
+      lineId: foods.line,
+      text,
+      confirmation: preview.confirmation,
+      skip: [2],
+    });
+    const { value: renamed } = await call("run_borrowing_base", {
+      lineId: foods.line,
+      lines: ["AR_CAD", "BB_PRIOR_CLAIMS"],
+    });
+    expect(renamed.rows).toEqual([
+      {
+        code: "AR_CAD",
+        label: "Receivables",
+        values: ["2,000,000", "2,400,000", "2,500,000"],
+      },
+      {
+        code: "BB_PRIOR_CLAIMS",
+        label: "Prior claims",
+        values: ["100,000", "120,000", "90,000"],
+      },
+    ]);
   });
 
   it("acts within the caller's organization only", async () => {
