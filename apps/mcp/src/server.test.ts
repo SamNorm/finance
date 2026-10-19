@@ -303,6 +303,7 @@ describe("MCP server", () => {
       add_comment: "adds",
       update_comment: "changes",
       remove_comment: "changes",
+      get_excel_link: "reads",
       list_document_templates: "reads",
       generate_document: "adds",
       list_documents: "reads",
@@ -1263,6 +1264,33 @@ describe("MCP server", () => {
     expect(
       (await call("get_borrower", { borrowerId: ids.acme })).value.comments,
     ).toEqual([]);
+  });
+
+  it("links to the Excel workbooks the app builds", async () => {
+    const call = await connect();
+    const { value: analysis } = await call("get_excel_link", {
+      workbook: "analysis",
+      analysisId: ids.analysis,
+    });
+    expect(analysis.url).toBe(
+      `http://localhost:3000/analyses/${ids.analysis}/xlsx`,
+    );
+    const { value: debt } = await call("get_excel_link", {
+      workbook: "existing_debt",
+      borrowerId: ids.acme,
+    });
+    expect(debt.url).toMatch(/\/borrowers\/[0-9a-f-]+\/debt\/xlsx$/);
+    expect((await call("get_excel_link", { workbook: "spread" })).error).toBe(
+      "The spread workbook takes borrowerId alone.",
+    );
+    expect(
+      (
+        await call("get_excel_link", {
+          workbook: "spread",
+          borrowerId: randomUUID(),
+        })
+      ).error,
+    ).toBe("No such borrower.");
   });
 
   it("keeps covenants on the borrower, and a deal's own on its scenario", async () => {

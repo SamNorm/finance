@@ -2,6 +2,7 @@ import type { Db } from "@finance/db";
 import {
   getAnalysis,
   getCreditLine,
+  getEntity,
   getOrganization,
   type Context,
 } from "@finance/domain";
@@ -108,7 +109,69 @@ async function detail(db: Db, ctx: Context, template: TemplateDetail) {
   };
 }
 
+// The workbooks the app builds on request, and what each holds.
+const WORKBOOKS = {
+  analysis:
+    "The analysis: a summary, then the base case and each scenario, its model's lines over its periods with post-project columns, the covenants tested, and its sources and uses.",
+  spread:
+    "The borrower's spread: a sheet per statement, figures by period, and the checks against the statements.",
+  existing_debt:
+    "The borrower's existing loans and lines of credit, and each loan's payments until it's repaid.",
+  borrowing_base:
+    "A margined line's borrowing base month by month, its tests, and its certificates.",
+};
+
 export function documentTools(server: McpServer, db: Db, ctx: Context) {
+  server.registerTool(
+    "get_excel_link",
+    {
+      title: "Get an Excel workbook's link",
+      description:
+        "A link to download an Excel workbook the app builds from the figures as they stand when it's opened; nothing is kept. analysis (analysisId): every scenario's results, covenants and sources and uses. spread (borrowerId): the statements by period. existing_debt (borrowerId): loans, lines of credit and each loan's payments. borrowing_base (creditLineId): a margined line month by month. Give the user the link; the workbook holds values, while the app keeps each figure's lineage.",
+      inputSchema: z.object({
+        workbook: z.enum([
+          "analysis",
+          "spread",
+          "existing_debt",
+          "borrowing_base",
+        ]),
+        analysisId: analysisId.optional(),
+        borrowerId: borrowerId.optional(),
+        creditLineId: creditLineId.optional(),
+      }),
+      annotations: READ,
+    },
+    ({ workbook, analysisId, borrowerId, creditLineId }) =>
+      respond(async () => {
+        const needs = {
+          analysis: "analysisId",
+          spread: "borrowerId",
+          existing_debt: "borrowerId",
+          borrowing_base: "creditLineId",
+        }[workbook];
+        const given = { analysisId, borrowerId, creditLineId };
+        if (
+          !given[needs as keyof typeof given] ||
+          Object.values(given).filter(Boolean).length > 1
+        )
+          throw invalid(`The ${workbook} workbook takes ${needs} alone.`);
+        let path: string;
+        if (workbook === "analysis") {
+          const { analysis } = await getAnalysis(db, ctx, analysisId!);
+          path = `/analyses/${analysis.id}/xlsx`;
+        } else if (workbook === "borrowing_base") {
+          const line = await getCreditLine(db, ctx, ownLine(creditLineId!));
+          if (!line.borrowingBase)
+            throw invalid(`${line.name} isn't margined.`);
+          path = `/borrowing-bases/${line.id}/xlsx`;
+        } else {
+          const entity = await getEntity(db, ctx, borrowerId!);
+          path = `/borrowers/${entity.id}/${workbook === "spread" ? "spread" : "debt"}/xlsx`;
+        }
+        return { url: `${app()}${path}`, holds: WORKBOOKS[workbook] };
+      }),
+  );
+
   server.registerTool(
     "list_document_templates",
     {
