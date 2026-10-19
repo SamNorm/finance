@@ -92,7 +92,7 @@ function margined(line: CreditLine): BorrowingBaseDefinition {
 // Postgres pads numerics to their scale; keep the canonical form.
 const canonical = (raw: string) => new Dec(raw).toFixed();
 
-async function monthsOf(
+export async function monthsOf(
   db: Db,
   lineIds: readonly string[],
 ): Promise<Map<string, BorrowingBaseMonth[]>> {

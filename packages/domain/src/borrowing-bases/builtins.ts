@@ -91,6 +91,7 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           aging: true,
           rate: "75%",
           reconcilesWith: "AR_TRADE",
+          projection: "IFERROR(PREV(AR, 12), PREV(AR)) * (1 + GROWTH)",
         },
         {
           kind: "ineligible",
@@ -145,6 +146,7 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           group: "INVENTORY",
           rate: "50%",
           reconcilesWith: "INVENTORY",
+          projection: "IFERROR(PREV(RAW, 12), PREV(RAW)) * (1 + GROWTH)",
         },
         {
           kind: "ineligible",
@@ -168,6 +170,7 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           group: "INVENTORY",
           rate: "0%",
           reconcilesWith: "INVENTORY",
+          projection: "IFERROR(PREV(WIP, 12), PREV(WIP)) * (1 + GROWTH)",
         },
         {
           kind: "collateral",
@@ -177,6 +180,8 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           group: "INVENTORY",
           rate: "60%",
           reconcilesWith: "INVENTORY",
+          projection:
+            "IFERROR(PREV(FINISHED, 12), PREV(FINISHED)) * (1 + GROWTH)",
         },
         {
           kind: "ineligible",
@@ -196,12 +201,22 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           code: "RENT_ARREARS",
           label: "Rent arrears",
         },
+        {
+          kind: "assumption",
+          code: "GROWTH",
+          label: "Growth over a year earlier",
+          format: "percent",
+          value: "0%",
+          description:
+            "Projected collateral and sales: the same month a year earlier, grown by this much.",
+        },
         LETTERS_OF_CREDIT,
         {
           kind: "driver",
           code: "SALES",
           label: "Sales for the month",
           format: "amount",
+          projection: "IFERROR(PREV(SALES, 12), PREV(SALES)) * (1 + GROWTH)",
         },
         {
           kind: "calculation",
@@ -253,6 +268,7 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           aging: true,
           rate: "75%",
           reconcilesWith: "AR_TRADE",
+          projection: "IFERROR(PREV(AR_CAD, 12), PREV(AR_CAD)) * (1 + GROWTH)",
         },
         {
           kind: "ineligible",
@@ -270,6 +286,7 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           aging: true,
           rate: "75%",
           reconcilesWith: "AR_TRADE",
+          projection: "IFERROR(PREV(AR_USD, 12), PREV(AR_USD)) * (1 + GROWTH)",
         },
         {
           kind: "ineligible",
@@ -287,6 +304,8 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           reconcilesWith: "AR_TRADE",
           description:
             "Covered by credit insurance, such as Export Development Canada's, assigned to the lender.",
+          projection:
+            "IFERROR(PREV(AR_INSURED, 12), PREV(AR_INSURED)) * (1 + GROWTH)",
         },
         {
           kind: "ineligible",
@@ -295,6 +314,15 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           of: "AR_INSURED",
         },
         ...PRIOR_CLAIMS,
+        {
+          kind: "assumption",
+          code: "GROWTH",
+          label: "Growth over a year earlier",
+          format: "percent",
+          value: "0%",
+          description:
+            "Projected collateral and sales: the same month a year earlier, grown by this much.",
+        },
         LETTERS_OF_CREDIT,
         {
           kind: "driver",

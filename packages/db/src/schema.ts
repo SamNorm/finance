@@ -457,6 +457,9 @@ export interface BorrowingBaseDefinition {
   // The spread item the line's outstanding balance is part of, e.g.
   // BANK_INDEBTEDNESS.
   outstandingReconcilesWith?: string;
+  // How the line's balance is projected; by default, the same month a year
+  // earlier plus the growth in collateral since, which the line funds.
+  outstandingProjection?: string;
   tests?: BorrowingBaseTest[];
   charts?: ChartDefinition[];
 }
@@ -554,6 +557,37 @@ export interface ProposedLine {
   rate: string;
   // Closed at the deal: from closing, or from the first projected month.
   closed?: boolean;
+  // Its borrowing base's terms as the deal changes them, by line code:
+  // advance rates and caps of collateral, groups' caps, reserves' amounts.
+  terms?: Record<string, { rate?: Term; cap?: Term | null; amount?: Term }>;
+  // A new margined line's borrowing base, projected from its definition and
+  // assumptions alone.
+  borrowingBase?: BorrowingBaseDefinition;
+}
+
+// How an analysis projects a margined line's borrowing base (§8): from the
+// client's monthly projections, entered in the analysis, or from the
+// definition's projection formulas; over how many months; and the base
+// case's values for the definition's assumptions: one for every month, or
+// one per calendar month.
+export interface ProjectedBorrowingBase {
+  source: "assumptions" | "client";
+  months: number;
+  assumptions?: Record<
+    string,
+    { value?: string | null; byMonth?: (string | null)[] }
+  >;
+}
+
+// A scenario's changes to a projected borrowing base: assumptions, for
+// every month or month by month ("YYYY-MM"), and figures of projected
+// months, by month then code, such as an extra ineligible from a month.
+export interface ScenarioBorrowingBase {
+  assumptions?: Record<
+    string,
+    { value?: string | null; months?: Record<string, string> }
+  >;
+  figures?: Record<string, Record<string, string>>;
 }
 
 export const statementQuality = pgEnum("statement_quality", [
@@ -887,6 +921,11 @@ export const analyses = pgTable(
     postProjectKeys: text().array(),
     // The usage the base case assumes for each line of credit.
     lineUsage: jsonb().$type<LineUsage>().notNull().default({}),
+    // How it projects each margined line's borrowing base, by line id.
+    borrowingBases: jsonb()
+      .$type<Record<string, ProjectedBorrowingBase>>()
+      .notNull()
+      .default({}),
     status: analysisStatus().notNull().default("in_progress"),
     completedAt: timestamp({ withTimezone: true }),
     createdAt: createdAt(),
@@ -1017,9 +1056,33 @@ export const analysisScenarios = pgTable(
     // Usage assumed for lines of credit, over the analysis's: a share or
     // months given here replace its own.
     lineUsage: jsonb().$type<LineUsage>().notNull().default({}),
+    // Changes to projected borrowing bases, by line id.
+    borrowingBases: jsonb()
+      .$type<Record<string, ScenarioBorrowingBase>>()
+      .notNull()
+      .default({}),
     createdAt: createdAt(),
   },
   (t) => [index("analysis_scenarios_analysis").on(t.analysisId, t.position)],
+).enableRLS();
+
+// The client's monthly projections of a margined line's borrowing base,
+// entered in the analysis that uses them (§8.2): a forecast belongs to a
+// credit request. Lines are keyed as the analysis knows them, "member/line"
+// for a consolidated client's.
+export const analysisBorrowingBaseValues = pgTable(
+  "analysis_borrowing_base_values",
+  {
+    analysisId: uuid()
+      .notNull()
+      .references(() => analyses.id, { onDelete: "cascade" }),
+    lineId: text().notNull(),
+    // "YYYY-MM".
+    month: text().notNull(),
+    code: text().notNull(),
+    amount: numeric().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.analysisId, t.lineId, t.month, t.code] })],
 ).enableRLS();
 
 // ---------------------------------------------------------------------------

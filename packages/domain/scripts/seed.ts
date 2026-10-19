@@ -44,6 +44,7 @@ import {
   setFinancialModelCharts,
   setFinancingItems,
   setPeriodControls,
+  setAnalysisBorrowingBase,
   setBorrowingBaseMonth,
   setBorrowingBaseValues,
   startBorrowingBase,
@@ -275,6 +276,7 @@ async function seed() {
 
   const debtService = await financialModel(commercial.id, DEMO_MODEL);
 
+  const reviews: string[] = [];
   for (const [i, company] of companies.entries()) {
     const { entity } = borrowers[i]!;
     const actual = company.periods.filter((p) => p.quality !== "projected");
@@ -298,6 +300,7 @@ async function seed() {
       scenarios,
       usage,
     );
+    reviews.push(review.id);
     // Laurentian Foods' review is done, so the overview shows one.
     if (i === 1)
       await updateAnalysis(db, ctx, review.id, { status: "completed" });
@@ -403,6 +406,11 @@ async function seed() {
       quality: c.quality,
       receivedOn: c.receivedOn,
     });
+  // Its annual review projects the borrowing base a year, receivables and
+  // inventory 5% above the same months of 2024.
+  await setAnalysisBorrowingBase(db, ctx, reviews[0]!, operating!.id, {
+    assumptions: { GROWTH: "5%" },
+  });
   console.log(
     `Borrowing base: ${certificates.length} months of certificates for Northwind's operating line.`,
   );

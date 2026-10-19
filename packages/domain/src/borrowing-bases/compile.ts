@@ -40,6 +40,8 @@ export interface WaterfallRow {
 export interface CompiledBorrowingBase {
   // Entered each month, in the order a certificate lists them.
   inputs: WaterfallRow[];
+  // How each entered line is projected, by code.
+  projections: Record<string, string>;
   // Values by month from terms: advance rates, caps, reserves' amounts and
   // the limit.
   terms: { code: string; term: Term }[];
@@ -48,6 +50,9 @@ export interface CompiledBorrowingBase {
   rows: WaterfallRow[];
   currencies: string[];
 }
+
+// The same month a year earlier, or else the last month.
+const sameMonth = (code: string) => `IFERROR(PREV(${code}, 12), PREV(${code}))`;
 
 const sum = (codes: readonly string[]) =>
   codes.length ? codes.join(" + ") : "0";
@@ -126,7 +131,7 @@ export function compileBorrowingBase(
     const out: string[] = [];
     if (x.aging) {
       const buckets = x.aging.buckets.map((_, i) => `${x.code}.AGE${i + 1}`);
-      calc(x.code, sum(buckets));
+      calc(x.code, sum(buckets), x.projection ?? sameMonth(x.code));
       x.aging.buckets.forEach((label, i) =>
         detail(`AGE${i + 1}`, label, "amount", {
           entered: true,
@@ -225,6 +230,11 @@ export function compileBorrowingBase(
       ...extra,
     });
   };
+  calc(
+    "BB_COLLATERAL",
+    sum(collateral.map((x) => `${x.code}${fx(x.currency)}`)),
+  );
+  total("BB_COLLATERAL", "detail");
   calc("BB_GROSS", sum(gross));
   total("BB_GROSS", "subtotal");
 
@@ -315,8 +325,33 @@ export function compileBorrowingBase(
   // Entered rows, as a certificate lists them: collateral and its
   // ineligibles, prior claims, reserves, usage, then the rest.
   const inputs = rows.filter((r) => r.entered);
+  // Projected, each takes the same month a year earlier, or else the last;
+  // a part (an aging bucket, an ineligible) its share of its line a year
+  // earlier; a rate the last month's; the balance a year earlier plus the
+  // growth in collateral since, which the line funds. A definition's own
+  // projection formulas come first.
+  const share = (part: string, of: string) =>
+    `IFERROR(${of} * PREV(${part}, 12) / PREV(${of}, 12), IFERROR(${of} * PREV(${part}) / PREV(${of}), 0))`;
+  const projections: Record<string, string> = {};
+  for (const row of inputs) {
+    const line = byCode.get(row.code);
+    const bucket = /^(.+)\.AGE\d+$/.exec(row.code);
+    projections[row.code] =
+      (line && "projection" in line && line.projection) ||
+      (bucket
+        ? share(row.code, bucket[1]!)
+        : line?.kind === "ineligible"
+          ? share(line.code, line.of)
+          : row.code.startsWith("FX.")
+            ? `PREV(${row.code})`
+            : row.code === "BB_OUTSTANDING"
+              ? (definition.outstandingProjection ??
+                "MAX(0, IFERROR(PREV(BB_OUTSTANDING, 12) + BB_COLLATERAL - PREV(BB_COLLATERAL, 12), PREV(BB_OUTSTANDING)))")
+              : sameMonth(row.code));
+  }
   return {
     inputs,
+    projections,
     terms,
     assumptions: lines.filter(
       (l): l is LineOf<"assumption"> => l.kind === "assumption",
@@ -418,6 +453,11 @@ export function checkDefinition(
   ]);
   for (const issue of checkModel(
     [
+      ...compiled.inputs.map((r) => ({
+        code: r.code,
+        kind: "input" as const,
+        projectionFormula: compiled.projections[r.code] ?? null,
+      })),
       ...compiled.terms.map((t) => ({
         code: t.code,
         kind: "assumption" as const,
@@ -433,7 +473,7 @@ export function checkDefinition(
         projectionFormula: c.projection ?? null,
       })),
     ],
-    inputs,
+    [],
   ))
     error(
       "formula",

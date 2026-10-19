@@ -23,7 +23,9 @@ import {
   type CapexItem,
   type CapexYear,
 } from "../financing/capex";
+import { marginedLines } from "../borrowing-bases/lines";
 import {
+  checkProposedTerms,
   linesWithoutUsage,
   mergeLineUsage,
   normalizeLineUsage,
@@ -557,6 +559,29 @@ async function checkLineUsage(
   );
 }
 
+// A scenario's proposed lines, as typed, with their borrowing base terms
+// checked against each margined line's definition.
+async function checkProposedLines(
+  db: Db,
+  ctx: Context,
+  entityId: string,
+  input: readonly ProposedLineInput[],
+): Promise<ProposedLine[]> {
+  const lines = normalizeProposedLines(input);
+  if (lines.some((l) => l.terms)) {
+    const margined = await marginedLines(db, ctx, entityId);
+    for (const line of lines)
+      checkProposedTerms(
+        line.terms,
+        margined.find((m) => m.key === line.id)?.line.borrowingBase ??
+          line.borrowingBase ??
+          null,
+        line.name,
+      );
+  }
+  return lines;
+}
+
 // Usage kept only for lines still there, once a scenario's proposed lines
 // change.
 async function keptLineUsage(
@@ -593,6 +618,9 @@ export interface ScenarioInput {
   // Usage assumed for lines, over the analysis's: by line, a share and
   // amounts drawn by month.
   lineUsage?: unknown;
+  // Changes to projected borrowing bases, as saved, when a scenario is
+  // copied; set a line's with setScenarioBorrowingBase.
+  borrowingBases?: Scenario["borrowingBases"];
 }
 
 // What a project's items are checked against: the balance sheet of the
@@ -688,7 +716,9 @@ export async function addScenario(
   const detail = await getAnalysis(db, ctx, analysisId);
   if (!input.name.trim())
     throw new DomainError("invalid", "Give the scenario a name.");
-  const lines = input.lines ? normalizeProposedLines(input.lines) : null;
+  const lines = input.lines
+    ? await checkProposedLines(db, ctx, detail.entity.id, input.lines)
+    : null;
   const lineUsage = await checkLineUsage(
     db,
     ctx,
@@ -712,6 +742,7 @@ export async function addScenario(
       covenants: input.covenants ? normalizeCovenants(input.covenants) : null,
       lines,
       lineUsage,
+      borrowingBases: input.borrowingBases ?? {},
     })
     .returning();
   await touch(db, analysisId);
@@ -753,7 +784,8 @@ export async function updateScenario(
   const lines =
     patch.lines === undefined
       ? scenario.lines
-      : patch.lines && normalizeProposedLines(patch.lines);
+      : patch.lines &&
+        (await checkProposedLines(db, ctx, detail.entity.id, patch.lines));
   const lineUsage =
     patch.lineUsage !== undefined
       ? await checkLineUsage(db, ctx, detail.entity.id, patch.lineUsage, lines)
@@ -832,6 +864,7 @@ export async function duplicateScenario(
     covenants: source.covenants,
     lines: source.lines,
     lineUsage: source.lineUsage,
+    borrowingBases: source.borrowingBases,
   });
 }
 
@@ -1182,6 +1215,7 @@ export async function repinAnalysis(
         ),
         postProjectKeys: detail.analysis.postProjectKeys,
         lineUsage: detail.analysis.lineUsage,
+        borrowingBases: detail.analysis.borrowingBases,
       })
       .where(eq(analyses.id, copy.id));
     for (const scenario of detail.scenarios) {
@@ -1204,8 +1238,18 @@ export async function repinAnalysis(
         covenants: scenario.covenants,
         lines: scenario.lines,
         lineUsage: scenario.lineUsage,
+        borrowingBases: scenario.borrowingBases,
       });
     }
+    // The client's projected borrowing bases come along.
+    const forecast = await tx
+      .select()
+      .from(schema.analysisBorrowingBaseValues)
+      .where(eq(schema.analysisBorrowingBaseValues.analysisId, analysisId));
+    if (forecast.length)
+      await tx
+        .insert(schema.analysisBorrowingBaseValues)
+        .values(forecast.map((v) => ({ ...v, analysisId: copy.id })));
     return copy;
   });
 }

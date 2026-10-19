@@ -84,6 +84,12 @@ export const DEFAULT_INELIGIBLE_FROM = 3;
 // The totals every borrowing base computes, in waterfall order.
 export const TOTALS = [
   {
+    code: "BB_COLLATERAL",
+    label: "Collateral before ineligibles",
+    format: "amount",
+    help: "Every collateral line added up, in the line's currency, before ineligibles, advance rates and caps.",
+  },
+  {
     code: "BB_GROSS",
     label: "Gross borrowing base",
     format: "amount",
@@ -180,6 +186,7 @@ export interface BorrowingBaseDefinitionInput {
   basedOn?: unknown;
   lines?: unknown;
   outstandingReconcilesWith?: unknown;
+  outstandingProjection?: unknown;
   tests?: unknown;
   charts?: unknown;
 }
@@ -491,6 +498,9 @@ export function normalizeDefinition(
       lines,
       ...(optional(input.outstandingReconcilesWith)
         ? { outstandingReconcilesWith: text(input.outstandingReconcilesWith) }
+        : {}),
+      ...(optional(input.outstandingProjection)
+        ? { outstandingProjection: text(input.outstandingProjection) }
         : {}),
       ...(tests.length ? { tests } : {}),
       ...(charts?.length ? { charts } : {}),

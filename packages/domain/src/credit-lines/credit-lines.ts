@@ -11,6 +11,12 @@ import {
   type FinancingPeriod,
   type FinancingValue,
 } from "../financing/common";
+import { checkDefinition } from "../borrowing-bases/compile";
+import {
+  normalizeDefinition,
+  type BorrowingBaseDefinition,
+  type BorrowingBaseDefinitionInput,
+} from "../borrowing-bases/definition";
 import { parseMonth, parseTerm, termIn, type Term } from "./terms";
 
 // A borrower's lines of credit (borrowing-base-plan.md §4), and their
@@ -53,6 +59,12 @@ export interface CreditLineInput {
 export interface ProposedLineInput extends CreditLineInput {
   id?: unknown;
   closed?: unknown;
+  // Its borrowing base's terms as the deal changes them, by line code:
+  // { AR: { rate: "80%" }, INVENTORY: { cap: "1,500,000" } }; a null cap
+  // removes it.
+  terms?: unknown;
+  // A new margined line's borrowing base definition, as typed.
+  borrowingBase?: unknown;
 }
 
 const invalid = (message: string) => new DomainError("invalid", message);
@@ -108,6 +120,66 @@ const lineId = (raw: unknown) =>
     ? raw
     : entryId(undefined);
 
+// A deal's borrowing base terms as typed, by line code: advance rates, caps
+// (null removes one) and reserves' amounts. Which lines have which terms is
+// checked against the line's definition (see checkProposedTerms).
+function proposedTerms(raw: unknown, name: string) {
+  const result: NonNullable<ProposedLine["terms"]> = {};
+  if (raw === undefined || raw === null) return result;
+  if (typeof raw !== "object" || Array.isArray(raw))
+    throw invalid(`${name}: give the borrowing base's terms by line code.`);
+  for (const [rawCode, given] of Object.entries(raw)) {
+    const code = rawCode.toUpperCase();
+    if (!given || typeof given !== "object")
+      throw invalid(`${name}, ${code}: give its rate, cap or amount.`);
+    const { rate, cap, amount } = given as Record<string, unknown>;
+    const what = `${name}, ${code}`;
+    const term: NonNullable<ProposedLine["terms"]>[string] = {};
+    if (rate !== undefined)
+      term.rate = parseTerm(rate, `${what}, advance rate`, "rate");
+    if (cap === null) term.cap = null;
+    else if (cap !== undefined)
+      term.cap = parseTerm(cap, `${what}, cap`, "amount");
+    if (amount !== undefined)
+      term.amount = parseTerm(amount, `${what}, amount`, "amount");
+    if (Object.keys(term).length) result[code] = term;
+  }
+  return result;
+}
+
+// Whether a deal's terms fit the line's borrowing base: advance rates and
+// caps on collateral, caps on groups, amounts on reserves set as terms.
+export function checkProposedTerms(
+  terms: ProposedLine["terms"],
+  definition: BorrowingBaseDefinition | null,
+  name: string,
+) {
+  for (const [code, term] of Object.entries(terms ?? {})) {
+    const line = definition?.lines.find((l) => l.code === code);
+    const allowed =
+      line?.kind === "collateral"
+        ? ["rate", "cap"]
+        : line?.kind === "group"
+          ? ["cap"]
+          : line?.kind === "reserve" && line.amount
+            ? ["amount"]
+            : [];
+    const given = Object.keys(term);
+    if (!line)
+      throw invalid(
+        definition
+          ? `${name}: its borrowing base has no line ${code}.`
+          : `${name} isn't margined: it has no borrowing base terms to change.`,
+      );
+    if (given.some((g) => !allowed.includes(g)))
+      throw invalid(
+        allowed.length
+          ? `${name}, ${line.label}: its terms are ${allowed.join(" and ")}.`
+          : `${name}, ${line.label}: it has no terms to change.`,
+      );
+  }
+}
+
 // Checks and makes canonical the lines a scenario proposes. A line keeps its
 // id: one of the lines in force's, or a new line's.
 export function normalizeProposedLines(input: unknown): ProposedLine[] {
@@ -115,6 +187,25 @@ export function normalizeProposedLines(input: unknown): ProposedLine[] {
     throw invalid(`Proposed lines are a list of up to ${MAX_LINES}.`);
   const lines = input.map((raw: ProposedLineInput | null, i) => {
     const line = normalizeCreditLine(raw ?? {}, `Line ${i + 1}`);
+    const terms = proposedTerms(raw?.terms, line.name);
+    let borrowingBase: ProposedLine["borrowingBase"];
+    if (raw?.borrowingBase) {
+      const read = normalizeDefinition(
+        raw.borrowingBase as BorrowingBaseDefinitionInput,
+        line.currency,
+      );
+      const errors = [
+        ...read.issues,
+        ...checkDefinition(read.definition, line),
+      ].filter((issue) => issue.severity === "error");
+      if (errors.length)
+        throw new DomainError(
+          "invalid",
+          `${line.name}: ${errors[0]!.message}`,
+          errors,
+        );
+      borrowingBase = read.definition;
+    }
     return {
       id: lineId(raw?.id),
       name: line.name,
@@ -122,6 +213,8 @@ export function normalizeProposedLines(input: unknown): ProposedLine[] {
       limit: line.limit,
       rate: line.rate,
       ...(raw?.closed === true ? { closed: true } : {}),
+      ...(Object.keys(terms).length ? { terms } : {}),
+      ...(borrowingBase ? { borrowingBase } : {}),
     };
   });
   if (new Set(lines.map((l) => l.id)).size !== lines.length)

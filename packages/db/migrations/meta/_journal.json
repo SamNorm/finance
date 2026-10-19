@@ -176,6 +176,13 @@
       "when": 1792369891825,
       "tag": "0024_borrowing_bases",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792370936210,
+      "tag": "0025_projected_borrowing_bases",
+      "breakpoints": true
     }
   ]
 }

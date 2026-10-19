@@ -6,3 +6,6 @@ export * from "./checks";
 export * from "./paste";
 export * from "./service";
 export * from "./cycle";
+export * from "./lines";
+export * from "./projection";
+export * from "./settings";

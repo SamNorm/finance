@@ -177,3 +177,35 @@ export function overdueMonths(
   }
   return overdue;
 }
+
+// Each calendar month's share of a typical month for a figure, from its
+// last `years` years of certificates: the month's average over the year's,
+// so 1.1 is a month 10% above. Null for a month never reported. It fills a
+// seasonal assumption once, for the analyst to review (§8.3).
+export function seasonalProfile(
+  run: BorrowingBaseRun,
+  code: string,
+  years = 3,
+): (string | null)[] {
+  const reported = run.months
+    .map((m, p) => ({ m, p }))
+    .filter(({ m }) => m.quality)
+    .slice(-12 * years);
+  const byMonth = Array.from({ length: 12 }, (_, i) =>
+    reported.flatMap(({ m, p }) => {
+      const raw = run.cells[code]?.[p]?.value;
+      return Number(m.month.slice(5, 7)) === i + 1 &&
+        raw !== null &&
+        raw !== undefined
+        ? [new Dec(raw)]
+        : [];
+    }),
+  ).map((values) => (values.length ? mean(values) : null));
+  const known = byMonth.flatMap((v) => (v === null ? [] : [new Dec(v)]));
+  const typical = mean(known);
+  if (typical === null || new Dec(typical).isZero())
+    return byMonth.map(() => null);
+  return byMonth.map((v) =>
+    v === null ? null : new Dec(v).div(typical).toDecimalPlaces(4).toFixed(),
+  );
+}

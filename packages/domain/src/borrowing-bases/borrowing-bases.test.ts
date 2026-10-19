@@ -266,7 +266,12 @@ describe("runBorrowingBase", () => {
       months: [{ month: "2025-11", quality: "reported", figures: NOVEMBER }],
     });
     expect(run.months).toEqual([
-      { month: "2025-11", end: "2025-11-30", quality: "reported" },
+      {
+        month: "2025-11",
+        end: "2025-11-30",
+        quality: "reported",
+        projected: false,
+      },
     ]);
     const figures = Object.fromEntries(
       [

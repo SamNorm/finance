@@ -255,6 +255,25 @@ describe("evaluateModel", () => {
     expect(show(evaluation.cell("RISE", 2).value)).toBe("50");
   });
 
+  it("keeps a figure entered in a projected period over the projection formula", () => {
+    const evaluation = evaluateModel({
+      periods: [
+        annual(2024),
+        annual(2025, { projection: "assumptions" }),
+        annual(2026, { projection: "assumptions" }),
+      ],
+      calculations: [],
+      assumptions: {},
+      inputCodes: ["SALES"],
+      input: (_, p) => (p === 0 ? new Dec(100) : p === 2 ? new Dec(150) : null),
+      inputProjections: { SALES: "PREV(SALES) * 1.1" },
+    });
+    expect(show(evaluation.cell("SALES", 1).value)).toBe("110");
+    expect(evaluation.cell("SALES", 1).formula).toBe("PREV(SALES) * 1.1");
+    expect(show(evaluation.cell("SALES", 2).value)).toBe("150");
+    expect(evaluation.cell("SALES", 2).formula).toBeNull();
+  });
+
   it("projects inputs that have a projection formula", () => {
     const evaluation = evaluateModel({
       periods: [annual(2024), annual(2025, { projection: "assumptions" })],

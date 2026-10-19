@@ -131,6 +131,17 @@ export function evaluateModel(run: ModelRun): Evaluation {
         refs: [],
       };
     }
+    // An input projected from assumptions takes its projection formula,
+    // unless a figure was entered for the period: what's entered wins.
+    if (source.kind === "input") {
+      const entered = run.input(source.code, p);
+      if (
+        entered !== null ||
+        run.periods[p]?.projection !== "assumptions" ||
+        !source.projection
+      )
+        return { value: entered, formula: null, refs: [] };
+    }
     const compiled =
       run.periods[p]?.projection === "assumptions" && source.projection
         ? source.projection
