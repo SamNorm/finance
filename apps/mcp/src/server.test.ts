@@ -1234,7 +1234,7 @@ describe("MCP server", () => {
     });
     expect(results.covenants.tested).toBe("the borrower's in force");
     // 2.14x against 1.25x; then 2.50x against 2.60x: 40,000 of EBITDA short.
-    expect(results.covenants.covenants[0].years).toEqual([
+    expect(results.covenants.covenants[0].periods).toEqual([
       expect.objectContaining({
         threshold: "1.25x",
         actual: "2.14x",
@@ -1272,8 +1272,8 @@ describe("MCP server", () => {
     });
     expect(deal.covenants.tested).toBe("proposed for the scenario's deal");
     expect(
-      deal.covenants.covenants[0].years.map(
-        (y: { result: string }) => y.result,
+      deal.covenants.covenants[0].periods.map(
+        (p: { result: string }) => p.result,
       ),
     ).toEqual(["Pass", "Pass"]);
     expect(

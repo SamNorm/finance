@@ -46,8 +46,8 @@ const asFormat = (format: CovenantResult["format"]): Format =>
     ? format
     : "amount";
 
-// One year's test: the figure against its threshold, the room left before
-// a breach, and for a ratio of two lines that room in dollars.
+// One period's test: the figure against its threshold, the room left
+// before a breach, and for a ratio of two lines that room in dollars.
 function describeTest(
   period: CovenantPeriod | undefined,
   format: Format,
@@ -85,8 +85,8 @@ function describeTest(
   };
 }
 
-// The covenants an analysis run tested, year by year in the periods' order;
-// post-project where it applies.
+// The covenants an analysis run tested, in the periods' order, fiscal years
+// and interim periods alike; post-project where it applies.
 export function describeCovenantResults(
   covenants: AnalysisResults["covenants"],
   run: AnalysisRun,
@@ -108,7 +108,7 @@ export function describeCovenantResults(
         ...(result.label === null
           ? { untested: "The analysis's model has no such line." }
           : {
-              years: run.periods.map((_, p) =>
+              periods: run.periods.map((_, p) =>
                 describeTest(result.periods[p], format, test),
               ),
               ...(post

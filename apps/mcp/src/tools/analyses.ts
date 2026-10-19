@@ -236,7 +236,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Run an analysis",
       description:
-        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested each fiscal year (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. Lines of credit reach the model through built-in inputs (LINE_INTEREST, LINE_AUTHORIZED, LINE_AVERAGE_USAGE, PROFORMA_LINE_INTEREST) on the usage assumed, in the analysis's currency: a line in another converts at the run's exchange rate. A line with no usage, or no rate, is flagged. Values are rounded as the app shows them; flags read Pass or Fail.",
+        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested in each period, fiscal years and interim ones alike (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. An interim period takes the threshold of the fiscal year it falls in, and the model's line as it computes it there (a ratio of a balance to a P&L figure annualizes the P&L side). Lines of credit reach the model through built-in inputs (LINE_INTEREST, LINE_AUTHORIZED, LINE_AVERAGE_USAGE, PROFORMA_LINE_INTEREST) on the usage assumed, in the analysis's currency: a line in another converts at the run's exchange rate. A line with no usage, or no rate, is flagged. Values are rounded as the app shows them; flags read Pass or Fail.",
       inputSchema: z.object({
         analysisId,
         scenarioId: z
@@ -354,8 +354,8 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
                 : {}),
             };
           }),
-          // Each covenant's test in each fiscal year, in the periods' order;
-          // null where it isn't tested, such as a year to date.
+          // Each covenant's test in each period, in the periods' order; null
+          // where the model has no such line.
           covenants: describeCovenantResults(results.covenants, run, eligible),
         };
       }),
