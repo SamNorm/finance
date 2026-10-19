@@ -1,8 +1,17 @@
 export {
   analysisDocumentData,
+  DATA_VERSION,
   dataHash,
+  lineDocumentData,
+  readDocumentData,
+  type AnalysisDocumentData,
+  type DocumentBorrowingBase,
   type DocumentData,
+  type DocumentRow,
   type DocumentRun,
+  type DocumentSource,
+  type DocumentTest,
+  type KeptDocumentData,
 } from "./data";
 export {
   checkDefinition,

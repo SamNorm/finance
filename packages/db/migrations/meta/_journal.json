@@ -197,6 +197,13 @@
       "when": 1792372113516,
       "tag": "0027_borrowing_base_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792372874565,
+      "tag": "0028_document_credit_lines",
+      "breakpoints": true
     }
   ]
 }

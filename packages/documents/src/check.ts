@@ -1,22 +1,39 @@
-import type { ChartDefinition, Issue, ModelLine } from "@finance/domain";
+import {
+  TOTALS,
+  type ChartDefinition,
+  type Issue,
+  type ModelLine,
+} from "@finance/domain";
+import { MAX_BB_MONTHS } from "./data";
 import {
   CONDITIONS,
+  LINE_MERGE_FIELDS,
   MERGE_FIELD,
   MERGE_FIELDS,
   SECTIONS,
+  SOURCES,
+  sourceOf,
   type Block,
   type BlockType,
   type Definition,
 } from "./templates";
 
 // A template's definition as given, from the editor or from MCP as JSON:
-// parsed into blocks, then checked against the financial model it reads
-// (documents-plan.md §6.3). What can't be stored stops a save; any error
+// parsed into blocks, then checked against what it prints from: the
+// financial model an analysis runs on, or a margined line, whose blocks
+// read any borrower's lines (documents-plan.md §6.3,
+// borrowing-base-plan.md §12). What can't be stored stops a save; any error
 // stops publishing.
 
 // Each block's settings besides `type` and `when`: what each holds, and
 // what it does, as MCP clients read it (describeSections).
-type Setting = { kind: "text" | "codes" | "periods"; help: string };
+type Setting = {
+  kind: "text" | "codes" | "periods" | "months";
+  help: string;
+};
+
+const MONTHS_HELP = (what: string, fallback: number) =>
+  `${what}, 1 to ${MAX_BB_MONTHS}; ${fallback} when omitted.`;
 
 const SETTINGS: Record<BlockType, Record<string, Setting>> = {
   heading: {
@@ -47,12 +64,52 @@ const SETTINGS: Record<BlockType, Record<string, Setting>> = {
   charts: {
     charts: {
       kind: "codes",
-      help: "Ids of the model's charts to show. Omit for every chart, the model's and the analysis's own. Naming charts needs the document to read a financial model.",
+      help: "Ids of the charts to show. Omit for every chart: the model's and the analysis's own, or a line's borrowing base's. Naming a model's charts needs the document to read a financial model.",
+    },
+    months: {
+      kind: "months",
+      help: MONTHS_HELP(
+        "From a line: the months its charts cover, up to the month printed",
+        12,
+      ),
     },
   },
   sourcesUses: {},
   debt: {},
   amortization: {},
+  bbWaterfall: {},
+  bbHistory: {
+    lines: {
+      kind: "codes",
+      help: "Codes of the figures to show month by month, in this order: totals such as BB_TOTAL, BB_USAGE and BB_SURPLUS, or the borrowing base's own lines such as AR.MARGINED. Omit for the main totals.",
+    },
+    months: {
+      kind: "months",
+      help: MONTHS_HELP("The months shown, up to the month printed", 12),
+    },
+  },
+  bbTests: {
+    months: {
+      kind: "months",
+      help: MONTHS_HELP(
+        "The months tested, up to the month printed; 1 for the month's tests alone",
+        12,
+      ),
+    },
+  },
+  bbCycle: {},
+  bbProjection: {
+    lines: {
+      kind: "codes",
+      help: "Codes of the figures to show month by month, such as BB_TOTAL, BB_LIMIT and BB_SURPLUS. Omit for the main totals.",
+    },
+  },
+  bbSignature: {
+    text: {
+      kind: "text",
+      help: "The statement above the signature lines, with merge fields. Omit for the app's: that the information above is true and complete.",
+    },
+  },
   pageBreak: {},
 };
 
@@ -61,14 +118,19 @@ const SETTINGS: Record<BlockType, Record<string, Setting>> = {
 // client reads before writing a document's sections.
 export function describeSections() {
   return {
+    // What a document prints from, as its definition's "source" says.
+    sources: SOURCES,
     sections: (Object.keys(SECTIONS) as BlockType[]).map((type) => ({
       type,
       label: SECTIONS[type].label,
       description: SECTIONS[type].description,
+      sources: SECTIONS[type].sources,
       settings: Object.fromEntries(
         Object.entries(SETTINGS[type]).map(([key, { help }]) => [key, help]),
       ),
     })),
+    // Conditions are about an analysis; a document printed from a line
+    // takes none.
     when: CONDITIONS,
     mergeFields: {
       ...MERGE_FIELDS,
@@ -76,6 +138,11 @@ export function describeSections() {
         "A line's figure in the latest fiscal year, e.g. {{line.DSCR}}",
       "line.CODE.post":
         "That figure post-project, when the scenario has a project",
+    },
+    lineMergeFields: {
+      ...LINE_MERGE_FIELDS,
+      "bb.CODE":
+        "A borrowing base figure in the month printed, e.g. {{bb.BB_SURPLUS}}, {{bb.BB_TOTAL}} or {{bb.AR.MARGINED}}",
     },
   };
 }
@@ -188,6 +255,18 @@ export function parseBlocks(input: unknown): {
               (value as string[]).map((v) => v.trim()).filter(Boolean),
             ),
           ];
+      } else if (kind === "months") {
+        if (
+          typeof value !== "number" ||
+          !Number.isInteger(value) ||
+          value < 1 ||
+          value > MAX_BB_MONTHS
+        )
+          fail(
+            "invalid_setting",
+            `"${key}" is a number of months, 1 to ${MAX_BB_MONTHS}.`,
+          );
+        else block[key] = value;
       } else if (value === "all" || value === "recent") {
         block[key] = value;
       } else {
@@ -203,23 +282,57 @@ export function parseBlocks(input: unknown): {
   return { blocks, issues };
 }
 
+// A borrowing base figure a template names: a total (BB_…), or a code a
+// borrower's own lines may have, such as AR or AR.MARGINED. One template
+// serves every borrower, so only the totals are known ahead.
+const BB_CODE = /^[A-Z][A-Z0-9_]{0,39}(\.[A-Z][A-Z0-9_]*)?$/;
+const TOTAL_CODES = new Set<string>(TOTALS.map((t) => t.code));
+
+function bbCodeProblem(code: string): string | null {
+  if (code.startsWith("BB_"))
+    return TOTAL_CODES.has(code)
+      ? null
+      : `${code} isn't a borrowing base total; they are ${[...TOTAL_CODES].join(", ")}.`;
+  return BB_CODE.test(code)
+    ? null
+    : `"${code}" isn't a borrowing base code, such as BB_SURPLUS or AR.MARGINED.`;
+}
+
 // What would keep a definition from being published: sections it doesn't
-// have, settings left blank, and lines, charts or merge fields the model
-// doesn't have.
+// have, or that what it prints from can't fill; settings left blank; and
+// lines, charts or merge fields the model, or a line, doesn't have.
 export function checkDefinition(
   definition: Definition,
   model: TemplateModel | null,
 ): Issue[] {
   const issues: Issue[] = [];
+  const source = sourceOf(definition);
+  const fromLine = source === "line";
   const codes = new Set(
     model?.lines.filter((l) => l.kind !== "header").map((l) => l.code),
   );
   const charts = new Set(model?.charts.map((c) => c.id));
   const noModel = "choose the financial model it reads first.";
+  if (fromLine && model)
+    issues.push(
+      error(
+        "line_model",
+        `A document printed from a line of credit reads no financial model: clear ${model.name}.`,
+      ),
+    );
 
   const fields = (text: string, at: string) => {
     for (const [whole, path] of text.matchAll(MERGE_FIELD)) {
       const [head, code, post, ...rest] = path!.split(".");
+      if (fromLine) {
+        if (Object.hasOwn(LINE_MERGE_FIELDS, path!)) continue;
+        const problem =
+          head === "bb" && code
+            ? bbCodeProblem(path!.slice(3))
+            : `${whole} isn't a merge field of a document printed from a line.`;
+        if (problem) issues.push(error("unknown_field", `${at}: ${problem}`));
+        continue;
+      }
       if (
         head === "line" &&
         code &&
@@ -246,12 +359,41 @@ export function checkDefinition(
     }
   };
 
+  const bbCodes = (list: string[] | undefined, at: string) => {
+    if (!list) return;
+    if (!list.length)
+      issues.push(
+        error("blank", `${at}: pick its figures, or show the main totals.`),
+      );
+    for (const code of list) {
+      const problem = bbCodeProblem(code);
+      if (problem)
+        issues.push(error("unknown_code", `${at}: ${problem}`, code));
+    }
+  };
+
   if (!definition.title.trim())
     issues.push(error("no_title", "Give the document a title."));
   fields(definition.title, "The title");
   if (!definition.blocks.length) issues.push(error("empty", "Add a section."));
   definition.blocks.forEach((block, index) => {
     const at = where(index, block.type);
+    if (!SECTIONS[block.type].sources.includes(source)) {
+      issues.push(
+        error(
+          "wrong_source",
+          `${at}: it prints from ${SOURCES[SECTIONS[block.type].sources[0]!].toLowerCase()}, and this document prints from ${SOURCES[source].toLowerCase()}.`,
+        ),
+      );
+      return;
+    }
+    if (block.when && fromLine)
+      issues.push(
+        error(
+          "wrong_source",
+          `${at}: its condition is about an analysis, and this document prints from a line of credit.`,
+        ),
+      );
     switch (block.type) {
       case "heading":
       case "text":
@@ -278,12 +420,34 @@ export function checkDefinition(
                 ),
               );
         break;
+      case "bbHistory":
+      case "bbProjection":
+        bbCodes(block.lines, at);
+        break;
+      case "bbSignature":
+        if (block.text !== undefined) {
+          if (!block.text.trim())
+            issues.push(
+              error("blank", `${at}: write its statement, or use the app's.`),
+            );
+          fields(block.text, at);
+        }
+        break;
       case "charts":
+        if (block.months !== undefined && !fromLine)
+          issues.push(
+            error(
+              "wrong_source",
+              `${at}: "months" is for a document printed from a line; an analysis's charts cover its periods.`,
+            ),
+          );
         if (!block.charts) break;
         if (!block.charts.length)
           issues.push(
             error("blank", `${at}: pick its charts, or show all of them.`),
           );
+        // A line's charts are its borrower's own, so any id can name one.
+        else if (fromLine) break;
         else if (!model) issues.push(error("no_model", `${at}: ${noModel}`));
         else
           for (const id of block.charts)

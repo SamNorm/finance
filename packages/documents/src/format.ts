@@ -49,6 +49,19 @@ export function formats(language: Language) {
     month: "long",
     timeZone: "UTC",
   });
+  const monthYears = new Intl.DateTimeFormat(tag, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  const shortMonths = new Intl.DateTimeFormat(tag, {
+    month: "short",
+    timeZone: "UTC",
+  });
+  const exchange = new Intl.NumberFormat(tag, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  });
   const lists = new Intl.ListFormat(tag, { type: "conjunction" });
   const compact = new Intl.NumberFormat(tag, {
     notation: "compact",
@@ -95,6 +108,14 @@ export function formats(language: Language) {
     // A calendar month, 1 to 12 → "October".
     monthName: (month: number) =>
       monthNames.format(new Date(Date.UTC(2000, month - 1, 1))),
+    // "2025-11" → "November 2025".
+    monthYear: (month: string) =>
+      monthYears.format(new Date(`${month}-01T00:00:00Z`)),
+    // A month index → "Nov", for a chart's axis.
+    monthShort: (index: number) =>
+      shortMonths.format(new Date(`${monthOf(index)}-01T00:00:00Z`)),
+    // An exchange rate: "1.37", "1.3725".
+    exchange: (value: string) => exchange.format(Number(value)),
     // "a, b and c", or "a, b et c".
     list: (items: string[]) => lists.format(items),
     // A chart axis's label, shorter than a figure.

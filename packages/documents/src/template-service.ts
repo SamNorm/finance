@@ -22,17 +22,20 @@ import {
 import { checkDefinition, parseBlocks } from "./check";
 import {
   BUILT_IN_TEMPLATES,
+  sourceOf,
   templateOf,
   type Definition,
   type Language,
   type Orientation,
+  type Source,
 } from "./templates";
 
 // An organization's own documents (documents-plan.md §6), made from the
 // same blocks as the built-ins. Each keeps a draft, which edits change, and
 // the published definition analysts print from: publishing copies the draft
-// over it. A template that names lines or charts reads one financial model,
-// and stays on it once published.
+// over it. A template prints from an analysis or from a margined line of
+// credit. One from an analysis that names lines or charts reads one
+// financial model, and stays on it once published.
 
 const { documentTemplates: templates, financialModels, organizations } = schema;
 
@@ -46,6 +49,8 @@ export interface TemplateSummary {
   id: string;
   name: string;
   description: string | null;
+  // What its draft prints from.
+  source: Source;
   // The model whose lines and charts it names; null for any analysis.
   financialModel: { id: string; name: string } | null;
   // The built-in's key, or the template's id, it was copied from.
@@ -69,6 +74,7 @@ export interface TemplateInput {
   name?: string;
   description?: string | null;
   financialModelId?: string | null;
+  source?: Source;
   title?: string;
   orientation?: Orientation;
   language?: Language;
@@ -109,6 +115,7 @@ function toSummary(row: Row): TemplateSummary {
     id: row.id,
     name: row.name,
     description: row.description,
+    source: sourceOf(row.draft as Definition),
     financialModel: row.financialModelId
       ? { id: row.financialModelId, name: row.financialModelName ?? "" }
       : null,
@@ -244,6 +251,15 @@ function language(value: unknown): Language {
   return value;
 }
 
+function source(value: unknown): Source {
+  if (value !== "analysis" && value !== "line")
+    throw new DomainError(
+      "invalid",
+      'A document prints from "analysis" or "line".',
+    );
+  return value;
+}
+
 function orientation(value: unknown): Orientation {
   if (value !== "portrait" && value !== "landscape")
     throw new DomainError(
@@ -271,8 +287,10 @@ async function financialModelId(db: Db, ctx: Context, value: unknown) {
   return (await getFinancialModel(db, ctx, value)).id;
 }
 
-// A new document: blank, or a copy of a built-in's definition or of a
-// template's draft. A copy reads the same model unless another is given.
+// A new document: blank, from an analysis unless it's given a source, or a
+// copy of a built-in's definition or of a template's draft. A copy prints
+// from what its source does, and reads the same model unless another is
+// given.
 export async function createTemplate(
   db: Db,
   ctx: Context,
@@ -280,6 +298,7 @@ export async function createTemplate(
     name: string;
     description?: string | null;
     financialModelId?: string | null;
+    source?: Source;
     // A built-in's key, or a template's id.
     from?: string | null;
   },
@@ -287,6 +306,7 @@ export async function createTemplate(
   const name = text(input.name, "name");
   if (!name) throw new DomainError("invalid", "Give the document a name.");
   let draft: Definition = {
+    source: input.source === undefined ? "analysis" : source(input.source),
     title: `{{borrower.name}}: ${name}`,
     orientation: "portrait",
     language: "en",
@@ -299,6 +319,7 @@ export async function createTemplate(
     const builtIn = templateOf(input.from);
     if (builtIn) {
       draft = {
+        source: sourceOf(builtIn),
         title: builtIn.title,
         orientation: builtIn.orientation,
         language: builtIn.language ?? "en",
@@ -360,6 +381,7 @@ export async function updateTemplate(
       set.financialModelId = model;
     }
   }
+  if (input.source !== undefined) draft.source = source(input.source);
   if (input.title !== undefined) draft.title = title(input.title);
   if (input.orientation !== undefined)
     draft.orientation = orientation(input.orientation);
@@ -468,7 +490,8 @@ export async function templateToPrint(
 }
 
 // What an analysis on this model prints as: the organization's published
-// documents that read it or no model, then the built-ins it still offers.
+// documents from an analysis that read it or no model, then the built-ins
+// it still offers. With the source "line", what a margined line prints as.
 export interface PrintableTemplate {
   // A built-in's key, or the template's id.
   key: string;
@@ -480,8 +503,13 @@ export interface PrintableTemplate {
 export async function listPrintableTemplates(
   db: Db,
   ctx: Context,
-  financialModelId: string,
+  financialModelId: string | null,
+  from: Source = "analysis",
 ): Promise<PrintableTemplate[]> {
+  const model =
+    from === "analysis" && financialModelId && UUID.test(financialModelId)
+      ? financialModelId
+      : null;
   const [organization, own] = await Promise.all([
     getOrganization(db, ctx),
     db
@@ -489,6 +517,7 @@ export async function listPrintableTemplates(
         id: templates.id,
         name: templates.name,
         description: templates.description,
+        published: templates.published,
       })
       .from(templates)
       .where(
@@ -498,23 +527,24 @@ export async function listPrintableTemplates(
           isNull(templates.archivedAt),
           or(
             isNull(templates.financialModelId),
-            UUID.test(financialModelId)
-              ? eq(templates.financialModelId, financialModelId)
-              : undefined,
+            model ? eq(templates.financialModelId, model) : undefined,
           ),
         ),
       )
       .orderBy(asc(templates.name)),
   ]);
   return [
-    ...own.map((t) => ({
-      key: t.id,
-      name: t.name,
-      description: t.description ?? "",
-      builtIn: false,
-    })),
+    ...own
+      .filter((t) => sourceOf(t.published as Definition) === from)
+      .map((t) => ({
+        key: t.id,
+        name: t.name,
+        description: t.description ?? "",
+        builtIn: false,
+      })),
     ...BUILT_IN_TEMPLATES.filter(
-      (t) => !organization.hiddenBuiltIns.includes(t.key),
+      (t) =>
+        sourceOf(t) === from && !organization.hiddenBuiltIns.includes(t.key),
     ).map(({ key, name, description }) => ({
       key,
       name,

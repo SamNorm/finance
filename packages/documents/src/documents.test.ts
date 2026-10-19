@@ -104,7 +104,18 @@ describe("documents", () => {
       "analysis-report",
       "deal-summary",
       "debt-summary",
+      "projected-margin",
+      "borrowing-base-certificate",
+      "margin-history",
     ]);
+    // A line's documents don't print from an analysis.
+    await rejects(
+      previewDocument(db, ctx, {
+        analysisId,
+        template: "borrowing-base-certificate",
+      }),
+      "invalid",
+    );
   });
 
   it("list lines of credit with their usage, and the deal's changes to them", async () => {

@@ -1376,6 +1376,9 @@ describe("MCP server", () => {
       "analysis-report",
       "deal-summary",
       "debt-summary",
+      "projected-margin",
+      "borrowing-base-certificate",
+      "margin-history",
     ]);
     expect(
       (
@@ -1466,6 +1469,7 @@ describe("MCP server", () => {
       "analysis-report",
       "deal-summary",
       "debt-summary",
+      "projected-margin",
     ]);
     const { value: all } = await call("list_document_templates");
     expect(all[0]).toMatchObject({

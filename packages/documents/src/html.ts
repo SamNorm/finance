@@ -1,9 +1,14 @@
 import {
   amortize,
+  DEFAULT_BB_CHARTS,
   monthIndex,
+  monthNumber,
   nextYearDebtService,
   projectTotals,
+  type ChartDefinition,
   type CovenantPeriod,
+  type CycleFigure,
+  type CycleSummary,
   type DebtSchedule,
   type ExistingLoan,
   type LineCode,
@@ -12,8 +17,20 @@ import {
   type Season,
   type Term,
 } from "@finance/domain";
+import { Dec } from "@finance/engine";
 import { chartSvg, legendHtml, type ChartInput } from "./chart";
-import type { DocumentData, DocumentRun } from "./data";
+import {
+  fromAnalysis,
+  lineOf,
+  readDocumentData,
+  type AnalysisDocumentData,
+  type DocumentBorrowingBase,
+  type DocumentData,
+  type DocumentRow,
+  type DocumentRun,
+  type DocumentTest,
+  type KeptDocumentData,
+} from "./data";
 import { escape, type Format } from "./format";
 import { locale, type Change, type Locale } from "./locale";
 import {
@@ -38,11 +55,29 @@ export interface RenderedDocument {
 
 const DEFAULT_COLOR = "#1e3a8a";
 
-// A merge field's value, e.g. "borrower.name" or "line.DSCR.post"; null
-// for a field there's no such thing as.
+// A merge field's value, e.g. "borrower.name" or "line.DSCR.post", or from
+// a line "bb.BB_SURPLUS" or "line.name"; null for a field there's no such
+// thing as.
 function field(path: string, data: DocumentData, l: Locale): string | null {
   const [head, code, post] = path.split(".");
-  if (head === "line" && code) {
+  const bb = lineOf(data);
+  if (bb) {
+    const p = bb.months.length - 1;
+    if (path === "bb.month") return l.monthYear(bb.months[p]!.month);
+    if (head === "bb") {
+      const row = bb.rows.find(
+        (r) => r.code === path.slice(3) && r.kind !== "section",
+      );
+      return row ? bbFigure(row, bb.values[row.code]?.[p] ?? null, l) : null;
+    }
+    const line: Record<string, string> = {
+      "line.name": bb.name,
+      "line.currency": bb.currency,
+      "line.limit": l.figure(bb.values.BB_LIMIT?.[p] ?? null, "amount"),
+      "line.rate": l.rate(bb.rate),
+    };
+    if (head === "line") return line[path] ?? null;
+  } else if (head === "line" && code && fromAnalysis(data)) {
     const line = data.lines.find((l) => l.code === code);
     if (!line || line.kind === "header" || (post && post !== "post"))
       return null;
@@ -55,14 +90,18 @@ function field(path: string, data: DocumentData, l: Locale): string | null {
   const fields: Record<string, string> = {
     "borrower.name": data.borrower.name,
     "borrower.industry": data.borrower.industry ?? "",
-    "analysis.name": data.analysis.name,
-    "model.name": data.model.name,
-    "model.version": `v${data.model.version}`,
-    "scenario.name": data.scenario?.name ?? l.w.baseCase,
     "organization.name": data.organization.name,
     date: l.date(data.date),
+    ...(fromAnalysis(data)
+      ? {
+          "analysis.name": data.analysis.name,
+          "model.name": data.model.name,
+          "model.version": `v${data.model.version}`,
+          "scenario.name": data.scenario?.name ?? l.w.baseCase,
+        }
+      : {}),
   };
-  return fields[path] ?? null;
+  return Object.hasOwn(fields, path) ? fields[path]! : null;
 }
 
 // {{borrower.name}} and the like; unknown fields are left as typed.
@@ -115,15 +154,16 @@ function prose(text: string, data: DocumentData, l: Locale): string {
     .join("");
 }
 
-// Whether a block with this condition shows in this document.
+// Whether a block with this condition shows in this document. Conditions
+// are about an analysis, so none holds for a line's.
 export function shows(when: Condition | undefined, data: DocumentData) {
+  if (when === undefined) return true;
+  if (!fromAnalysis(data)) return false;
   const results = [
     ...data.covenants.run,
     ...(data.covenants.project ?? []),
   ].flatMap((c) => c.periods.map((p) => p.pass));
   switch (when) {
-    case undefined:
-      return true;
     case "project":
       return data.deal !== null;
     case "noProject":
@@ -156,7 +196,7 @@ const periodHead = (run: DocumentRun, p: number, l: Locale) => {
 
 // The columns a table shows: each period, and a post-project column after
 // those the analysis shows one for.
-function columns(data: DocumentData, recent: boolean) {
+function columns(data: AnalysisDocumentData, recent: boolean) {
   const from = recent ? Math.max(0, lastYear(data.run)) : 0;
   return data.run.periods.flatMap((period, p) => {
     if (p < from) return [];
@@ -169,7 +209,7 @@ function columns(data: DocumentData, recent: boolean) {
 
 function linesBlock(
   block: Extract<Block, { type: "lines" }>,
-  data: DocumentData,
+  data: AnalysisDocumentData,
   l: Locale,
 ): string {
   const cols = columns(data, block.periods === "recent");
@@ -210,7 +250,10 @@ function linesBlock(
   return `${block.title ? `<h2>${escape(merge(block.title, data, l))}</h2>` : ""}<table class="figures"><thead><tr><th>${escape(data.scenario?.name ?? l.w.baseCase)}</th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+// The borrower, then what the analysis runs on, or the line and its
+// month's certificate.
 function factsBlock(data: DocumentData, l: Locale): string {
+  const bb = lineOf(data);
   const facts: [string, string][] = [
     [
       data.borrower.kind === "consolidated"
@@ -240,16 +283,40 @@ function factsBlock(data: DocumentData, l: Locale): string {
     ...(data.borrower.riskRating
       ? ([[l.w.riskRating, data.borrower.riskRating]] as [string, string][])
       : []),
-    [l.w.analysis, data.analysis.name],
-    [l.w.financialModel, `${data.model.name} · v${data.model.version}`],
-    [l.w.scenario, data.scenario?.name ?? l.w.baseCase],
-    [
-      l.w.projections,
-      data.analysis.projectionMode === "client"
-        ? l.w.clientsOwn
-        : l.w.yearsFromAssumptions(data.analysis.projectionYears),
-    ],
   ];
+  if (fromAnalysis(data))
+    facts.push(
+      [l.w.analysis, data.analysis.name],
+      [l.w.financialModel, `${data.model.name} · v${data.model.version}`],
+      [l.w.scenario, data.scenario?.name ?? l.w.baseCase],
+      [
+        l.w.projections,
+        data.analysis.projectionMode === "client"
+          ? l.w.clientsOwn
+          : l.w.yearsFromAssumptions(data.analysis.projectionYears),
+      ],
+    );
+  else if (bb) {
+    const month = bb.months.at(-1)!;
+    const certificate = bb.certificate;
+    facts.push(
+      [l.w.lineOfCredit, `${bb.name} · ${bb.currency}`],
+      [l.w.limit, l.limit(bb.limit)],
+      [l.w.rate, l.rate(bb.rate)],
+      [l.w.monthEnded, l.date(month.end)],
+    );
+    if (certificate)
+      facts.push([
+        l.w.certificate,
+        [
+          l.w.certificateQualities[certificate.quality],
+          certificate.receivedOn &&
+            l.w.receivedOn(l.date(certificate.receivedOn)),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ]);
+  }
   return `<dl class="facts">${facts.map(([k, v]) => `<div><dt>${escape(k)}</dt><dd>${escape(v)}</dd></div>`).join("")}</dl>`;
 }
 
@@ -258,7 +325,7 @@ const asChartFormat = (format: string): ChartInput["format"] =>
     ? format
     : "amount";
 
-function covenantsBlock(data: DocumentData, l: Locale): string {
+function covenantsBlock(data: AnalysisDocumentData, l: Locale): string {
   const { covenants } = data;
   if (!covenants.run.length) return "";
   const cols = columns(data, false).filter(
@@ -332,7 +399,7 @@ function covenantsBlock(data: DocumentData, l: Locale): string {
 
 function chartsBlock(
   block: Extract<Block, { type: "charts" }>,
-  data: DocumentData,
+  data: AnalysisDocumentData,
   l: Locale,
 ): string {
   const charts = data.charts.filter(
@@ -403,7 +470,7 @@ function chartsBlock(
   return `<h2>${l.w.charts}</h2><div class="charts">${items.join("")}</div>`;
 }
 
-function sourcesUsesBlock(data: DocumentData, l: Locale): string {
+function sourcesUsesBlock(data: AnalysisDocumentData, l: Locale): string {
   const deal = data.deal;
   if (!deal)
     return `<p class="muted">${l.w.financesNoProject(data.scenario ? escape(data.scenario.name) : null)}</p>`;
@@ -487,7 +554,7 @@ const changesTerms = (was: LineTerms, line: LineTerms) =>
 
 // Each line of credit the scenario changes, adds or cancels, as the deal's
 // extras word it. Lines it proposes as they are say nothing.
-function lineChanges(data: DocumentData, l: Locale): string[] {
+function lineChanges(data: AnalysisDocumentData, l: Locale): string[] {
   const inForce = new Map(data.creditLines.inForce.map((x) => [x.id, x]));
   return (data.creditLines.proposed ?? []).flatMap((line) => {
     const was = inForce.get(line.id);
@@ -534,10 +601,10 @@ function firstYear(loan: Parameters<typeof amortize>[0], start: string) {
   return interest.plus(principal);
 }
 
-const newLoans = (data: DocumentData) =>
+const newLoans = (data: AnalysisDocumentData) =>
   (data.deal?.sources.filter((s) => s.kind === "loan") ?? []) as ProjectLoan[];
 
-function debtBlock(data: DocumentData, l: Locale): string {
+function debtBlock(data: AnalysisDocumentData, l: Locale): string {
   const consolidated = new Set(data.deal?.consolidatedLoans ?? []);
   const existing = data.debt.flatMap((d) =>
     d.schedule.loans.map((loan) => ({ loan, schedule: d.schedule })),
@@ -576,7 +643,7 @@ function debtBlock(data: DocumentData, l: Locale): string {
 // Where the lines of credit's interest and usage are read: the post-project
 // column when there's one (a fiscal year's before a year to date's), whose
 // run counts the deal's lines; or else the first projected period.
-function linePeriod(data: DocumentData) {
+function linePeriod(data: AnalysisDocumentData) {
   if (data.project) {
     const { periods } = data.project;
     const shown = periods.flatMap((period, p) =>
@@ -593,7 +660,7 @@ function linePeriod(data: DocumentData) {
 // The lines of credit beside the loans, as the deal leaves them: those in
 // force (closed ones no longer count), each as the scenario proposes it,
 // then the new ones; with the usage assumed and a year's interest on it.
-function linesOfCredit(data: DocumentData, l: Locale): string {
+function linesOfCredit(data: AnalysisDocumentData, l: Locale): string {
   const { inForce, usage, proposed } = data.creditLines;
   const byId = new Map((proposed ?? []).map((line) => [line.id, line]));
   const ids = new Set(inForce.map((line) => line.id));
@@ -704,7 +771,7 @@ function loanYears(
   });
 }
 
-function amortizationBlock(data: DocumentData, l: Locale): string {
+function amortizationBlock(data: AnalysisDocumentData, l: Locale): string {
   const loans: {
     name: string;
     loan: Parameters<typeof amortize>[0];
@@ -738,8 +805,578 @@ function amortizationBlock(data: DocumentData, l: Locale): string {
     .join("");
 }
 
+// Borrowing bases (borrowing-base-plan.md §12). One template serves every
+// borrower: the blocks print whatever lines a definition has, in its
+// order, and read the totals by their codes.
+
+// A waterfall row's label: the definition's lines as the user wrote them,
+// and what the app adds to them in the document's language.
+function rowLabel(
+  row: Pick<DocumentRow, "code" | "kind" | "label">,
+  bb: DocumentBorrowingBase,
+  l: Locale,
+): string {
+  const { w } = l;
+  if (row.kind === "section") return w.bbSections[row.code] ?? row.label;
+  if (Object.hasOwn(w.bbTotals, row.code)) return w.bbTotals[row.code]!;
+  if (row.code.startsWith("FX."))
+    return w.fxRate(row.code.slice(3), bb.currency);
+  const dot = row.code.indexOf(".");
+  if (dot === -1) return row.label;
+  const owner = row.code.slice(0, dot);
+  const suffix = row.code.slice(dot + 1);
+  const own = bb.rows.find((r) => r.code === owner);
+  if (suffix === "MARGINED") return own ? w.marginedOf(own.label) : row.label;
+  // The first ineligible bucket "and over", the bucket named as the user
+  // named it.
+  if (suffix === "AGED_OUT") {
+    const bucket = bb.rows.find(
+      (r) =>
+        r.code.startsWith(`${owner}.AGE`) &&
+        `${r.label} and over` === row.label,
+    );
+    return bucket ? w.andOver(bucket.label) : row.label;
+  }
+  if (/^AGE\d+$/.test(suffix)) return row.label;
+  return w.bbDetails[suffix] ?? row.label;
+}
+
+// A figure as its row formats it: advance rates as rates, exchange rates
+// to four decimals.
+function bbFigure(
+  row: Pick<DocumentRow, "code" | "format">,
+  value: string | null,
+  l: Locale,
+): string {
+  if (value === null) return "";
+  if (row.code.startsWith("FX.")) return l.exchange(value);
+  if (row.code.endsWith(".RATE")) return l.rate(value);
+  return l.figure(value, row.format as Format);
+}
+
+const negative = (value: string | null) =>
+  value !== null && value.startsWith("-");
+
+// A month as a table's row heads it: "Nov 2025", and whether it's
+// reported, verified, projected or missing.
+function monthHead(
+  bb: DocumentBorrowingBase,
+  p: number,
+  l: Locale,
+  deal = false,
+): string {
+  const m = bb.months[p]!;
+  const note = m.projected
+    ? l.w.projected
+    : m.quality
+      ? l.w.certificateQualities[m.quality]
+      : l.w.noCertificate;
+  return `${escape(l.month(monthIndex(m.end)))}<small>${escape(note)}${deal ? ` · ${escape(l.w.dealTerms)}` : ""}</small>`;
+}
+
+// A month with figures to show: one with a certificate, or projected.
+const counted = (bb: DocumentBorrowingBase, p: number) =>
+  bb.months[p]!.projected || bb.months[p]!.quality !== null;
+
+const testName = (test: DocumentTest, l: Locale) =>
+  test.builtIn ? (l.w.bbTests[test.id] ?? test.name) : test.name;
+
+// A row the definition may not have, such as a code a template names that
+// this borrower's lines don't.
+const rowOf = (bb: DocumentBorrowingBase, code: string): DocumentRow =>
+  bb.rows.find((r) => r.code === code) ?? {
+    code,
+    label: code,
+    kind: "line",
+    format: "amount",
+    depth: 0,
+  };
+
+// The month's waterfall, as a certificate lays it out: each collateral line
+// with its amount, ineligibles, eligible amount, advance rate and margined
+// amount, its aging and ineligibles under it; groups and their caps; then
+// the borrowing base, prior claims and reserves taken off it, the limit,
+// usage, and the margin surplus or deficit.
+function waterfallBlock(data: DocumentData, l: Locale): string {
+  const bb = lineOf(data);
+  if (!bb) return "";
+  const p = bb.months.length - 1;
+  const month = bb.months[p]!;
+  const value = (code: string) => bb.values[code]?.[p] ?? null;
+  const codes = new Set(bb.rows.map((r) => r.code));
+  const amount = (v: string | null) => escape(l.figure(v, "amount")) || "–";
+  // An amount in another currency, in the line's.
+  const converted = (v: string | null, currency: string | undefined) => {
+    const rate = currency ? value(`FX.${currency}`) : null;
+    if (!currency || v === null) return { value: v, note: "" };
+    if (rate === null) return { value: null, note: "" };
+    return {
+      value: new Dec(v).times(rate).toFixed(),
+      note: `<small>${escape(l.w.atExchange(currency, l.figure(v, "amount"), l.exchange(rate)))}</small>`,
+    };
+  };
+  const indent = (depth: number) =>
+    depth ? ` style="padding-left:${6 + depth * 14}px"` : "";
+  // A row with one figure, in the last column.
+  const single = (row: DocumentRow, figure: string, note = "", tone = "") =>
+    `<tr class="${row.kind}"><td${indent(row.depth)}>${escape(rowLabel(row, bb, l))}${note}</td><td></td><td></td><td></td><td></td><td class="num${tone}">${figure}</td></tr>`;
+  // Deductions read as such: (285,000).
+  const less = (v: string | null) =>
+    v === null ? null : negative(v) ? v.slice(1) : v === "0" ? v : `-${v}`;
+  const out: string[] = [];
+  // The collateral lines in the group being laid out, whose margined
+  // amounts its cap applies to.
+  let members: string[] = [];
+  for (const row of bb.rows) {
+    const label = escape(rowLabel(row, bb, l));
+    const dot = row.code.indexOf(".");
+    const suffix = dot === -1 ? null : row.code.slice(dot + 1);
+    if (row.kind === "section") {
+      out.push(`<tr class="section"><td colspan="6">${label}</td></tr>`);
+      continue;
+    }
+    // Assumptions are for projections; a month's certificate has none.
+    if (row.lineKind === "assumption") continue;
+    if (row.lineKind === "group" && row.kind === "line") {
+      members = [];
+      out.push(
+        `<tr class="group"><td${indent(row.depth)}>${label}</td><td colspan="5"></td></tr>`,
+      );
+      continue;
+    }
+    if (row.lineKind === "group" && row.kind === "subtotal") {
+      const owner = row.code.slice(0, dot);
+      const cap = codes.has(`${owner}.CAP`) ? value(`${owner}.CAP`) : null;
+      const before = members.reduce(
+        (sum, code) => sum.plus(value(code) ?? 0),
+        new Dec(0),
+      );
+      const note =
+        cap === null
+          ? ""
+          : `<small>${escape(l.w.capOf(l.figure(cap, "amount")))}${before.gt(cap) ? ` · ${escape(l.w.beforeCap(l.figure(before.toFixed(), "amount")))}` : ""}</small>`;
+      out.push(single(row, amount(value(row.code)), note));
+      continue;
+    }
+    if (row.lineKind === "collateral" && row.kind === "line") {
+      members.push(`${row.code}.MARGINED`);
+      const rate = row.currency ? value(`FX.${row.currency}`) : null;
+      const note = row.currency
+        ? `<small>${escape(l.w.inCurrency(row.currency, rate === null ? "–" : l.exchange(rate)))}</small>`
+        : "";
+      const cap = codes.has(`${row.code}.CAP`)
+        ? `<small>${escape(l.w.capOf(l.figure(value(`${row.code}.CAP`), "amount")))}</small>`
+        : "";
+      out.push(
+        `<tr class="line"><td${indent(row.depth)}>${label}${note}</td><td class="num">${amount(value(row.code))}</td><td class="num">${amount(value(`${row.code}.INELIGIBLE`))}</td><td class="num">${amount(value(`${row.code}.ELIGIBLE`))}</td><td class="num">${escape(bbFigure({ code: `${row.code}.RATE`, format: "percent" }, value(`${row.code}.RATE`), l)) || "–"}</td><td class="num">${amount(value(`${row.code}.MARGINED`))}${cap}</td></tr>`,
+      );
+      continue;
+    }
+    // What a collateral line computes is in its own row already, and a
+    // group's cap in its total's.
+    if (
+      suffix &&
+      ["INELIGIBLE", "ELIGIBLE", "RATE", "CAP", "MARGINED"].includes(suffix)
+    )
+      continue;
+    if (suffix && /^AGE\d+$/.test(suffix)) {
+      out.push(
+        `<tr class="detail"><td${indent(row.depth)}>${label}</td><td class="num">${amount(value(row.code))}</td><td></td><td></td><td></td><td></td></tr>`,
+      );
+      continue;
+    }
+    if (suffix === "AGED_OUT" || row.lineKind === "ineligible") {
+      out.push(
+        `<tr class="detail"><td${indent(row.depth)}>${label}</td><td></td><td class="num">${amount(value(row.code))}</td><td></td><td></td><td></td></tr>`,
+      );
+      continue;
+    }
+    if (row.code === "BB_COLLATERAL") {
+      out.push(
+        `<tr class="detail"><td>${label}</td><td class="num">${amount(value(row.code))}</td><td></td><td></td><td></td><td></td></tr>`,
+      );
+      continue;
+    }
+    if (
+      row.lineKind === "prior_claim" ||
+      row.lineKind === "reserve" ||
+      row.code === "BB_PRIOR_CLAIMS" ||
+      row.code === "BB_RESERVES"
+    ) {
+      const { value: v, note } = converted(value(row.code), row.currency);
+      out.push(single(row, amount(less(v)), note));
+      continue;
+    }
+    if (row.lineKind === "usage") {
+      const { value: v, note } = converted(value(row.code), row.currency);
+      out.push(single(row, amount(v), note));
+      continue;
+    }
+    const v = value(row.code);
+    out.push(
+      single(
+        row,
+        escape(bbFigure(row, v, l)) || "–",
+        "",
+        (row.code === "BB_SURPLUS" || row.code === "BB_EXCESS") && negative(v)
+          ? " fail"
+          : "",
+      ),
+    );
+  }
+  const head = `<tr><th>${escape(l.w.asAt(l.date(month.end)))}</th><th class="num">${l.w.amount}</th><th class="num">${l.w.ineligible}</th><th class="num">${l.w.eligible}</th><th class="num">${l.w.advanceRate}</th><th class="num">${l.w.margined}</th></tr>`;
+  return `<h2>${l.w.borrowingBaseCertificate} <span class="tag">${escape(bb.name)} · ${escape(l.monthYear(month.month))}</span></h2><table class="figures waterfall"><thead>${head}</thead><tbody>${out.join("")}</tbody></table>`;
+}
+
+// The totals shown month by month when a section names none.
+const HISTORY_CODES = [
+  "BB_GROSS",
+  "BB_TOTAL",
+  "BB_LIMIT",
+  "BB_AVAILABLE",
+  "BB_USAGE",
+  "BB_SURPLUS",
+  "BB_EXCESS",
+  "BB_UTILIZATION",
+];
+const PROJECTION_CODES = [
+  "BB_TOTAL",
+  "BB_LIMIT",
+  "BB_USAGE",
+  "BB_SURPLUS",
+  "BB_EXCESS",
+  "BB_UTILIZATION",
+];
+
+// A figure in a table of months: a dash in a month without a certificate,
+// a deficit in red.
+function monthCell(
+  bb: DocumentBorrowingBase,
+  row: DocumentRow,
+  p: number,
+  l: Locale,
+  values = bb.values,
+  className = "",
+): string {
+  const v = values[row.code]?.[p] ?? null;
+  const shown = counted(bb, p) ? escape(bbFigure(row, v, l)) : "";
+  const tone =
+    (row.code === "BB_SURPLUS" || row.code === "BB_EXCESS") && negative(v)
+      ? " fail"
+      : "";
+  return `<td class="num${className}${tone}">${shown || "–"}</td>`;
+}
+
+// Chosen figures month by month, up to the month printed.
+function historyBlock(
+  block: Extract<Block, { type: "bbHistory" }>,
+  data: DocumentData,
+  l: Locale,
+): string {
+  const bb = lineOf(data);
+  if (!bb) return "";
+  const count = Math.min(block.months ?? 12, bb.months.length);
+  const from = bb.months.length - count;
+  const rows = (block.lines ?? HISTORY_CODES).map((code) => rowOf(bb, code));
+  const body = bb.months
+    .slice(from)
+    .map((_, i) => {
+      const p = from + i;
+      return `<tr><td>${monthHead(bb, p, l)}</td>${rows.map((row) => monthCell(bb, row, p, l)).join("")}</tr>`;
+    })
+    .join("");
+  return `<h2>${l.w.marginHistory} <span class="tag">${escape(bb.name)}</span></h2><table class="figures months"><thead><tr><th>${l.w.month}</th>${rows.map((row) => `<th class="num">${escape(rowLabel(row, bb, l))}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// "Margin surplus (deficit), at least 0".
+function requirement(
+  bb: DocumentBorrowingBase,
+  test: DocumentTest,
+  threshold: string | null,
+  l: Locale,
+) {
+  const row = rowOf(bb, test.metric);
+  return `${rowLabel(row, bb, l)}, ${test.test === "min" ? l.w.atLeast : l.w.atMost}${threshold === null ? "" : ` ${bbFigure(row, threshold, l)}`}`;
+}
+
+// Each test, month by month up to the month printed, or the month's alone.
+function testsBlock(
+  block: Extract<Block, { type: "bbTests" }>,
+  data: DocumentData,
+  l: Locale,
+): string {
+  const bb = lineOf(data);
+  if (!bb || !bb.tests.length) return "";
+  const last = bb.months.length - 1;
+  const count = Math.min(block.months ?? 12, bb.months.length);
+  const figure = (test: DocumentTest, v: string | null) =>
+    escape(bbFigure(rowOf(bb, test.metric), v, l));
+  const heading = `<h2>${l.w.bbTestsHeading}${count === 1 ? ` <span class="tag">${escape(l.monthYear(bb.months[last]!.month))}</span>` : ""}</h2>`;
+  if (count === 1) {
+    const rows = bb.tests
+      .map((test) => {
+        const m = test.months[last]!;
+        const result =
+          m.pass === null
+            ? "–"
+            : `<span class="${m.pass ? "pass" : "fail"}">${escape(l.figure(String(m.pass), "flag"))}</span>`;
+        const room =
+          m.margin === null
+            ? "–"
+            : `${negative(m.margin) ? "−" : "+"}${figure(test, m.margin.replace(/^-/, ""))}`;
+        return `<tr><td><strong>${escape(testName(test, l))}</strong></td><td>${escape(requirement(bb, test, m.threshold, l))}</td><td class="num">${figure(test, m.value) || "–"}</td><td class="num">${room}</td><td>${result}</td></tr>`;
+      })
+      .join("");
+    return `${heading}<table class="figures"><thead><tr><th>${l.w.test}</th><th>${l.w.requirement}</th><th class="num">${l.w.actualFigure}</th><th class="num">${l.w.bbRoom}</th><th>${l.w.result}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  const from = bb.months.length - count;
+  const cell = (test: DocumentTest, p: number) => {
+    const m = test.months[p]!;
+    if (m.pass === null) return `<td class="num">–</td>`;
+    const margin = figure(test, m.margin!.replace(/^-/, ""));
+    return `<td class="num"><span class="${m.pass ? "pass" : "fail"}">${figure(test, m.value)}</span><small>${figure(test, m.threshold)} · ${negative(m.margin) ? "−" : "+"}${margin}</small></td>`;
+  };
+  const body = bb.months
+    .slice(from)
+    .map((_, i) => {
+      const p = from + i;
+      return `<tr><td>${monthHead(bb, p, l)}</td>${bb.tests.map((t) => cell(t, p)).join("")}</tr>`;
+    })
+    .join("");
+  const failed = bb.tests
+    .map(
+      (t) =>
+        `<td class="num">${t.months.slice(from).filter((m) => m.pass === false).length}</td>`,
+    )
+    .join("");
+  return `${heading}<table class="figures months"><thead><tr><th>${l.w.month}</th>${bb.tests.map((t) => `<th class="num">${escape(testName(t, l))}<small>${escape(requirement(bb, t, null, l))}</small></th>`).join("")}</tr></thead><tbody>${body}</tbody><tfoot><tr><td>${l.w.monthsFailed}</td>${failed}</tr></tfoot></table>`;
+}
+
+// The business cycle by fiscal year and over the last twelve months: how
+// high usage peaked, how low it fell (the part of the line never repaid),
+// and how thin the margin got.
+function cycleBlock(data: DocumentData, l: Locale): string {
+  const bb = lineOf(data);
+  const cycle = bb?.cycle;
+  if (!bb || !cycle) return "";
+  const summaries = [...cycle.years, ...(cycle.last12 ? [cycle.last12] : [])];
+  if (!summaries.length) return "";
+  const head = (s: CycleSummary) => {
+    const year = /^FY(\d{4})$/.exec(s.label);
+    const name =
+      s === cycle.last12
+        ? l.w.last12
+        : year
+          ? l.w.fiscalYear(year[1]!)
+          : s.label;
+    const [from, to] = [s.from, s.to].map((m) => l.month(monthNumber(m)));
+    return `<th class="num">${escape(name)}<small>${escape(from === to ? from! : l.w.monthRange(from!, to!))}</small></th>`;
+  };
+  const at = (f: CycleFigure | null, format: Format, fail = false) =>
+    f
+      ? `<span${fail && negative(f.value) ? ` class="fail"` : ""}>${escape(l.figure(f.value, format))}</span><small>${escape(l.month(monthNumber(f.month)))}</small>`
+      : "–";
+  const plain = (v: string | null, format: Format = "amount") =>
+    escape(l.figure(v, format)) || "–";
+  const rows: [string, (s: CycleSummary) => string][] = [
+    [l.w.monthsReported, (s) => plain(String(s.months), "count")],
+    [l.w.peakUsage, (s) => at(s.peakUsage, "amount")],
+    [l.w.averageUsage, (s) => plain(s.averageUsage)],
+    [l.w.lowestUsage, (s) => at(s.lowestUsage, "amount")],
+    [l.w.lowestSurplus, (s) => at(s.lowestSurplus, "amount", true)],
+    [
+      l.w.deficitMonths,
+      (s) =>
+        s.deficitMonths ? `<span class="fail">${s.deficitMonths}</span>` : "0",
+    ],
+    [l.w.highestUtilization, (s) => at(s.highestUtilization, "percent")],
+    [l.w.averageBorrowingBase, (s) => plain(s.averageBorrowingBase)],
+    [l.w.lowestBorrowingBase, (s) => at(s.lowestBorrowingBase, "amount")],
+    ...bb.tests
+      .filter((t) => t.id !== "margin")
+      .map((t): [string, (s: CycleSummary) => string] => [
+        l.w.failedMonths(testName(t, l)),
+        (s) => {
+          const n = s.failed[t.id] ?? 0;
+          return n ? `<span class="fail">${n}</span>` : "0";
+        },
+      ]),
+  ];
+  return `<h2>${l.w.businessCycle}</h2><table class="figures"><thead><tr><th></th>${summaries.map(head).join("")}</tr></thead><tbody>${rows.map(([label, cell]) => `<tr><td>${escape(label)}</td>${summaries.map((s) => `<td class="num">${cell(s)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+// A borrowing base's charts over its months from `from`: bars and lines by
+// month, projected months shaded, and a threshold read from its figures,
+// such as the limit, which steps with its seasons and a deal's terms.
+function bbCharts(
+  bb: DocumentBorrowingBase,
+  charts: ChartDefinition[],
+  from: number,
+  l: Locale,
+): string[] {
+  const months = bb.months.slice(from);
+  const periods = months.map((m) => ({
+    label: l.monthShort(monthIndex(m.end)),
+    projected: m.projected,
+  }));
+  const series = (code: string) =>
+    (bb.values[code] ?? bb.values[code.toUpperCase()] ?? [])
+      .slice(from)
+      .map((v, i) => (v === null || !counted(bb, from + i) ? null : Number(v)));
+  const range = months.length
+    ? l.w.monthRange(
+        l.month(monthIndex(months[0]!.end)),
+        l.month(monthIndex(months.at(-1)!.end)),
+      )
+    : "";
+  return charts.map((chart) => {
+    const first = rowOf(bb, chart.series[0]!.code.toUpperCase());
+    const input: ChartInput = {
+      format: asChartFormat(first.format),
+      monthly: true,
+      periods,
+      series: chart.series.map((s) => ({
+        label: rowLabel(rowOf(bb, s.code.toUpperCase()), bb, l),
+        mark: s.mark,
+        values: series(s.code),
+      })),
+      threshold: null,
+    };
+    if (chart.threshold) {
+      const values = series(chart.threshold);
+      if (values.some((v) => v !== null))
+        input.threshold = {
+          label: rowLabel(rowOf(bb, chart.threshold.toUpperCase()), bb, l),
+          values,
+        };
+    }
+    // The built-in charts in the document's language; a definition's own
+    // as titled.
+    const builtIn = DEFAULT_BB_CHARTS.find(
+      (c) => c.id === chart.id && c.title === chart.title,
+    );
+    const title = builtIn
+      ? (l.w.bbCharts[chart.id] ?? chart.title)
+      : chart.title;
+    return `<figure><figcaption>${escape(title)}<small>${escape(range)}</small></figcaption>${legendHtml(input, l)}${chartSvg(input, l)}</figure>`;
+  });
+}
+
+// A line's charts, over its last months to the month printed.
+function lineChartsBlock(
+  block: Extract<Block, { type: "charts" }>,
+  data: DocumentData,
+  l: Locale,
+): string {
+  const bb = lineOf(data);
+  if (!bb) return "";
+  const charts = bb.charts.filter(
+    (c) => !block.charts || block.charts.includes(c.id),
+  );
+  if (!charts.length) return "";
+  const from =
+    bb.months.length - Math.min(block.months ?? 12, bb.months.length);
+  return `<h2>${l.w.charts}</h2><div class="charts">${bbCharts(bb, charts, from, l).join("")}</div>`;
+}
+
+// The totals a deal's terms can move, shown as they'd be without them
+// beside the projection where they differ.
+const AS_IS_CODES = ["BB_TOTAL", "BB_LIMIT", "BB_SURPLUS", "BB_EXCESS"];
+
+// A month's tests in one cell: a pass, the names of those failed, or a dash
+// for a month not tested.
+function testsCell(bb: DocumentBorrowingBase, p: number, l: Locale) {
+  const tested = bb.tests.filter((t) => (t.months[p]?.pass ?? null) !== null);
+  if (!tested.length) return "–";
+  const failed = tested.filter((t) => t.months[p]!.pass === false);
+  return failed.length
+    ? `<span class="fail">${escape(l.figure("false", "flag"))}</span><small>${escape(l.list(failed.map((t) => testName(t, l))))}</small>`
+    : `<span class="pass">${escape(l.figure("true", "flag"))}</span>`;
+}
+
+// From an analysis: each margined line's last twelve months and its months
+// projected under the scenario; the months under the deal's terms shaded
+// from the first, and the totals as they'd be without them beside, where
+// they differ.
+function projectionBlock(
+  block: Extract<Block, { type: "bbProjection" }>,
+  data: AnalysisDocumentData,
+  l: Locale,
+): string {
+  const heading = `<h2>${l.w.projectedMargin} <span class="tag">${escape(data.scenario?.name ?? l.w.baseCase)}</span></h2>`;
+  const lines = data.borrowingBase.lines;
+  if (!lines.length)
+    return `${heading}<p class="muted">${l.w.noMarginedLines}</p>`;
+  const sections = lines.map((bb) => {
+    const rows = (block.lines ?? PROJECTION_CODES).map((code) =>
+      rowOf(bb, code),
+    );
+    const after = bb.proposedAfter ? monthNumber(bb.proposedAfter) : null;
+    const deal = (p: number) =>
+      after !== null && monthNumber(bb.months[p]!.month) > after;
+    const asIs = bb.asIs
+      ? rows.filter(
+          (row) =>
+            AS_IS_CODES.includes(row.code) &&
+            (bb.asIs![row.code] ?? []).some(
+              (v, p) => v !== (bb.values[row.code]?.[p] ?? null),
+            ),
+        )
+      : [];
+    const tags = [
+      bb.currency,
+      ...(bb.proposedNew ? [l.w.proposedNewLine] : []),
+      ...(after !== null ? [l.w.dealTermsFrom(l.month(after + 1))] : []),
+    ];
+    const head = `<tr><th>${l.w.month}</th>${rows.map((row) => `<th class="num">${escape(rowLabel(row, bb, l))}</th>`).join("")}${asIs.map((row) => `<th class="num">${escape(rowLabel(row, bb, l))}${escape(l.w.asIs)}</th>`).join("")}${bb.tests.length ? `<th>${l.w.bbTestsHeading}</th>` : ""}</tr>`;
+    const body = bb.months
+      .map((m, p) => {
+        const tone = `${m.projected ? " projected" : ""}${deal(p) ? " post" : ""}`;
+        const first = deal(p) && !deal(p - 1);
+        return `<tr><td class="${tone.trim()}">${monthHead(bb, p, l, first)}</td>${rows.map((row) => monthCell(bb, row, p, l, bb.values, tone)).join("")}${asIs.map((row) => monthCell(bb, row, p, l, bb.asIs!, tone)).join("")}${bb.tests.length ? `<td class="${tone.trim()}">${testsCell(bb, p, l)}</td>` : ""}</tr>`;
+      })
+      .join("");
+    const usage =
+      bb.usage?.projected != null && bb.usage.assumed != null
+        ? `<p class="${bb.usage.gap ? "fail" : "muted"}">${escape(l.w.usageCheck(l.figure(bb.usage.projected, "amount"), l.figure(bb.usage.assumed, "amount")))}</p>`
+        : "";
+    const charts = bbCharts(bb, bb.charts, 0, l);
+    return `<section class="bb"><h3>${escape(bb.name)} ${tags.map((t) => `<span class="tag">${escape(t)}</span>`).join("")}</h3><table class="figures months"><thead>${head}</thead><tbody>${body}</tbody></table>${usage}${charts.length ? `<div class="charts">${charts.join("")}</div>` : ""}</section>`;
+  });
+  return `${heading}${sections.join("")}`;
+}
+
+// A statement and lines for the client's officer to sign and date.
+function signatureBlock(
+  block: Extract<Block, { type: "bbSignature" }>,
+  data: DocumentData,
+  l: Locale,
+): string {
+  const bb = lineOf(data);
+  const statement = block.text
+    ? prose(block.text, data, l)
+    : `<p>${escape(
+        bb
+          ? l.w.certifiesMonth(
+              data.borrower.name,
+              l.date(bb.months.at(-1)!.end),
+              data.organization.name,
+            )
+          : l.w.certifies(data.borrower.name),
+      )}</p>`;
+  const lines = [l.w.signature, l.w.nameAndTitle, l.w.signedOn]
+    .map(
+      (label) => `<div><span class="rule"></span><small>${label}</small></div>`,
+    )
+    .join("");
+  return `<section class="signature">${statement}<div class="sign">${lines}</div></section>`;
+}
+
+// A block over the data; one its source can't fill prints nothing, as in a
+// draft's preview (checkDefinition refuses it at publishing).
 function block(b: Block, data: DocumentData, l: Locale): string {
   if (!shows(b.when, data)) return "";
+  const analysis = fromAnalysis(data) ? data : null;
   switch (b.type) {
     case "heading":
       return `<h2>${escape(merge(b.text, data, l))}</h2>`;
@@ -748,17 +1385,31 @@ function block(b: Block, data: DocumentData, l: Locale): string {
     case "facts":
       return factsBlock(data, l);
     case "lines":
-      return linesBlock(b, data, l);
+      return analysis ? linesBlock(b, analysis, l) : "";
     case "covenants":
-      return covenantsBlock(data, l);
+      return analysis ? covenantsBlock(analysis, l) : "";
     case "charts":
-      return chartsBlock(b, data, l);
+      return analysis
+        ? chartsBlock(b, analysis, l)
+        : lineChartsBlock(b, data, l);
     case "sourcesUses":
-      return sourcesUsesBlock(data, l);
+      return analysis ? sourcesUsesBlock(analysis, l) : "";
     case "debt":
-      return debtBlock(data, l);
+      return analysis ? debtBlock(analysis, l) : "";
     case "amortization":
-      return amortizationBlock(data, l);
+      return analysis ? amortizationBlock(analysis, l) : "";
+    case "bbWaterfall":
+      return waterfallBlock(data, l);
+    case "bbHistory":
+      return historyBlock(b, data, l);
+    case "bbTests":
+      return testsBlock(b, data, l);
+    case "bbCycle":
+      return cycleBlock(data, l);
+    case "bbProjection":
+      return analysis ? projectionBlock(b, analysis, l) : "";
+    case "bbSignature":
+      return signatureBlock(b, data, l);
     case "pageBreak":
       return `<div class="page-break"></div>`;
   }
@@ -808,14 +1459,28 @@ figcaption { font-weight: 600; margin-bottom: 4px; }
 .legend i { display: inline-block; width: 10px; height: 8px; border-radius: 2px; }
 .legend i.dashed { height: 0; border-top: 1.5px dashed #0f172a; border-radius: 0; }
 section.loan { break-inside: avoid-page; }
+table.months th, table.months th.num { white-space: normal; }
+table.months td:first-child { white-space: nowrap; }
+table.waterfall tr.subtotal td { font-weight: 600; border-top: 1px solid #cbd5e1; }
+table.waterfall tr.total td { font-weight: 700; border-top: 1.5px solid #64748b; }
+table.waterfall tr.group td { font-weight: 600; }
+table.waterfall tr.detail td { color: #475569; font-size: 8pt; }
+section.bb { margin-bottom: 12px; }
+section.bb h3 .tag { margin-left: 4px; }
+section.signature { margin-top: 18px; break-inside: avoid; }
+.sign { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 24px; margin-top: 40px; }
+.sign .rule { display: block; border-bottom: 1px solid #0f172a; height: 28px; }
 .page-break { break-after: page; }
 @media screen { body { max-width: ${orientation === "landscape" ? 1056 : 816}px; margin: 24px auto; padding: 0 24px; } }
 `;
 
+// A document from its data, as assembled now or as a snapshot kept it,
+// whatever its version.
 export function renderDocument(
   template: Template,
-  data: DocumentData,
+  kept: KeptDocumentData,
 ): RenderedDocument {
+  const data = readDocumentData(kept);
   const l = locale(template.language);
   const title = merge(template.title, data, l);
   const { branding } = data.organization;
@@ -823,12 +1488,23 @@ export function renderDocument(
     ? branding.color!
     : DEFAULT_COLOR;
   const { orientation } = template;
-  const subtitle = [
-    data.analysis.name,
-    `${data.model.name} v${data.model.version}`,
-    data.scenario?.name ?? l.w.baseCase,
-    l.date(data.date),
-  ]
+  const bb = lineOf(data);
+  const subtitle = (
+    fromAnalysis(data)
+      ? [
+          data.analysis.name,
+          `${data.model.name} v${data.model.version}`,
+          data.scenario?.name ?? l.w.baseCase,
+          l.date(data.date),
+        ]
+      : bb
+        ? [
+            `${bb.name} · ${bb.currency}`,
+            l.monthYear(bb.months.at(-1)!.month),
+            l.date(data.date),
+          ]
+        : [l.date(data.date)]
+  )
     .map(escape)
     .join(" · ");
   const html = `<!doctype html>

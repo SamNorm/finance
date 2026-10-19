@@ -2,21 +2,29 @@ import { and, desc, eq, schema, sql, type Db } from "@finance/db";
 import {
   DomainError,
   getAnalysis,
+  getCreditLine,
   getOrganization,
   type Context,
 } from "@finance/domain";
-import { analysisDocumentData, dataHash } from "./data";
+import { analysisDocumentData, dataHash, lineDocumentData } from "./data";
 import { renderDocument, type RenderedDocument } from "./html";
 import { printPdf } from "./pdf";
 import { templateToPrint } from "./template-service";
-import { BUILT_IN_TEMPLATES, templateOf, type Template } from "./templates";
+import {
+  BUILT_IN_TEMPLATES,
+  sourceOf,
+  templateOf,
+  type Template,
+} from "./templates";
 
-// Documents generated from an analysis and kept as snapshots for the credit
-// file (documents-plan.md §3.4): the PDF, the template's blocks and the data
-// they read, so a document reads the same however the analysis changes
-// after. Generating again makes a new one.
+// Documents generated from an analysis, or from a margined line of credit
+// in a month, and kept as snapshots for the credit file (documents-plan.md
+// §3.4): the PDF, the template's blocks and the data they read, so a
+// document reads the same however the analysis or the line changes after.
+// Each month's certificate is kept as printed. Generating again makes a new
+// one.
 
-const { analyses, documents, organizations } = schema;
+const { analyses, creditLines, documents, organizations } = schema;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -26,6 +34,11 @@ export interface DocumentSummary {
   analysisId: string | null;
   // The analysis as it's named now.
   analysisName: string | null;
+  // Or the line of credit it printed, as it's named now, and its month,
+  // "YYYY-MM".
+  creditLineId: string | null;
+  lineName: string | null;
+  month: string | null;
   scenarioId: string | null;
   // The scenario as it was named when printed, kept when it's deleted; null
   // for the base case.
@@ -46,6 +59,8 @@ const summary = {
   analysisId: documents.analysisId,
   scenarioId: documents.scenarioId,
   scenarioName: sql<string | null>`${documents.data}->'scenario'->>'name'`,
+  creditLineId: documents.creditLineId,
+  month: sql<string | null>`${documents.data}->'borrowingBase'->>'month'`,
   title: documents.title,
   template: documents.template,
   definition: documents.definition,
@@ -63,10 +78,16 @@ const toSummary = ({
   templateName: (definition as Template).name,
 });
 
+// What a document prints from: an analysis and a scenario, or a margined
+// line of credit and a month, as its template's source says.
 export interface DocumentInput {
-  analysisId: string;
+  analysisId?: string | null;
   // The scenario it shows; the base case when null.
   scenarioId?: string | null;
+  creditLineId?: string | null;
+  // The line's month, "YYYY-MM", one with a certificate; the latest when
+  // omitted.
+  month?: string | null;
   // A built-in's key, or an organization template's id.
   template: string;
 }
@@ -111,6 +132,46 @@ async function render(
     input.template,
     draft,
   );
+  const source = sourceOf(template);
+  if (input.analysisId && input.creditLineId)
+    throw new DomainError(
+      "invalid",
+      "A document prints from an analysis or from a line of credit, not both.",
+    );
+  if (input.creditLineId) {
+    if (source !== "line")
+      throw new DomainError(
+        "invalid",
+        `${template.name} prints from an analysis, not from a line of credit.`,
+      );
+    const line = await getCreditLine(db, ctx, input.creditLineId);
+    const data = await lineDocumentData(db, ctx, line.id, input.month ?? null);
+    return {
+      template,
+      data,
+      rendered: renderDocument(template, data),
+      row: {
+        entityId: line.entityId,
+        analysisId: null,
+        scenarioId: null,
+        creditLineId: line.id,
+        financialModelVersionId: null,
+      },
+      names: { analysisName: null, lineName: line.name },
+    };
+  }
+  if (!input.analysisId)
+    throw new DomainError(
+      "invalid",
+      source === "line"
+        ? `${template.name} prints from a margined line of credit and a month: choose the line.`
+        : `Choose the analysis ${template.name.toLowerCase()} prints from.`,
+    );
+  if (source === "line")
+    throw new DomainError(
+      "invalid",
+      `${template.name} prints from a margined line of credit and a month, not from an analysis.`,
+    );
   const detail = await getAnalysis(db, ctx, input.analysisId);
   if (financialModel && financialModel.id !== detail.model.id)
     throw new DomainError(
@@ -128,7 +189,19 @@ async function render(
     input.analysisId,
     input.scenarioId ?? null,
   );
-  return { template, detail, data, rendered: renderDocument(template, data) };
+  return {
+    template,
+    data,
+    rendered: renderDocument(template, data),
+    row: {
+      entityId: detail.entity.id,
+      analysisId: detail.analysis.id,
+      scenarioId: input.scenarioId ?? null,
+      creditLineId: null,
+      financialModelVersionId: detail.version.id,
+    },
+    names: { analysisName: detail.analysis.name, lineName: null },
+  };
 }
 
 // The document as HTML, without keeping it: a preview. With `draft`, an
@@ -147,43 +220,52 @@ export async function generateDocument(
   ctx: Context,
   input: DocumentInput,
 ): Promise<DocumentSummary> {
-  const { template, detail, data, rendered } = await render(db, ctx, input);
+  const { template, data, rendered, row, names } = await render(db, ctx, input);
   const { pdf, pages } = await printPdf(rendered);
-  const [row] = await db
+  const [kept] = await db
     .insert(documents)
     .values({
       organizationId: ctx.organizationId,
-      entityId: detail.entity.id,
-      analysisId: detail.analysis.id,
-      scenarioId: input.scenarioId ?? null,
+      ...row,
       title: rendered.title,
       template: template.key,
       templateId: templateOf(template.key) ? null : template.key,
       definition: template,
       data,
       dataHash: dataHash(data),
-      financialModelVersionId: detail.version.id,
       pdf,
       pages,
     })
     .returning(summary);
-  return toSummary({ ...row!, analysisName: detail.analysis.name });
+  return toSummary({ ...kept!, ...names });
 }
 
+// The documents printed for an analysis, a line of credit or a borrower,
+// newest first.
 export async function listDocuments(
   db: Db,
   ctx: Context,
-  filter: { analysisId?: string; entityId?: string } = {},
+  filter: {
+    analysisId?: string;
+    entityId?: string;
+    creditLineId?: string;
+  } = {},
 ): Promise<DocumentSummary[]> {
   if (
-    (filter.analysisId && !UUID.test(filter.analysisId)) ||
-    (filter.entityId && !UUID.test(filter.entityId))
+    [filter.analysisId, filter.entityId, filter.creditLineId].some(
+      (id) => id && !UUID.test(id),
+    )
   )
     return [];
   const rows = await db
-    .select({ ...summary, analysisName: analyses.name })
+    .select({
+      ...summary,
+      analysisName: analyses.name,
+      lineName: creditLines.name,
+    })
     .from(documents)
     .leftJoin(analyses, eq(analyses.id, documents.analysisId))
+    .leftJoin(creditLines, eq(creditLines.id, documents.creditLineId))
     .where(
       and(
         eq(documents.organizationId, ctx.organizationId),
@@ -191,6 +273,9 @@ export async function listDocuments(
           ? eq(documents.analysisId, filter.analysisId)
           : undefined,
         filter.entityId ? eq(documents.entityId, filter.entityId) : undefined,
+        filter.creditLineId
+          ? eq(documents.creditLineId, filter.creditLineId)
+          : undefined,
       ),
     )
     .orderBy(desc(documents.createdAt));

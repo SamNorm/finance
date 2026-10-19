@@ -1,5 +1,6 @@
 import {
   BALANCE_TOLERANCE,
+  COLLATERAL_CODES,
   describeTerms,
   imbalance,
   monthNumber,
@@ -12,6 +13,7 @@ import {
   type Repayment,
   type Season,
   type Term,
+  TOTALS,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import { formats } from "./format";
@@ -21,6 +23,7 @@ import type { Language } from "./templates";
 // and the like. Values passed in are already escaped and formatted.
 
 type Quality = "audited" | "review" | "compilation" | "internal" | "projected";
+type CertificateQuality = "reported" | "verified";
 
 // How a proposed line moves a limit or a rate.
 export type Change = "raised" | "lowered" | "changed";
@@ -153,6 +156,95 @@ const en = {
   interest: "Interest",
   principal: "Principal",
   extra: "Extra",
+  // Borrowing bases: a line's facts and its certificate
+  month: "Month",
+  monthEnded: "Month ended",
+  certificate: "Certificate",
+  certificateQualities: {
+    reported: "Reported",
+    verified: "Verified",
+  } as Record<CertificateQuality, string>,
+  receivedOn: (date: string) => `received ${date}`,
+  noCertificate: "No certificate",
+  // The waterfall
+  borrowingBaseCertificate: "Borrowing base certificate",
+  asAt: (date: string) => `As at ${date}`,
+  ineligible: "Ineligible",
+  eligible: "Eligible",
+  advanceRate: "Advance rate",
+  margined: "Margined",
+  capOf: (amount: string) => `cap ${amount}`,
+  beforeCap: (amount: string) => `${amount} before the cap`,
+  inCurrency: (currency: string, rate: string) => `In ${currency}, at ${rate}`,
+  atExchange: (currency: string, amount: string, rate: string) =>
+    `${currency} ${amount} at ${rate}`,
+  // The rows the app adds to a definition's, by code or suffix; the
+  // definition's own lines print as the user wrote them.
+  bbSections: {
+    SECTION_COLLATERAL: "Collateral",
+    SECTION_PRIOR_CLAIMS: "Prior claims",
+    SECTION_RESERVES: "Reserves",
+    SECTION_USAGE: "Usage",
+    SECTION_OTHER: "Other figures",
+  } as Record<string, string>,
+  bbTotals: Object.fromEntries(TOTALS.map((t) => [t.code, t.label])) as Record<
+    string,
+    string
+  >,
+  bbDetails: Object.fromEntries(
+    COLLATERAL_CODES.map((c) => [c.suffix, c.label]),
+  ) as Record<string, string>,
+  marginedOf: (label: string) => `${label}, margined`,
+  andOver: (bucket: string) => `${bucket} and over`,
+  fxRate: (currency: string, facility: string) =>
+    `${currency} rate, in ${facility}`,
+  bbTests: {
+    margin: "Usage within the borrowing base",
+    overline: "Usage within the limit",
+  } as Record<string, string>,
+  bbCharts: {
+    "base-usage": "Borrowing base and usage",
+    surplus: "Margin surplus (deficit)",
+  } as Record<string, string>,
+  byMonth: ", by month",
+  // History and tests
+  marginHistory: "Margin history",
+  bbTestsHeading: "Borrowing base tests",
+  test: "Test",
+  requirement: "Requirement",
+  actualFigure: "Actual",
+  bbRoom: "Room",
+  result: "Result",
+  monthsFailed: "Months failed",
+  // The business cycle
+  businessCycle: "Business cycle",
+  fiscalYear: (year: string) => `FY${year}`,
+  last12: "Last 12 months",
+  monthsReported: "Months reported",
+  peakUsage: "Peak usage",
+  lowestUsage: "Lowest usage",
+  lowestSurplus: "Lowest surplus",
+  deficitMonths: "Months in deficit",
+  highestUtilization: "Highest utilization",
+  averageBorrowingBase: "Average borrowing base",
+  lowestBorrowingBase: "Lowest borrowing base",
+  failedMonths: (test: string) => `Months failed: ${test}`,
+  // A projection in an analysis
+  projectedMargin: "Projected margin",
+  dealTermsFrom: (month: string) => `The deal's terms from ${month}`,
+  dealTerms: "deal's terms",
+  proposedNewLine: "New line proposed",
+  usageCheck: (projected: string, assumed: string) =>
+    `Balance projected: ${projected} on average. Usage assumed for interest: ${assumed}.`,
+  noMarginedLines: "The borrower has no margined line of credit to project.",
+  // Signatures
+  certifiesMonth: (borrower: string, date: string, organization: string) =>
+    `The undersigned, an authorized officer of ${borrower}, certifies that the information above is true and complete as at ${date}, and that it was prepared in accordance with the credit agreement with ${organization}.`,
+  certifies: (borrower: string) =>
+    `The undersigned, an authorized officer of ${borrower}, certifies that the information above is true and complete.`,
+  signature: "Signature of an authorized officer",
+  nameAndTitle: "Name and title",
+  signedOn: "Date",
   // The foot of every page
   page: (number: string, total: string) => `Page ${number} of ${total}`,
   confidential: "Confidential",
@@ -273,6 +365,99 @@ const fr: Words = {
   interest: "Intérêts",
   principal: "Capital",
   extra: "Additionnel",
+  month: "Mois",
+  monthEnded: "Mois terminé le",
+  certificate: "Certificat",
+  certificateQualities: { reported: "Déclaré", verified: "Vérifié" },
+  receivedOn: (date) => `reçu le ${date}`,
+  noCertificate: "Aucun certificat",
+  borrowingBaseCertificate: "Certificat de marge",
+  asAt: (date) => `Au ${date}`,
+  ineligible: "Inadmissibles",
+  eligible: "Admissibles",
+  advanceRate: "Taux d'avance",
+  margined: "Valeur margée",
+  capOf: (amount) => `plafond de ${amount}`,
+  beforeCap: (amount) => `${amount} avant le plafond`,
+  inCurrency: (currency, rate) => `En ${currency}, au taux de ${rate}`,
+  atExchange: (currency, amount, rate) =>
+    `${amount} ${currency} au taux de ${rate}`,
+  bbSections: {
+    SECTION_COLLATERAL: "Garanties",
+    SECTION_PRIOR_CLAIMS: "Créances prioritaires",
+    SECTION_RESERVES: "Réserves",
+    SECTION_USAGE: "Utilisation",
+    SECTION_OTHER: "Autres données",
+  },
+  bbTotals: {
+    BB_COLLATERAL: "Garanties avant inadmissibles",
+    BB_GROSS: "Valeur de marge brute",
+    BB_PRIOR_CLAIMS: "Créances prioritaires",
+    BB_RESERVES: "Réserves",
+    BB_TOTAL: "Valeur de marge",
+    BB_LIMIT: "Autorisation",
+    BB_AVAILABLE: "Disponibilité",
+    BB_OUTSTANDING: "Solde de la marge de crédit",
+    BB_USAGE: "Utilisation",
+    BB_SURPLUS: "Excédent (insuffisance) de marge",
+    BB_EXCESS: "Disponibilité résiduelle",
+    BB_UTILIZATION: "Taux d'utilisation",
+    BB_COVERAGE: "Couverture",
+  },
+  bbDetails: {
+    INELIGIBLE: "Inadmissibles",
+    ELIGIBLE: "Admissibles",
+    RATE: "Taux d'avance",
+    CAP: "Plafond",
+    MARGINED: "Valeur margée",
+  },
+  marginedOf: (label) => `${label}, valeur margée`,
+  andOver: (bucket) => `${bucket} et plus`,
+  fxRate: (currency, facility) => `Taux ${currency}, en ${facility}`,
+  bbTests: {
+    margin: "Utilisation dans la valeur de marge",
+    overline: "Utilisation dans l'autorisation",
+  },
+  bbCharts: {
+    "base-usage": "Valeur de marge et utilisation",
+    surplus: "Excédent (insuffisance) de marge",
+  },
+  byMonth: ", par mois",
+  marginHistory: "Historique de marge",
+  bbTestsHeading: "Tests de marge",
+  test: "Test",
+  requirement: "Exigence",
+  actualFigure: "Réel",
+  bbRoom: "Écart",
+  result: "Résultat",
+  monthsFailed: "Mois en défaut",
+  businessCycle: "Cycle d'exploitation",
+  fiscalYear: (year) => `Exercice ${year}`,
+  last12: "12 derniers mois",
+  monthsReported: "Mois déclarés",
+  peakUsage: "Utilisation maximale",
+  lowestUsage: "Utilisation minimale",
+  lowestSurplus: "Excédent de marge minimal",
+  deficitMonths: "Mois en insuffisance",
+  highestUtilization: "Taux d'utilisation maximal",
+  averageBorrowingBase: "Valeur de marge moyenne",
+  lowestBorrowingBase: "Valeur de marge minimale",
+  failedMonths: (test) => `Mois en défaut : ${test}`,
+  projectedMargin: "Marge projetée",
+  dealTermsFrom: (month) => `Conditions de l'opération dès ${month}`,
+  dealTerms: "conditions de l'opération",
+  proposedNewLine: "Nouvelle marge proposée",
+  usageCheck: (projected, assumed) =>
+    `Solde projeté : ${projected} en moyenne. Utilisation retenue pour les intérêts : ${assumed}.`,
+  noMarginedLines:
+    "Aucune marge de crédit de l'emprunteur n'est soumise à un calcul de marge.",
+  certifiesMonth: (borrower, date, organization) =>
+    `Le soussigné, dirigeant autorisé de ${borrower}, atteste que les renseignements ci-dessus sont exacts et complets au ${date} et qu'ils ont été établis conformément à la convention de crédit conclue avec ${organization}.`,
+  certifies: (borrower) =>
+    `Le soussigné, dirigeant autorisé de ${borrower}, atteste que les renseignements ci-dessus sont exacts et complets.`,
+  signature: "Signature d'un dirigeant autorisé",
+  nameAndTitle: "Nom et titre",
+  signedOn: "Date",
   page: (number, total) => `Page ${number} de ${total}`,
   confidential: "Confidentiel",
 };

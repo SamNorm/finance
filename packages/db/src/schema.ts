@@ -1211,6 +1211,11 @@ export const documents = pgTable(
     analysisId: uuid().references(() => analyses.id, { onDelete: "cascade" }),
     // The scenario it shows, when one; kept when the scenario is deleted.
     scenarioId: uuid(),
+    // Or the margined line of credit it prints, such as a borrowing base
+    // certificate (borrowing-base-plan.md §12); deleted with it.
+    creditLineId: uuid().references(() => creditLines.id, {
+      onDelete: "cascade",
+    }),
     title: text().notNull(),
     // The template's key (a built-in's, or an organization template's id)
     // and the definition it had when generated.
@@ -1230,6 +1235,7 @@ export const documents = pgTable(
     index("documents_organization").on(t.organizationId),
     index("documents_entity").on(t.entityId),
     index("documents_analysis").on(t.analysisId),
+    index("documents_credit_line").on(t.creditLineId),
     index("documents_financial_model_version").on(t.financialModelVersionId),
     index("documents_template").on(t.templateId),
   ],

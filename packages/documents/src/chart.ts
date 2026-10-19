@@ -3,11 +3,13 @@ import type { Locale } from "./locale";
 
 // Charts as documents print them: an SVG of bars, lines or both over the
 // periods, projected periods shaded and a threshold drawn dashed, stepping
-// by year where it does. Plain SVG, so a PDF renders it as vectors with no
-// script.
+// by year, or by month for a borrowing base, where it does. Plain SVG, so a
+// PDF renders it as vectors with no script.
 
 export interface ChartInput {
   format: "amount" | "percent" | "ratio" | "count";
+  // Months rather than years: a borrowing base's.
+  monthly?: boolean;
   periods: { label: string; projected: boolean }[];
   series: { label: string; mark: "bar" | "line"; values: (number | null)[] }[];
   threshold: { label: string; values: (number | null)[] } | null;
@@ -73,11 +75,15 @@ export function chartSvg(chart: ChartInput, l: Locale): string {
       `<line x1="${left}" x2="${width - right}" y1="${y(m)}" y2="${y(m)}" stroke="#e2e8f0" stroke-width="1"/>`,
       `<text x="${left - 6}" y="${y(m) + 3}" text-anchor="end" font-size="9" fill="#64748b">${escape(l.tick(m, chart.format))}</text>`,
     );
-  chart.periods.forEach((p, i) =>
+  // Over twelve periods, every other label or fewer, the last always.
+  const every = Math.ceil(chart.periods.length / 12);
+  const last = chart.periods.length - 1;
+  chart.periods.forEach((p, i) => {
+    if ((last - i) % every) return;
     parts.push(
-      `<text x="${center(i)}" y="${height - 8}" text-anchor="middle" font-size="9" fill="#64748b">${escape(p.label)}</text>`,
-    ),
-  );
+      `<text x="${center(i)}" y="${height - 8}" text-anchor="middle" font-size="${chart.monthly ? 8 : 9}" fill="#64748b">${escape(p.label)}</text>`,
+    );
+  });
 
   const bars = chart.series.filter((s) => s.mark === "bar");
   const barW = Math.min(18, (band * 0.7) / Math.max(1, bars.length));
@@ -142,7 +148,7 @@ export function legendHtml(chart: ChartInput, l: Locale): string {
   if (chart.threshold && limits.length) {
     const flat = limits.every((v) => v === limits[0]);
     keys.push(
-      `<span class="key"><i class="dashed"></i>${escape(chart.threshold.label)}${flat ? ` ${escape(l.figure(String(limits[0]), chart.format))}` : l.w.byYear}</span>`,
+      `<span class="key"><i class="dashed"></i>${escape(chart.threshold.label)}${flat ? ` ${escape(l.figure(String(limits[0]), chart.format))}` : chart.monthly ? l.w.byMonth : l.w.byYear}</span>`,
     );
   }
   return keys.length > 1 || chart.threshold

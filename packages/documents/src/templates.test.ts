@@ -309,11 +309,12 @@ describe("document templates", () => {
     expect(keys).toEqual(expect.arrayContaining([any, ours]));
     for (const key of [draft, archived, elsewhere])
       expect(keys).not.toContain(key);
-    // Its own come first, then the built-ins.
+    // Its own come first, then the built-ins that print from an analysis.
     expect(printable.at(-1)).toMatchObject({
-      key: "debt-summary",
+      key: "projected-margin",
       builtIn: true,
     });
+    expect(keys).not.toContain("borrowing-base-certificate");
     expect(printable.find((t) => t.key === ours)).toMatchObject({
       name: "On the demo model",
       builtIn: false,
