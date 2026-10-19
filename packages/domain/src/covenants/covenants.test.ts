@@ -109,6 +109,7 @@ describe("covenants", () => {
       line("SERVICE", "CPLTD"),
       line("DSCR", "CFADS / SERVICE", "ratio"),
       line("LEVERAGE", "LONG_TERM_DEBT / CFADS", "ratio"),
+      line("ANNUAL_LEVERAGE", "LONG_TERM_DEBT / ANNUALIZE(CFADS)", "ratio"),
     ];
     const period = (end: string, months: number, values: object) => ({
       key: end,
@@ -126,7 +127,11 @@ describe("covenants", () => {
           CPLTD: "100",
           LONG_TERM_DEBT: "400",
         }),
-        period("2026-06-30", 6, { REVENUE: "70", CPLTD: "50" }),
+        period("2026-06-30", 6, {
+          REVENUE: "70",
+          CPLTD: "50",
+          LONG_TERM_DEBT: "420",
+        }),
         period("2026-12-31", 12, {
           REVENUE: "120",
           CPLTD: "100",
@@ -142,10 +147,16 @@ describe("covenants", () => {
         numeric: true,
       })),
     };
-    const [dscr, leverage, missing] = testCovenants(
+    const [dscr, leverage, annual, missing] = testCovenants(
       normalizeCovenants([
         DSCR,
         { name: "Leverage", metric: "leverage", test: "max", threshold: "4" },
+        {
+          name: "Annualized",
+          metric: "ANNUAL_LEVERAGE",
+          test: "max",
+          threshold: "4",
+        },
         { name: "Elsewhere", metric: "LTV", test: "max", threshold: "75%" },
       ]),
       runModel(input),
@@ -164,8 +175,16 @@ describe("covenants", () => {
         fallLine: "CFADS",
       },
     });
-    // A year to date isn't tested; 2026 steps up to 1.25x and fails.
-    expect(dscr!.periods[1]!.threshold).toBeNull();
+    // A year to date is tested against its fiscal year's threshold: six
+    // months of cash flow over six months of debt service, 1.40x against
+    // 2026's 1.25x.
+    expect(dscr!.periods[1]).toMatchObject({
+      threshold: "1.25",
+      actual: "1.4",
+      pass: true,
+      cushion: { amount: "7.5", line: "CFADS" },
+    });
+    // 2026 fails.
     expect(dscr!.periods[2]).toMatchObject({
       threshold: "1.25",
       pass: false,
@@ -180,9 +199,76 @@ describe("covenants", () => {
       cushion: { amount: "-20", line: "LONG_TERM_DEBT", fallLine: "CFADS" },
     });
     expect(Number(leverage!.periods[2]!.cushion!.fall)).toBeCloseTo(-1 / 24);
+    // Debt at June 30 over cash flow annualized, 420 over 140: 3.00x, with
+    // room for 140 more debt, and cash flow, annualized, can fall 25%. A
+    // fiscal year's cash flow is its own.
+    expect(annual!.periods[1]).toEqual({
+      threshold: "4",
+      actual: "3",
+      pass: true,
+      margin: "1",
+      cushion: {
+        amount: "140",
+        line: "LONG_TERM_DEBT",
+        fall: "0.25",
+        fallLine: "CFADS, annualized",
+      },
+    });
+    expect(annual!.periods[2]).toMatchObject({
+      actual: leverage!.periods[2]!.actual,
+      cushion: { fallLine: "CFADS" },
+    });
     // A line the model doesn't have can't be tested.
     expect(missing).toMatchObject({ label: null, format: null });
     expect(missing!.periods.every((p) => p.threshold === null)).toBe(true);
+  });
+
+  it("test an interim period on the fiscal year it falls in", () => {
+    const lines = [
+      {
+        code: "DSCR",
+        label: "DSCR",
+        kind: "calculation",
+        format: "ratio",
+        formula: "REVENUE / CPLTD",
+        projectionFormula: null,
+        defaultValue: null,
+        breaksDown: null,
+        description: null,
+      } as ModelLine,
+    ];
+    const period = (end: string, months: number) => ({
+      key: end,
+      end,
+      months,
+      quality: "audited" as const,
+      entered: { REVENUE: "123", CPLTD: "100" },
+      summed: {},
+      modelInputs: {},
+    });
+    // Years end in March: six months to September 2025 fall in fiscal
+    // 2026, which steps up to 1.25x.
+    const [dscr] = testCovenants(
+      normalizeCovenants([DSCR]),
+      runModel({
+        periods: [period("2025-03-31", 12), period("2025-09-30", 6)],
+        projectionYears: 1,
+        lines,
+        overrides: {},
+        items: ["REVENUE", "CPLTD"].map((code) => ({
+          code,
+          label: code,
+          numeric: true,
+        })),
+      }),
+      lines,
+    );
+    expect(dscr!.periods.map((p) => [p.threshold, p.pass])).toEqual([
+      ["1.2", true],
+      ["1.25", false],
+      // The projected fiscal year to March 2026, with no figure.
+      ["1.25", null],
+    ]);
   });
 
   describe("on borrowers and scenarios", () => {

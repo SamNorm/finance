@@ -1,6 +1,7 @@
 import type { schema } from "@finance/db";
 import { Dec, parseFormula, type Node } from "@finance/engine";
 import type { AnalysisRun } from "../analyses/run";
+import { fiscalYearOf } from "../borrowing-bases/cycle";
 import { DomainError } from "../errors";
 import { entryId } from "../financing/common";
 import type { LineFormat, ModelLine } from "../financial-models/types";
@@ -9,8 +10,9 @@ import { parseValue } from "../spreads/values";
 
 // Covenants (§5.5): terms of a credit agreement, kept on the borrower and
 // proposed per deal, tested in any analysis whose model computes their
-// line. Each period tested shows the threshold, the actual figure, the room
-// left before a breach, and, for a ratio of two lines, that room in dollars.
+// line. Each period tested, interim ones included, shows the threshold, the
+// actual figure, the room left before a breach, and, for a ratio of two
+// lines, that room in dollars.
 
 export type Covenant = schema.Covenant;
 export type CovenantTestKind = Covenant["test"];
@@ -112,7 +114,7 @@ export function thresholdIn(covenant: Covenant, year: number): string {
 }
 
 export interface CovenantPeriod {
-  // Null where the covenant isn't tested: a year to date, or no figure.
+  // Null where the covenant isn't tested: the model has no such line.
   threshold: string | null;
   actual: string | null;
   pass: boolean | null;
@@ -123,7 +125,8 @@ export interface CovenantPeriod {
   // For a ratio of two lines, the same room in the numerator's terms, such
   // as cash flow above what the minimum coverage needs, or debt the maximum
   // leverage still allows; and how far the line it rests on can fall before
-  // a breach, as a fraction.
+  // a breach, as a fraction. A line the ratio annualizes counts at its
+  // annualized figure, and its label says so in an interim period.
   cushion: {
     amount: string;
     line: string;
@@ -149,8 +152,27 @@ const UNTESTED: CovenantPeriod = {
   cushion: null,
 };
 
-// A formula that divides one line by another: their codes.
-function ratioOf(formula: string | null): [string, string] | null {
+// A side of a ratio: a line, or a line annualized, as in
+// FUNDED_DEBT / ANNUALIZE(EBITDA), which reads its figure scaled to twelve
+// months.
+interface Side {
+  code: string;
+  annualized: boolean;
+}
+
+function sideOf(node: Node): Side | null {
+  if (node.type === "ref") return { code: node.name, annualized: false };
+  const [arg] = node.type === "call" ? node.args : [];
+  return node.type === "call" &&
+    node.name.toUpperCase() === "ANNUALIZE" &&
+    node.args.length === 1 &&
+    arg!.type === "ref"
+    ? { code: arg!.name, annualized: true }
+    : null;
+}
+
+// A formula that divides one line by another: its two sides.
+function ratioOf(formula: string | null): [Side, Side] | null {
   if (!formula) return null;
   let node: Node;
   try {
@@ -158,21 +180,32 @@ function ratioOf(formula: string | null): [string, string] | null {
   } catch {
     return null;
   }
-  return node.type === "binary" &&
-    node.op === "/" &&
-    node.left.type === "ref" &&
-    node.right.type === "ref"
-    ? [node.left.name, node.right.name]
-    : null;
+  if (node.type !== "binary" || node.op !== "/") return null;
+  const [top, bottom] = [sideOf(node.left), sideOf(node.right)];
+  return top && bottom ? [top, bottom] : null;
 }
 
-// Tests covenants in each fiscal year of a run, projected years included.
+// The borrower's fiscal year end month, 1 to 12, from the run's latest
+// fiscal year; December when it has none.
+function yearEndMonthOf(run: AnalysisRun): number {
+  const year =
+    run.periods.findLast((p) => p.months === 12 && !p.projection) ??
+    run.periods.findLast((p) => p.months === 12);
+  return year ? Number(year.end.slice(5, 7)) : 12;
+}
+
+// Tests covenants in each period of a run: fiscal years, interim periods
+// and projected years. An interim period takes the threshold of the fiscal
+// year it falls in, and the model's line as it computes it there: a ratio
+// that mixes the balance sheet with the P&L annualizes the P&L side, with
+// ANNUALIZE or TTM, as it would for the results table.
 export function testCovenants(
   covenants: readonly Covenant[],
   run: AnalysisRun,
   lines: readonly ModelLine[],
 ): CovenantResult[] {
   const byCode = new Map(lines.map((l) => [l.code.toUpperCase(), l]));
+  const yearEndMonth = yearEndMonthOf(run);
   return covenants.map((covenant) => {
     const line = byCode.get(covenant.metric.toUpperCase());
     if (!line || line.kind === "header")
@@ -189,8 +222,10 @@ export function testCovenants(
       format: line.format,
       periods: run.periods.map((period, p): CovenantPeriod => {
         const cell = cells[p];
-        if (period.months !== 12) return UNTESTED;
-        const threshold = thresholdIn(covenant, Number(period.end.slice(0, 4)));
+        const threshold = thresholdIn(
+          covenant,
+          fiscalYearOf(period.end, yearEndMonth),
+        );
         if (!cell || cell.error || cell.value === null)
           return { ...UNTESTED, threshold };
         const actual = new Dec(cell.value);
@@ -198,16 +233,26 @@ export function testCovenants(
         const min = covenant.test === "min";
         const margin = min ? actual.minus(limit) : limit.minus(actual);
         const ratio = ratioOf(cell.formula);
-        const ref = (code: string) =>
-          cell.refs.find(
+        // A side's figure in the period, annualized where the ratio is.
+        const side = (s: Side) => {
+          const ref = cell.refs.find(
             (r) =>
-              r.code.toUpperCase() === code.toUpperCase() && r.period === p,
+              r.code.toUpperCase() === s.code.toUpperCase() && r.period === p,
           );
-        const [top, bottom] = ratio ? [ref(ratio[0]), ref(ratio[1])] : [];
+          if (!ref?.value) return null;
+          const interim = s.annualized && period.months !== 12;
+          return {
+            value: interim
+              ? new Dec(ref.value).times(12).div(period.months)
+              : new Dec(ref.value),
+            label: interim ? `${ref.label}, annualized` : ref.label,
+          };
+        };
+        const [top, bottom] = ratio ? [side(ratio[0]), side(ratio[1])] : [];
         let cushion: CovenantPeriod["cushion"] = null;
-        if (top?.value && bottom?.value && !limit.isZero()) {
-          const a = new Dec(top.value);
-          const b = new Dec(bottom.value);
+        if (top && bottom && !limit.isZero()) {
+          const a = top.value;
+          const b = bottom.value;
           // Minimum: the numerator needs threshold × denominator, and can
           // fall to it. Maximum: the numerator can rise to threshold ×
           // denominator, and the denominator fall to numerator / threshold.

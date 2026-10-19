@@ -201,7 +201,9 @@ const LINES: Line[] = [
     "DEBT_TO_EBITDA",
     "Funded debt to EBITDA",
     "ratio",
-    "FUNDED_DEBT / EBITDA",
+    "FUNDED_DEBT / ANNUALIZE(EBITDA)",
+    null,
+    "Funded debt at the period's end over its EBITDA, annualized in a year to date.",
   ),
   calc(
     "CURRENT_RATIO",
@@ -267,7 +269,7 @@ export const DEMO_COVENANTS: CovenantInput[] = [
     metric: "DSCR",
     test: "min",
     threshold: "1.25",
-    note: "Cash flow available for debt service over interest and scheduled principal, at each fiscal year end.",
+    note: "Cash flow available for debt service over interest and scheduled principal, on the annual and interim statements.",
   },
   {
     name: "Funded debt to EBITDA",
