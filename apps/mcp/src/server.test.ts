@@ -331,6 +331,10 @@ describe("MCP server", () => {
       get_group_borrowing_base: "reads",
       set_group_borrowing_base_adjustments: "changes",
       set_group_borrowing_base_override: "changes",
+      list_borrowing_base_templates: "reads",
+      get_borrowing_base_template: "reads",
+      create_borrowing_base_template: "adds",
+      set_borrowing_base_template: "changes",
     });
   });
 
@@ -3345,6 +3349,112 @@ describe("MCP server", () => {
         values: ["100,000", "120,000", "90,000"],
       },
     ]);
+  });
+
+  it("writes a borrowing base template as a draft, for a person to publish", async () => {
+    const call = await connect();
+    const { value: created } = await call("create_borrowing_base_template", {
+      name: "Wholesalers",
+      from: "receivables-inventory",
+    });
+    expect(created).toMatchObject({
+      name: "Wholesalers",
+      description: expect.stringMatching(/^Trade receivables aged/),
+      status: "draft",
+      unpublishedChanges: true,
+      basedOn: "Receivables and inventory (built-in)",
+      published: null,
+      issues: [],
+    });
+    // The draft as typed, rates with their percent sign.
+    const ar = created.draft.lines.find(
+      (l: { code: string }) => l.code === "AR",
+    );
+    expect(ar).toMatchObject({ kind: "collateral", rate: "75%" });
+
+    // Changed and sent back whole; a draft with errors is kept, flagged.
+    const lines = [
+      ...created.draft.lines.map((l: { code: string }) =>
+        l.code === "AR" ? { ...l, rate: "80%" } : l,
+      ),
+      { kind: "ineligible", code: "OLD", label: "Old stock", of: "NOPE" },
+    ];
+    const { value: flagged } = await call("set_borrowing_base_template", {
+      templateId: created.id,
+      definition: { ...created.draft, lines },
+    });
+    expect(flagged.issues).toEqual([
+      "error: Old stock: say which collateral line it reduces, by its code.",
+    ]);
+    expect(
+      (
+        await call("set_borrowing_base_template", {
+          templateId: created.id,
+          definition: { lines: [{ kind: "nope", code: "X", label: "X" }] },
+        })
+      ).error,
+    ).toMatch(/^X: "nope" isn't a kind of line/);
+    const { value: fixed } = await call("set_borrowing_base_template", {
+      templateId: created.id,
+      description: "For wholesale distributors.",
+      definition: { ...created.draft, lines: lines.slice(0, -1) },
+    });
+    expect(fixed).toMatchObject({
+      description: "For wholesale distributors.",
+      issues: [],
+      published: null,
+    });
+    expect(
+      await call("set_borrowing_base_template", { templateId: created.id }),
+    ).toEqual({ error: "Give a name, a description or a definition." });
+
+    // A person publishes it in the app; lines start from what's published.
+    await publishBorrowingBaseTemplate(db, ctx, created.id);
+    const { value: published } = await call("get_borrowing_base_template", {
+      templateId: created.id,
+    });
+    expect(published).toMatchObject({
+      status: "published",
+      unpublishedChanges: false,
+    });
+    expect(published.published.collateral[0]).toMatchObject({
+      code: "AR",
+      advanceRate: "80%",
+    });
+    const { value: renamed } = await call("set_borrowing_base_template", {
+      templateId: created.id,
+      name: "Wholesale distributors",
+      definition: {
+        ...published.draft,
+        lines: published.draft.lines.filter(
+          (l: { code: string }) => l.code !== "AR_GOVERNMENT",
+        ),
+      },
+    });
+    expect(renamed).toMatchObject({
+      name: "Wholesale distributors",
+      status: "published",
+      unpublishedChanges: true,
+    });
+    const { value: listed } = await call("list_borrowing_base_templates", {
+      search: "wholesale",
+    });
+    expect(listed).toEqual([
+      {
+        id: created.id,
+        name: "Wholesale distributors",
+        description: "For wholesale distributors.",
+        status: "published",
+        unpublishedChanges: true,
+        basedOn: "Receivables and inventory (built-in)",
+      },
+    ]);
+    // A copy of it records where it came from.
+    const { value: copy } = await call("create_borrowing_base_template", {
+      name: "Wholesale, Ontario",
+      from: created.id,
+    });
+    expect(copy.basedOn).toBe("Wholesale distributors");
   });
 
   it("acts within the caller's organization only", async () => {

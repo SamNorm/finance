@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { analysisTools } from "./tools/analyses";
 import { capexTools } from "./tools/capex";
 import { borrowerTools } from "./tools/borrowers";
+import { borrowingBaseTemplateTools } from "./tools/borrowing-base-templates";
 import { borrowingBaseTools } from "./tools/borrowing-bases";
 import { consolidationTools } from "./tools/consolidation";
 import { covenantTools } from "./tools/covenants";
@@ -26,7 +27,7 @@ const INSTRUCTIONS = `Credit analysis for commercial lending.
 - Borrowers have spreads: financial statements by period, entered against one of the organization's scoring models.
 - An analysis runs a published financial model version over a borrower's periods. Its base case is the borrower as is. Its scenarios stress assumptions and can finance a project: sources and uses at closing (new loans, other funds), subordinations and adjustments. A project's effect shows in post-project values. A scenario can also plan capex in projected years, partly financed by loans whose debt service the model reads, and propose its deal's lines of credit.
 - A borrower's lines of credit are real, like its existing loans: each has a currency, an annual rate and an authorized limit that can differ by season every year and step from a month. Analyses count their interest on the usage they assume (set_line_usage): a share of the limit, any month overridden with an amount drawn; a scenario can override it. A line with no usage assumed counts no interest, and run_analysis flags it. A scenario proposes its deal's lines (set_proposed_line): a new limit or rate, a new line, a line closed; they apply from closing post-project, or without a project from the first projected month. Change the borrower's lines only for terms in force.
-- A line of credit can be margined on a borrowing base: its definition (collateral at advance rates up to caps, less ineligibles, prior claims and reserves) and the client's monthly certificates. You transcribe the client's figures (set_borrowing_base_values, or a paste previewed and confirmed); the app computes the borrowing base, the surplus and the tests (run_borrowing_base). Never compute them yourself. Advance rates, caps and reserves are terms that change from a month (set_borrowing_base_term), so past months keep theirs. Analyses project each margined line's months ahead, from the client's projected figures or from assumptions (run_analysis_borrowing_bases); a scenario adjusts them, and its deal can change a line's limit and borrowing base terms (set_proposed_line).
+- A line of credit can be margined on a borrowing base: its definition (collateral at advance rates up to caps, less ineligibles, prior claims and reserves) and the client's monthly certificates. You transcribe the client's figures (set_borrowing_base_values, or a paste previewed and confirmed); the app computes the borrowing base, the surplus and the tests (run_borrowing_base). Never compute them yourself. Advance rates, caps and reserves are terms that change from a month (set_borrowing_base_term), so past months keep theirs. A line starts from a built-in, another line's or one of the organization's templates; you can write a template's draft, and a person publishes it in the app. Analyses project each margined line's months ahead, from the client's projected figures or from assumptions (run_analysis_borrowing_bases); a scenario adjusts them, and its deal can change a line's limit and borrowing base terms (set_proposed_line).
 - Covenants are terms of a credit agreement, not of a model. A borrower's covenants in force are tested by every analysis of it; a scenario can propose its deal's own. Each tests a model line by code, at least or at most a threshold that can step by fiscal year. run_analysis reports each year's figure, threshold, margin and room before a breach.
 - A project's sources must equal its uses before the analysis can be completed. Projects are built a piece at a time, so tell the user when totals don't match yet.
 - Spreads come from the institution's scoring system. To enter one the user pastes, preview it, show the user what was read and get their confirmation, then import it.
@@ -56,6 +57,7 @@ export function createServer(db: Db, ctx: Context): McpServer {
   borrowingBaseTools(server, db, ctx);
   projectedBorrowingBaseTools(server, db, ctx);
   groupBorrowingBaseTools(server, db, ctx);
+  borrowingBaseTemplateTools(server, db, ctx);
   documentTools(server, db, ctx);
   return server;
 }
