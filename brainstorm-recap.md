@@ -216,7 +216,7 @@ Without a scoring model, where do the inputs live?
 - Spread paste, manual entry and validation.
 - Groupings, metrics, projections, scenarios and covenant tests.
 - Pinned, reproducible analyses.
-- Excel export.
+- Excel export (built): workbooks of an analysis (every scenario's lines, covenants, and sources and uses), a spread, existing debt with each loan's payments, and a borrowing base month by month. They download from the page they're about, or from a link MCP gives, built from the figures as they stand; they hold values, while the app keeps the lineage.
 - MCP server.
 
 ### Later

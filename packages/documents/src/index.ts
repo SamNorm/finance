@@ -24,3 +24,4 @@ export { browserPath, closeBrowser, printPdf } from "./pdf";
 export * from "./service";
 export * from "./template-service";
 export * from "./templates";
+export * from "./workbooks";
