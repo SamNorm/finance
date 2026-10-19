@@ -46,7 +46,9 @@ export function borrowingBaseIssues(input: {
   const flag = (month: string, issue: Issue) =>
     (byMonth[month] ??= []).push(issue);
 
-  const missing = run.months.filter((m) => !m.quality).map((m) => m.month);
+  const missing = run.months
+    .filter((m) => !m.quality && !m.projected)
+    .map((m) => m.month);
   if (missing.length)
     general.push({
       severity: "warning",

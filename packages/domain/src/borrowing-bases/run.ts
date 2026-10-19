@@ -13,7 +13,11 @@ import {
   type CompiledBorrowingBase,
   type WaterfallRow,
 } from "./compile";
-import type { BorrowingBaseDefinition, BorrowingBaseTest } from "./definition";
+import {
+  TOTALS,
+  type BorrowingBaseDefinition,
+  type BorrowingBaseTest,
+} from "./definition";
 
 // Runs a borrowing base over its months (borrowing-base-plan.md §9.3), pure
 // as runModel is: the months contiguous, so PREV(x, 12) is the same month a
@@ -129,8 +133,18 @@ export function runBorrowingBase(input: {
   // Precompiled, when the caller has it.
   compiled?: CompiledBorrowingBase;
 }): BorrowingBaseRun {
+  // A deal can cap a line with no cap in force: it then compiles with one.
+  const dealCaps = new Set(
+    Object.entries(input.proposed?.terms ?? {}).flatMap(([code, t]) =>
+      t.cap ? [code] : [],
+    ),
+  );
   const compiled =
-    input.compiled ?? compileBorrowingBase(input.definition, input.line);
+    input.compiled && !dealCaps.size
+      ? input.compiled
+      : compileBorrowingBase(input.definition, input.line, {
+          capped: dealCaps,
+        });
   const byMonth = new Map(input.months.map((m) => [m.month, m]));
   const projected = new Map(
     (input.projected ?? []).map((m) => [m.month, m.figures]),
@@ -154,10 +168,12 @@ export function runBorrowingBase(input: {
   const index = months.map((m) => monthIndex(m.end));
   const proposed = input.proposed;
   const after = proposed ? monthNumber(proposed.after) : Infinity;
-  // A term's value in each month: the deal's from after its month.
-  const termValues = (term: Term, deal: Term | null | undefined) =>
-    index.map((m) => {
-      const own = m > after && deal !== undefined ? deal : term;
+  // A term's value in each month: the deal's in projected months after its
+  // month; actual months keep what applied to them. A null term is none.
+  const termValues = (term: Term | null, deal: Term | null | undefined) =>
+    index.map((m, p) => {
+      const own =
+        months[p]!.projected && m > after && deal !== undefined ? deal : term;
       return own === null ? null : new Dec(termIn(own, m).value);
     });
   const termCodes = new Set(compiled.terms.map((t) => t.code));
@@ -174,9 +190,13 @@ export function runBorrowingBase(input: {
           ];
     assumptions[code] = termValues(term, deal);
   }
+  // The analysis's and scenario's values apply to projected months; actual
+  // months keep the definition's.
   for (const a of compiled.assumptions)
     assumptions[a.code] = months.map((m) => {
-      const given = input.assumptionAt?.(a.code, m.month);
+      const given = m.projected
+        ? input.assumptionAt?.(a.code, m.month)
+        : undefined;
       return assumptionValue(
         given !== undefined
           ? given
@@ -186,7 +206,10 @@ export function runBorrowingBase(input: {
         a.format,
       );
     });
-  const inputCodes = compiled.inputs.map((r) => r.code);
+  const inputCodes = [
+    ...compiled.inputs.map((r) => r.code),
+    ...Object.keys(compiled.derived),
+  ];
   const figuresOf = (p: number) => {
     const m = months[p]!;
     return m.projected ? projected.get(m.month) : byMonth.get(m.month)?.figures;
@@ -206,13 +229,29 @@ export function runBorrowingBase(input: {
     assumptions,
     inputCodes,
     input: (code, p) => {
-      const raw = figuresOf(p)?.[code];
+      const figures = figuresOf(p);
+      // An aged line is its buckets entered, added up.
+      const parts = compiled.derived[code];
+      if (parts) {
+        const given = parts.flatMap((b) =>
+          figures?.[b] === undefined ? [] : [new Dec(figures[b])],
+        );
+        return given.length
+          ? given.reduce((a, b) => a.plus(b), new Dec(0))
+          : null;
+      }
+      const raw = figures?.[code];
       return raw === undefined ? null : new Dec(raw);
     },
     inputProjections: compiled.projections,
   });
 
-  const labels = new Map(compiled.rows.map((r) => [r.code, r.label]));
+  // Totals keep their labels when their rows are left out, as reserves are
+  // with none.
+  const labels = new Map<string, string>([
+    ...TOTALS.map((t) => [t.code, t.label] as const),
+    ...compiled.rows.map((r) => [r.code, r.label] as const),
+  ]);
   const entered = new Set(inputCodes);
   const sourceOf = (code: string, p: number): LineageRef["source"] => {
     if (termCodes.has(code)) return "term";
@@ -223,11 +262,41 @@ export function runBorrowingBase(input: {
     }
     return "calculation";
   };
+  // Headings have no figure, and a group's is its margined amount; months
+  // without a certificate show none.
   const cells: Record<string, ResultCell[]> = {};
+  const blank: ResultCell = {
+    value: null,
+    error: null,
+    formula: null,
+    refs: [],
+  };
   for (const row of compiled.rows) {
-    if (row.kind === "section") continue;
-    cells[row.code] = months.map((_, p) => {
+    if (
+      row.kind === "section" ||
+      (row.lineKind === "group" && row.kind === "line")
+    )
+      continue;
+    cells[row.code] = months.map((m, p) => {
+      if (!m.quality && !m.projected) return blank;
       const cell = evaluation.cell(row.code, p);
+      // An aged line taken from its buckets reads as their sum.
+      const parts = compiled.derived[row.code];
+      if (parts && cell.formula === null && cell.value !== null)
+        return {
+          ...serialize(cell.value),
+          formula: parts.join(" + "),
+          refs: parts.map((code) => {
+            const raw = figuresOf(p)?.[code];
+            return {
+              ...serialize(raw === undefined ? null : new Dec(raw)),
+              code,
+              label: labels.get(code) ?? code,
+              period: p,
+              source: sourceOf(code, p),
+            };
+          }),
+        };
       return {
         ...serialize(cell.value),
         formula: cell.formula,

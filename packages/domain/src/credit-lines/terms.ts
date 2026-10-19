@@ -1,3 +1,4 @@
+import { Dec } from "@finance/engine";
 import { DomainError } from "../errors";
 import { parseAmount, parseRate } from "../financing/common";
 import { parseValue } from "../spreads/values";
@@ -38,6 +39,32 @@ const MAX_SEASONS = 6;
 const MAX_STEPS = 24;
 
 const invalid = (message: string) => new DomainError("invalid", message);
+
+// A stored rate written back as typed, so it reads the same: a rate typed
+// "1" reads as 1%, but "1" stored is 100%. Whatever saves stored data
+// through the typed path writes its rates this way first.
+export const rateAsTyped = (rate: string) =>
+  `${new Dec(rate).times(100).toFixed()}%`;
+
+// A stored term written back as typed; only rates need it.
+export function termAsTyped(term: Term, kind: TermKind): Term {
+  if (kind !== "rate") return term;
+  const seasons = (list: Season[] | undefined) =>
+    list?.map((s) => ({ ...s, value: rateAsTyped(s.value) }));
+  return {
+    value: rateAsTyped(term.value),
+    ...(term.seasons ? { seasons: seasons(term.seasons) } : {}),
+    ...(term.steps
+      ? {
+          steps: term.steps.map((step) => ({
+            ...step,
+            value: rateAsTyped(step.value),
+            ...(step.seasons ? { seasons: seasons(step.seasons) } : {}),
+          })),
+        }
+      : {}),
+  };
+}
 
 // "2026-06" or "2026-06-30" → "2026-06".
 export function parseMonth(raw: unknown, what: string): string {
@@ -89,11 +116,12 @@ function parseNumber(raw: unknown, what: string): string {
   return parsed.value;
 }
 
+// Amounts can be zero: a reserve released, a line with no room in a season.
 function parseValueOf(raw: unknown, what: string, kind: TermKind): string {
   if (kind === "number") return parseNumber(raw, what);
-  return kind === "rate"
-    ? parseRate(raw, what, "rate")
-    : parseAmount(raw, what, "amount", true);
+  if (kind === "rate") return parseRate(raw, what, "rate");
+  if (!String(raw ?? "").trim()) throw invalid(`${what}: enter it.`);
+  return parseAmount(raw, what, "amount");
 }
 
 function parseSeasons(raw: unknown, what: string, kind: TermKind): Season[] {

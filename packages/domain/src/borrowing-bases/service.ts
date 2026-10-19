@@ -3,7 +3,12 @@ import { Dec } from "@finance/engine";
 import type { Context } from "../context";
 import { DomainError, type Issue } from "../errors";
 import { getCreditLine } from "../credit-lines/service";
-import { parseMonth, parseTerm, type Term } from "../credit-lines/terms";
+import {
+  parseMonth,
+  parseTerm,
+  termAsTyped,
+  type Term,
+} from "../credit-lines/terms";
 import type { CreditLine } from "../credit-lines/credit-lines";
 import { getSpread } from "../spreads/service";
 import { parseDate } from "../financing/common";
@@ -24,6 +29,7 @@ import {
   type WaterfallRow,
 } from "./compile";
 import {
+  definitionAsTyped,
   normalizeDefinition,
   type BorrowingBaseDefinition,
   type BorrowingBaseDefinitionInput,
@@ -196,6 +202,8 @@ export interface BorrowingBaseResults {
   charts: ChartDefinition[];
   // Months whose certificate is late.
   overdue: string[];
+  // The borrower's fiscal year end month, 1 to 12, which groups months.
+  yearEndMonth: number;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -244,6 +252,7 @@ export async function runBorrowingBaseOf(
     cycle: borrowingBaseCycle(run, spread.yearEndMonth),
     charts: chartsOf(detail.definition),
     overdue,
+    yearEndMonth: spread.yearEndMonth,
   };
 }
 
@@ -255,6 +264,9 @@ export async function setBorrowingBaseDefinition(
   ctx: Context,
   lineId: string,
   input: BorrowingBaseDefinitionInput | null,
+  // Lines renamed, old code → new: their figures follow them, history and
+  // analyses' projections alike, codes they compute (AR.AGE1) included.
+  renames: Record<string, string> = {},
 ): Promise<{ line: CreditLine; issues: Issue[] }> {
   const { line, entity } = await lineAndEntity(db, ctx, lineId);
   let definition: BorrowingBaseDefinition | null = null;
@@ -286,12 +298,109 @@ export async function setBorrowingBaseDefinition(
           message: `"${item}" isn't an item of ${entity.name}'s spread, so it can't be compared with it.`,
         });
   }
-  const [updated] = await db
-    .update(creditLines)
-    .set({ borrowingBase: definition })
-    .where(eq(creditLines.id, lineId))
-    .returning();
+  const moves = Object.entries(renames)
+    .map(([from, to]) => [from.toUpperCase(), to.toUpperCase()] as const)
+    .filter(([from, to]) => from !== to);
+  const [updated] = await db.transaction(async (tx) => {
+    if (moves.length) await renameFigures(tx, line, moves);
+    return tx
+      .update(creditLines)
+      .set({ borrowingBase: definition })
+      .where(eq(creditLines.id, lineId))
+      .returning();
+  });
   return { line: updated!, issues };
+}
+
+// Moves figures stored under renamed codes, and those of the codes they
+// compute ("AR.AGE1" → "RECEIVABLES.AGE1"), in the line's history and in
+// analyses' projections of it.
+async function renameFigures(
+  db: Db,
+  line: CreditLine,
+  moves: readonly (readonly [string, string])[],
+) {
+  const renamed = (code: string) => {
+    for (const [from, to] of moves) {
+      if (code === from) return to;
+      if (code.startsWith(`${from}.`)) return `${to}${code.slice(from.length)}`;
+    }
+    return code;
+  };
+  const months = db
+    .select({ id: monthsTable.id })
+    .from(monthsTable)
+    .where(eq(monthsTable.lineId, line.id));
+  const history = await db
+    .select()
+    .from(valuesTable)
+    .where(inArray(valuesTable.monthId, months));
+  for (const row of history) {
+    const code = renamed(row.code);
+    if (code === row.code) continue;
+    await db
+      .delete(valuesTable)
+      .where(
+        and(
+          eq(valuesTable.monthId, row.monthId),
+          eq(valuesTable.code, row.code),
+        ),
+      );
+    await db
+      .insert(valuesTable)
+      .values({ ...row, code })
+      .onConflictDoUpdate({
+        target: [valuesTable.monthId, valuesTable.code],
+        set: { amount: row.amount },
+      });
+  }
+  const forecast = schema.analysisBorrowingBaseValues;
+  const keys = [line.id, `${line.entityId}/${line.id}`];
+  const projected = await db
+    .select()
+    .from(forecast)
+    .where(inArray(forecast.lineId, keys));
+  for (const row of projected) {
+    const code = renamed(row.code);
+    if (code === row.code) continue;
+    const where = and(
+      eq(forecast.analysisId, row.analysisId),
+      eq(forecast.lineId, row.lineId),
+      eq(forecast.month, row.month),
+      eq(forecast.code, row.code),
+    );
+    await db.delete(forecast).where(where);
+    await db
+      .insert(forecast)
+      .values({ ...row, code })
+      .onConflictDoNothing();
+  }
+}
+
+// The organization's margined lines, named, without running them: the
+// lines a borrowing base can be copied from.
+export async function listMarginedLines(
+  db: Db,
+  ctx: Context,
+): Promise<
+  { lineId: string; name: string; entity: { id: string; name: string } }[]
+> {
+  const rows = await db
+    .select({
+      lineId: creditLines.id,
+      name: creditLines.name,
+      entity: { id: entities.id, name: entities.name },
+    })
+    .from(creditLines)
+    .innerJoin(entities, eq(entities.id, creditLines.entityId))
+    .where(
+      and(
+        eq(entities.organizationId, ctx.organizationId),
+        isNotNull(creditLines.borrowingBase),
+      ),
+    )
+    .orderBy(asc(entities.name), asc(creditLines.position));
+  return rows;
 }
 
 // Starts a line's borrowing base from a built-in one, an organization's
@@ -306,7 +415,7 @@ export async function startBorrowingBase(
   if ("templateId" in from) {
     const template = await templateToStart(db, ctx, from.templateId);
     return setBorrowingBaseDefinition(db, ctx, lineId, {
-      ...template.definition,
+      ...definitionAsTyped(template.definition),
       basedOn: { kind: "template", id: from.templateId, name: template.name },
     });
   }
@@ -325,7 +434,7 @@ export async function startBorrowingBase(
   const { line: source, entity } = await lineAndEntity(db, ctx, from.lineId);
   const definition = margined(source);
   return setBorrowingBaseDefinition(db, ctx, lineId, {
-    ...definition,
+    ...definitionAsTyped(definition),
     basedOn: {
       kind: "line",
       id: source.id,
@@ -391,7 +500,16 @@ export async function setBorrowingBaseTerm(
     const value = parseTerm(input.value, what, kind).value;
     if (input.from) {
       const from = parseMonth(input.from, what);
-      const base = current ?? { value: kind === "rate" ? "0" : value };
+      // A step needs a value before it; a cap or reserve can't start part
+      // way through, since before it there was none.
+      if (!current)
+        throw new DomainError(
+          "invalid",
+          input.term === "cap"
+            ? `${what}: ${target.label} has no cap before ${from}, and a cap applies to every month: set it from the start.`
+            : `${what}: ${target.label} has no amount before ${from}: set it from the start, 0 if there's none until then, then step it.`,
+        );
+      const base = current;
       next = {
         ...base,
         steps: [
@@ -401,17 +519,20 @@ export async function setBorrowingBaseTerm(
       };
     } else next = { ...(current ?? {}), value };
   }
-  const lines = definition.lines.map((l) => {
+  // Stored rates go back as typed, so 100% stays 100%; the new term too.
+  const typed = definitionAsTyped(definition);
+  const nextTyped = next && termAsTyped(next, kind);
+  const lines = (typed.lines as typeof definition.lines).map((l) => {
     if (l.code !== code) return l;
     const { [input.term]: _, ...rest } = l as unknown as Record<
       string,
       unknown
     >;
-    return (next
-      ? { ...rest, [input.term]: next }
+    return (nextTyped
+      ? { ...rest, [input.term]: nextTyped }
       : rest) as unknown as typeof l;
   });
-  return setBorrowingBaseDefinition(db, ctx, lineId, { ...definition, lines });
+  return setBorrowingBaseDefinition(db, ctx, lineId, { ...typed, lines });
 }
 
 async function ensureMonths(
@@ -588,19 +709,26 @@ export async function importBorrowingBasePaste(
   lineId: string,
   text: string,
   months: Record<number, string> = {},
+  // Columns to leave out, by index.
+  skip: readonly number[] = [],
 ): Promise<{ detail: BorrowingBaseDetail; figures: number; months: string[] }> {
   const detail = await getBorrowingBase(db, ctx, lineId);
   const paste = parseBorrowingBasePaste(text, detail.inputs);
   const errors = paste.issues.filter((i) => i.severity === "error");
   if (errors.length)
     throw new DomainError("invalid", errors[0]!.message, errors);
+  const kept = new Set(
+    paste.columns
+      .map((c, i) => i)
+      .filter((i) => !skip.includes(paste.columns[i]!.index)),
+  );
   const columns = paste.columns.map((c) => ({
     ...c,
     month: months[c.index]
       ? parseMonth(months[c.index], c.header || "Column")
       : c.month,
   }));
-  const unread = columns.find((c) => !c.month);
+  const unread = columns.find((c, i) => kept.has(i) && !c.month);
   if (unread)
     throw new DomainError(
       "invalid",
@@ -608,7 +736,7 @@ export async function importBorrowingBasePaste(
     );
   const entries = paste.matched.flatMap((row) =>
     row.cells.flatMap((cell, i) =>
-      cell.trim()
+      kept.has(i) && cell.trim()
         ? [{ month: columns[i]!.month!, code: row.code!, value: cell }]
         : [],
     ),
@@ -616,7 +744,9 @@ export async function importBorrowingBasePaste(
   return {
     detail: await setBorrowingBaseValues(db, ctx, lineId, entries),
     figures: entries.length,
-    months: [...new Set(columns.map((c) => c.month!))].sort(),
+    months: [
+      ...new Set(columns.filter((_, i) => kept.has(i)).map((c) => c.month!)),
+    ].sort(),
   };
 }
 
@@ -642,12 +772,14 @@ export interface BorrowingBaseSummary {
   overdue: string[];
 }
 
-// Every margined line of the organization, for monitoring, with its latest
-// month and any certificates late as of `asOf`, today by default.
+// Every margined line of the organization, or of one borrower, for
+// monitoring, with its latest month and any certificates late as of
+// `asOf`, today by default.
 export async function listBorrowingBases(
   db: Db,
   ctx: Context,
   asOf: string = today(),
+  filter: { entityId?: string } = {},
 ): Promise<BorrowingBaseSummary[]> {
   const rows = await db
     .select({
@@ -660,6 +792,7 @@ export async function listBorrowingBases(
       and(
         eq(entities.organizationId, ctx.organizationId),
         isNotNull(creditLines.borrowingBase),
+        filter.entityId ? eq(entities.id, filter.entityId) : undefined,
       ),
     )
     .orderBy(asc(entities.name), asc(creditLines.position));

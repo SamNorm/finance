@@ -13,11 +13,19 @@ import {
 } from "../financing/common";
 import { checkDefinition } from "../borrowing-bases/compile";
 import {
+  definitionAsTyped,
   normalizeDefinition,
   type BorrowingBaseDefinition,
   type BorrowingBaseDefinitionInput,
 } from "../borrowing-bases/definition";
-import { parseMonth, parseTerm, termIn, type Term } from "./terms";
+import {
+  parseMonth,
+  parseTerm,
+  rateAsTyped,
+  termAsTyped,
+  termIn,
+  type Term,
+} from "./terms";
 
 // A borrower's lines of credit (borrowing-base-plan.md §4), and their
 // interest in analyses: each month, the usage assumed (a share of that
@@ -112,6 +120,43 @@ export function normalizeCreditLine(
     certificateDueDays: days,
   };
 }
+
+// Stored proposed lines and usage written back as typed, so saving them
+// again (copying a scenario, filling usage) reads their rates the same.
+export const proposedLinesAsTyped = (
+  lines: readonly ProposedLine[],
+): ProposedLineInput[] =>
+  lines.map((line) => ({
+    ...line,
+    rate: rateAsTyped(line.rate),
+    ...(line.terms
+      ? {
+          terms: Object.fromEntries(
+            Object.entries(line.terms).map(([code, t]) => [
+              code,
+              {
+                ...t,
+                ...(t.rate ? { rate: termAsTyped(t.rate, "rate") } : {}),
+              },
+            ]),
+          ),
+        }
+      : {}),
+    ...(line.borrowingBase
+      ? { borrowingBase: definitionAsTyped(line.borrowingBase) }
+      : {}),
+  }));
+
+export const lineUsageAsTyped = (usage: LineUsage) =>
+  Object.fromEntries(
+    Object.entries(usage).map(([id, u]) => [
+      id,
+      {
+        ...u,
+        ...(u.share !== undefined ? { share: rateAsTyped(u.share) } : {}),
+      },
+    ]),
+  );
 
 // A proposed line's id: one of the lines in force's, which for a
 // consolidated client's members read "member/line", or a new line's.

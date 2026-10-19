@@ -3,6 +3,8 @@ import type { Context } from "../context";
 import { DomainError } from "../errors";
 import { memberRows } from "../spreads/consolidation";
 import { UUID } from "../spreads/periods";
+import { forgetLines } from "./forget";
+import { rateAsTyped } from "./terms";
 import { getEntity } from "../spreads/service";
 import {
   MAX_LINES,
@@ -16,13 +18,7 @@ import {
 // existing loans are. A consolidated client has none of its own: it reads
 // its members'.
 
-const {
-  analyses,
-  analysisScenarios,
-  consolidationMembers,
-  creditLines,
-  entities,
-} = schema;
+const { consolidationMembers, creditLines, entities } = schema;
 
 const noLine = () => new DomainError("not_found", "No such line of credit.");
 
@@ -156,7 +152,7 @@ export async function updateCreditLine(
     name: current.name,
     currency: current.currency,
     limit: current.limit,
-    rate: current.rate,
+    rate: rateAsTyped(current.rate),
     closedOn: current.closedOn,
     certificateDueDays: current.certificateDueDays,
     ...Object.fromEntries(
@@ -185,37 +181,14 @@ export async function removeCreditLine(
     .select({ id: consolidationMembers.entityId })
     .from(consolidationMembers)
     .where(eq(consolidationMembers.memberId, line.entityId));
-  const keys = new Map([
-    [line.entityId, line.id],
-    ...groups.map((g) => [g.id, `${line.entityId}/${line.id}`] as const),
-  ]);
   await db.transaction(async (tx) => {
-    const affected = await tx
-      .select()
-      .from(analyses)
-      .where(inArray(analyses.entityId, [...keys.keys()]));
-    for (const analysis of affected) {
-      const key = keys.get(analysis.entityId)!;
-      const { [key]: _, ...lineUsage } = analysis.lineUsage;
-      await tx
-        .update(analyses)
-        .set({ lineUsage })
-        .where(eq(analyses.id, analysis.id));
-      const scenarios = await tx
-        .select()
-        .from(analysisScenarios)
-        .where(eq(analysisScenarios.analysisId, analysis.id));
-      for (const scenario of scenarios) {
-        const { [key]: __, ...usage } = scenario.lineUsage;
-        await tx
-          .update(analysisScenarios)
-          .set({
-            lineUsage: usage,
-            lines: scenario.lines?.filter((l) => l.id !== key) ?? null,
-          })
-          .where(eq(analysisScenarios.id, scenario.id));
-      }
-    }
+    await forgetLines(tx, line.entityId, (key) => key === line.id);
+    for (const group of groups)
+      await forgetLines(
+        tx,
+        group.id,
+        (key) => key === `${line.entityId}/${line.id}`,
+      );
     await tx.delete(creditLines).where(eq(creditLines.id, lineId));
   });
 }

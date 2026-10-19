@@ -56,6 +56,12 @@ export const FUNCTIONS: Record<string, FunctionSpec> = {
     signature: "IFERROR(x, fallback)",
     help: "The fallback when x is an error, such as a division by zero.",
   },
+  BLANK: {
+    min: 0,
+    max: 0,
+    signature: "BLANK()",
+    help: "No value, as an empty cell: IF(USAGE = 0, BLANK(), BASE / USAGE).",
+  },
   ISBLANK: {
     min: 1,
     max: 1,

@@ -21,7 +21,11 @@ import { monthsOf } from "./service";
 // group.
 
 export type GroupTotal = schema.GroupTotal;
-export type GroupTotals = Record<GroupTotal, string | null>;
+// What's summed: the adjustable totals, plus each member's own borrowing
+// base and availability, which caps and floors make more than the sum of
+// their parts.
+export type GroupSummed = GroupTotal | "total" | "available";
+export type GroupTotals = Record<GroupSummed, string | null>;
 
 export const GROUP_TOTALS: { key: GroupTotal; label: string }[] = [
   { key: "receivables", label: "Receivables, margined" },
@@ -34,11 +38,21 @@ export const GROUP_TOTALS: { key: GroupTotal; label: string }[] = [
   { key: "otherUsage", label: "Other usage" },
 ];
 
+// A group certificate can give these, the borrowing base included.
+export const OVERRIDE_TOTALS: { key: GroupSummed; label: string }[] = [
+  ...GROUP_TOTALS,
+  { key: "total", label: "Borrowing base" },
+];
+
+const SUMMED: GroupSummed[] = [
+  ...GROUP_TOTALS.map((t) => t.key),
+  "total",
+  "available",
+];
+
 // The figures a month's totals give, as a line's waterfall does.
 export interface GroupFigures extends GroupTotals {
   gross: string | null;
-  total: string | null;
-  available: string | null;
   usage: string | null;
   surplus: string | null;
   excess: string | null;
@@ -62,7 +76,7 @@ export interface GroupMonth {
   // The sum with the adjustments.
   adjusted: GroupFigures;
   // A group certificate's totals, when one was entered.
-  override: Partial<Record<GroupTotal, string>> | null;
+  override: Partial<Record<GroupSummed, string>> | null;
   // The month's figures: the override's totals where given, or else the
   // adjusted sum's.
   consolidated: GroupFigures;
@@ -75,8 +89,8 @@ const dec = (raw: string | null | undefined) =>
 
 // A line's totals in each month of its run: margined collateral by type
 // (a group's under its own type, after its cap), prior claims, reserves,
-// the limit, the balance and other usage. Null in a month without a
-// certificate, unless projected.
+// its borrowing base and availability, the limit, the balance and other
+// usage. Null in a month without a certificate, unless projected.
 export function lineTotals(
   definition: BorrowingBaseDefinition,
   run: BorrowingBaseRun,
@@ -107,6 +121,8 @@ export function lineTotals(
       otherCollateral: add(margined.other),
       priorClaims: at("BB_PRIOR_CLAIMS")?.toFixed() ?? null,
       reserves: at("BB_RESERVES")?.toFixed() ?? null,
+      total: at("BB_TOTAL")?.toFixed() ?? null,
+      available: at("BB_AVAILABLE")?.toFixed() ?? null,
       limit: at("BB_LIMIT")?.toFixed() ?? null,
       outstanding: outstanding?.toFixed() ?? null,
       otherUsage:
@@ -115,45 +131,96 @@ export function lineTotals(
   });
 }
 
-// The figures totals give: the gross borrowing base, less prior claims and
-// reserves, never below zero; availability; usage; the surplus and excess;
-// utilization.
+// The figures totals give: the gross borrowing base for reference; usage,
+// the surplus and excess, and utilization from the borrowing base and
+// availability summed (or adjusted, or certified).
 export function deriveFigures(totals: GroupTotals): GroupFigures {
-  const t = (key: GroupTotal) => dec(totals[key]) ?? new Dec(0);
+  const t = (key: GroupSummed) => dec(totals[key]) ?? new Dec(0);
   const gross = t("receivables")
     .plus(t("inventory"))
     .plus(t("otherCollateral"));
-  const total = Dec.max(0, gross.minus(t("priorClaims")).minus(t("reserves")));
-  const limit = t("limit");
-  const available = Dec.min(total, limit);
   const usage = t("outstanding").plus(t("otherUsage"));
+  const limit = t("limit");
   return {
     ...totals,
     gross: gross.toFixed(),
-    total: total.toFixed(),
-    available: available.toFixed(),
     usage: usage.toFixed(),
-    surplus: total.minus(usage).toFixed(),
-    excess: available.minus(usage).toFixed(),
+    surplus: t("total").minus(usage).toFixed(),
+    excess: t("available").minus(usage).toFixed(),
     utilization: limit.isZero() ? null : usage.div(limit).toFixed(),
   };
 }
 
+// Adjustments carry through: collateral adds to the borrowing base and
+// availability, prior claims and reserves take from them; neither goes
+// below zero, nor availability above the limit.
+function adjust(sum: GroupTotals, adjustments: GroupAdjustment[]) {
+  const result = { ...sum };
+  const plus = (key: GroupSummed, amount: InstanceType<typeof Dec>) => {
+    result[key] = new Dec(result[key] ?? 0).plus(amount).toFixed();
+  };
+  for (const a of adjustments) {
+    const amount = new Dec(a.amount);
+    plus(a.total, amount);
+    if (["receivables", "inventory", "otherCollateral"].includes(a.total)) {
+      plus("total", amount);
+      plus("available", amount);
+    }
+    if (a.total === "priorClaims" || a.total === "reserves") {
+      plus("total", amount.neg());
+      plus("available", amount.neg());
+    }
+  }
+  return bounded(result);
+}
+
+const bounded = (totals: GroupTotals): GroupTotals => {
+  const total = Dec.max(0, dec(totals.total) ?? 0);
+  const available = Dec.max(
+    0,
+    Dec.min(dec(totals.available) ?? total, total, dec(totals.limit) ?? total),
+  );
+  return { ...totals, total: total.toFixed(), available: available.toFixed() };
+};
+
+// A group certificate's totals over the adjusted sum. Given components but
+// no borrowing base, the borrowing base follows from them.
+function certified(
+  adjusted: GroupTotals,
+  override: Partial<Record<GroupSummed, string>>,
+): GroupTotals {
+  const merged = { ...adjusted, ...override };
+  if (override.total === undefined) {
+    const t = (key: GroupSummed) => dec(merged[key]) ?? new Dec(0);
+    merged.total = t("receivables")
+      .plus(t("inventory"))
+      .plus(t("otherCollateral"))
+      .minus(t("priorClaims"))
+      .minus(t("reserves"))
+      .toFixed();
+  }
+  // Availability follows from the certified borrowing base and limits.
+  return bounded({ ...merged, available: null });
+}
+
 const empty = (): GroupTotals =>
-  Object.fromEntries(GROUP_TOTALS.map((t) => [t.key, null])) as GroupTotals;
+  Object.fromEntries(SUMMED.map((key) => [key, null])) as GroupTotals;
 
 export function groupWorksheet(
   members: readonly {
     key: string;
     name: string;
+    currency: string;
     definition: BorrowingBaseDefinition;
     run: BorrowingBaseRun;
+    // The last month it counts, when its line closed.
+    until?: string | null;
   }[],
   stored: ReadonlyMap<
     string,
     {
       adjustments: GroupAdjustment[];
-      override: Partial<Record<GroupTotal, string>> | null;
+      override: Partial<Record<GroupSummed, string>> | null;
       note: string | null;
     }
   >,
@@ -184,6 +251,8 @@ export function groupWorksheet(
     const memberTotals: GroupMonth["members"] = {};
     let projected = false;
     for (const m of byMember) {
+      // A line closed before the month no longer counts.
+      if (m.until && month > m.until) continue;
       const own = m.at.get(month);
       memberTotals[m.key] = own?.totals ?? null;
       projected ||= own?.projected ?? false;
@@ -195,7 +264,7 @@ export function groupWorksheet(
         });
         continue;
       }
-      for (const { key } of GROUP_TOTALS) {
+      for (const key of SUMMED) {
         const value = own.totals[key];
         if (value !== null)
           sum[key] = new Dec(sum[key] ?? 0).plus(value).toFixed();
@@ -203,13 +272,9 @@ export function groupWorksheet(
     }
     const saved = stored.get(month);
     const adjustments = saved?.adjustments ?? [];
-    const adjusted = { ...sum };
-    for (const a of adjustments)
-      adjusted[a.total] = new Dec(adjusted[a.total] ?? 0)
-        .plus(a.amount)
-        .toFixed();
+    const adjusted = adjust(sum, adjustments);
     const override = saved?.override ?? null;
-    const consolidated = override ? { ...adjusted, ...override } : adjusted;
+    const consolidated = override ? certified(adjusted, override) : adjusted;
     if (
       override?.limit !== undefined &&
       sum.limit !== null &&
@@ -233,6 +298,23 @@ export function groupWorksheet(
       issues,
     };
   });
+}
+
+// Members' lines in more than one currency are added as they are, which
+// the group's figures should say.
+export function currencyIssues(
+  members: readonly { name: string; currency: string }[],
+): Issue[] {
+  const currencies = [...new Set(members.map((m) => m.currency))];
+  return currencies.length > 1
+    ? [
+        {
+          severity: "warning",
+          code: "currency_mix",
+          message: `The members' lines are in ${currencies.join(" and ")}; the group adds their figures as they are, unconverted.`,
+        },
+      ]
+    : [];
 }
 
 const { groupBorrowingBaseMonths: groupMonths } = schema;
@@ -270,6 +352,8 @@ export interface GroupBorrowingBase {
     lineId: string;
   }[];
   months: GroupMonth[];
+  // About the group as a whole, such as members' lines in other currencies.
+  issues: Issue[];
 }
 
 // A consolidated client's history: its members' margined lines added up.
@@ -289,6 +373,8 @@ export async function getGroupBorrowingBase(
     name: `${line.name} (${member!.name})`,
     member: member!,
     lineId: line.id,
+    currency: line.currency,
+    until: line.closedOn?.slice(0, 7) ?? null,
     definition: line.borrowingBase!,
     run: runBorrowingBase({
       definition: line.borrowingBase!,
@@ -305,6 +391,7 @@ export async function getGroupBorrowingBase(
       lineId,
     })),
     months: groupWorksheet(members, await storedMonths(db, entityId)),
+    issues: currencyIssues(members),
   };
 }
 
@@ -315,7 +402,7 @@ export async function runAnalysisGroupBorrowingBase(
   ctx: Context,
   analysisId: string,
   scenarioId?: string | null,
-): Promise<GroupMonth[] | null> {
+): Promise<{ months: GroupMonth[]; issues: Issue[] } | null> {
   const { entity } = await getAnalysis(db, ctx, analysisId);
   const lines = await runAnalysisBorrowingBases(
     db,
@@ -323,17 +410,21 @@ export async function runAnalysisGroupBorrowingBase(
     analysisId,
     scenarioId,
   );
-  const members = lines.filter((l) => l.member);
-  if (!members.length) return null;
-  return groupWorksheet(
-    members.map((l) => ({
+  const members = lines
+    .filter((l) => l.member)
+    .map((l) => ({
       key: l.key,
       name: l.name,
+      currency: l.currency,
+      until: l.until,
       definition: l.definition,
       run: l.run,
-    })),
-    await storedMonths(db, entity.id),
-  );
+    }));
+  if (!members.length) return null;
+  return {
+    months: groupWorksheet(members, await storedMonths(db, entity.id)),
+    issues: currencyIssues(members),
+  };
 }
 
 async function saveMonth(
@@ -352,6 +443,7 @@ async function saveMonth(
 }
 
 const TOTAL_KEYS = new Set<string>(GROUP_TOTALS.map((t) => t.key));
+const OVERRIDE_KEYS = new Set<string>(OVERRIDE_TOTALS.map((t) => t.key));
 
 function amountOf(raw: unknown, what: string) {
   const parsed = parseValue(String(raw ?? ""), "amount");
@@ -426,20 +518,20 @@ export async function setGroupBorrowingBaseOverride(
 ): Promise<GroupMonth> {
   const entity = await consolidated(db, ctx, entityId);
   const month = parseMonth(rawMonth, entity.name);
-  let totals: Partial<Record<GroupTotal, string>> | null = null;
+  let totals: Partial<Record<GroupSummed, string>> | null = null;
   if (override) {
     totals = {};
     for (const [key, raw] of Object.entries(override)) {
-      if (!TOTAL_KEYS.has(key))
+      if (!OVERRIDE_KEYS.has(key))
         throw new DomainError(
           "invalid",
-          `"${key}" isn't one of the group's totals: ${GROUP_TOTALS.map((t) => t.key).join(", ")}.`,
+          `"${key}" isn't one of the group's totals: ${OVERRIDE_TOTALS.map((t) => t.key).join(", ")}.`,
         );
       const amount = amountOf(
         raw,
-        GROUP_TOTALS.find((t) => t.key === key)!.label,
+        OVERRIDE_TOTALS.find((t) => t.key === key)!.label,
       );
-      if (amount !== null) totals[key as GroupTotal] = amount;
+      if (amount !== null) totals[key as GroupSummed] = amount;
     }
     if (!Object.keys(totals).length) totals = null;
   }

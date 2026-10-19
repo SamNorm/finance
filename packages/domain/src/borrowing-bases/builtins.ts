@@ -230,7 +230,7 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           kind: "calculation",
           code: "DSO",
           label: "Days sales outstanding",
-          format: "ratio",
+          format: "count",
           formula: "IFERROR(AR / SALES * 30, 0)",
         },
       ],

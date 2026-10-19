@@ -206,6 +206,9 @@ describe("monthly functions", () => {
     ]);
     expect(show4("ROLLMIN(DRAWN, 3)")).toEqual(["100", "50", "50"]);
     expect(show4("ROLLMAX(DRAWN, 3)")).toEqual(["300", "300", "300"]);
+    expect(show(run("IF(DRAWN > 0, DRAWN, BLANK())").cell("X", 1).value)).toBe(
+      "blank",
+    );
     expect(show(run("ROLLSUM(DRAWN, 3)").cell("X", 1).value)).toBe("#N/A");
     expect(show(run("ROLLSUM(DRAWN, 0)").cell("X", 4).value)).toBe("#VALUE!");
   });

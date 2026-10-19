@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, schema, type Db } from "@finance/db";
 import { Dec } from "@finance/engine";
 import type { Context } from "../context";
+import { forgetLines } from "../credit-lines/forget";
 import { DomainError, type Issue } from "../errors";
 import { monthIndex } from "../financing/amortization";
 import { entryId, type Amount, type FinancingPart } from "../financing/common";
@@ -575,6 +576,8 @@ export async function removeConsolidationMember(
       tx,
       affected.map((a) => a.periodId),
     );
+    // The group's analyses forget the member's lines of credit.
+    await forgetLines(tx, entityId, (key) => key.startsWith(`${memberId}/`));
   });
 }
 

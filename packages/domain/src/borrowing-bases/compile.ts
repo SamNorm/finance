@@ -44,7 +44,11 @@ export interface CompiledBorrowingBase {
   projections: Record<string, string>;
   // Values by month from terms: advance rates, caps, reserves' amounts and
   // the limit.
-  terms: { code: string; term: Term }[];
+  // A null term means none in force, as for a cap a deal adds.
+  terms: { code: string; term: Term | null }[];
+  // Aged lines, by code: the buckets they add up. Each takes the entered
+  // buckets' sum, or in a projected month without them, its projection.
+  derived: Record<string, string[]>;
   assumptions: LineOf<"assumption">[];
   calculations: { code: string; formula: string; projection?: string }[];
   rows: WaterfallRow[];
@@ -60,7 +64,11 @@ const sum = (codes: readonly string[]) =>
 export function compileBorrowingBase(
   definition: BorrowingBaseDefinition,
   facility: { currency: string; limit: Term },
+  // Collateral lines and groups a deal caps, by code, which may have no cap
+  // in force: they get one, blank until the deal.
+  options: { capped?: ReadonlySet<string> } = {},
 ): CompiledBorrowingBase {
+  const derived: Record<string, string[]> = {};
   const lines = definition.lines;
   const byCode = new Map(lines.map((l) => [l.code, l]));
   const collateral = lines.filter(
@@ -126,12 +134,16 @@ export function compileBorrowingBase(
         format,
         depth: depth + 1,
         lineKind: "collateral",
+        // Amounts before the advance rate are in the line's own currency.
+        ...(x.currency && format === "amount" && suffix !== "CAP"
+          ? { currency: x.currency }
+          : {}),
         ...extra,
       });
     const out: string[] = [];
     if (x.aging) {
       const buckets = x.aging.buckets.map((_, i) => `${x.code}.AGE${i + 1}`);
-      calc(x.code, sum(buckets), x.projection ?? sameMonth(x.code));
+      derived[x.code] = buckets;
       x.aging.buckets.forEach((label, i) =>
         detail(`AGE${i + 1}`, label, "amount", {
           entered: true,
@@ -160,8 +172,8 @@ export function compileBorrowingBase(
     terms.push({ code: `${x.code}.RATE`, term: x.rate });
     detail("RATE", COLLATERAL_CODES[2].label, "percent");
     const margined = `${x.code}.ELIGIBLE${fx(x.currency)} * ${x.code}.RATE`;
-    if (x.cap) {
-      terms.push({ code: `${x.code}.CAP`, term: x.cap });
+    if (x.cap || options.capped?.has(x.code)) {
+      terms.push({ code: `${x.code}.CAP`, term: x.cap ?? null });
       detail("CAP", COLLATERAL_CODES[3].label, "amount");
       calc(`${x.code}.MARGINED`, `MIN(${margined}, ${x.code}.CAP)`);
     } else calc(`${x.code}.MARGINED`, margined);
@@ -192,8 +204,8 @@ export function compileBorrowingBase(
     const members = collateral
       .filter((x) => x.group === line.code)
       .map((x) => collateralBlock(x, 1));
-    if (line.cap) {
-      terms.push({ code: `${line.code}.CAP`, term: line.cap });
+    if (line.cap || options.capped?.has(line.code)) {
+      terms.push({ code: `${line.code}.CAP`, term: line.cap ?? null });
       row({
         code: `${line.code}.CAP`,
         label: "Cap",
@@ -290,9 +302,9 @@ export function compileBorrowingBase(
   total("BB_SURPLUS", "total");
   calc("BB_EXCESS", "BB_AVAILABLE - BB_USAGE");
   total("BB_EXCESS", "line");
-  calc("BB_UTILIZATION", "BB_USAGE / BB_LIMIT");
+  calc("BB_UTILIZATION", "IF(BB_LIMIT = 0, BLANK(), BB_USAGE / BB_LIMIT)");
   total("BB_UTILIZATION", "line");
-  calc("BB_COVERAGE", "BB_TOTAL / BB_USAGE");
+  calc("BB_COVERAGE", "IF(BB_USAGE = 0, BLANK(), BB_TOTAL / BB_USAGE)");
   total("BB_COVERAGE", "line");
 
   const currencies = currenciesOf(definition);
@@ -333,6 +345,10 @@ export function compileBorrowingBase(
   const share = (part: string, of: string) =>
     `IFERROR(${of} * PREV(${part}, 12) / PREV(${of}, 12), IFERROR(${of} * PREV(${part}) / PREV(${of}), 0))`;
   const projections: Record<string, string> = {};
+  for (const [code] of Object.entries(derived)) {
+    const line = byCode.get(code) as LineOf<"collateral">;
+    projections[code] = line.projection ?? sameMonth(code);
+  }
   for (const row of inputs) {
     const line = byCode.get(row.code);
     const bucket = /^(.+)\.AGE\d+$/.exec(row.code);
@@ -351,6 +367,7 @@ export function compileBorrowingBase(
   }
   return {
     inputs,
+    derived,
     projections,
     terms,
     assumptions: lines.filter(
@@ -447,16 +464,20 @@ export function checkDefinition(
   const inputs = compiled.inputs.map((r) => r.code);
   const known = new Set([
     ...inputs,
+    ...Object.keys(compiled.derived),
     ...compiled.terms.map((t) => t.code),
     ...compiled.assumptions.map((a) => a.code),
     ...compiled.calculations.map((c) => c.code),
   ]);
   for (const issue of checkModel(
     [
-      ...compiled.inputs.map((r) => ({
-        code: r.code,
+      ...[
+        ...compiled.inputs.map((r) => r.code),
+        ...Object.keys(compiled.derived),
+      ].map((code) => ({
+        code,
         kind: "input" as const,
-        projectionFormula: compiled.projections[r.code] ?? null,
+        projectionFormula: compiled.projections[code] ?? null,
       })),
       ...compiled.terms.map((t) => ({
         code: t.code,

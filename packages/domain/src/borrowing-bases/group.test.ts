@@ -26,10 +26,63 @@ import {
   setGroupBorrowingBaseAdjustments,
   setGroupBorrowingBaseOverride,
 } from "./group";
+import { normalizeDefinition } from "./definition";
+import { groupWorksheet } from "./group";
+import { runBorrowingBase } from "./run";
 import { setBorrowingBaseDefinition, setBorrowingBaseValues } from "./service";
 
 const rejects = (promise: Promise<unknown>, kind: string) =>
   expect(promise).rejects.toMatchObject({ name: "DomainError", kind });
+
+describe("groupWorksheet", () => {
+  it("sums each member's own borrowing base and availability", () => {
+    // A: collateral 100,000 under prior claims of 300,000, so no borrowing
+    // base. B: 1,000,000 against a 500,000 limit, drawn in full.
+    const member = (
+      key: string,
+      limit: string,
+      figures: Record<string, string>,
+    ) => {
+      const definition = normalizeDefinition(
+        {
+          lines: [
+            { kind: "collateral", code: "AR", label: "AR", rate: "100%" },
+            { kind: "prior_claim", code: "PC", label: "Prior claims" },
+          ],
+        },
+        "CAD",
+      ).definition;
+      return {
+        key,
+        name: key,
+        currency: key === "B" ? "USD" : "CAD",
+        definition,
+        run: runBorrowingBase({
+          definition,
+          line: { currency: "CAD", limit: { value: limit } },
+          months: [{ month: "2025-01", quality: "reported", figures }],
+        }),
+      };
+    };
+    const [month] = groupWorksheet(
+      [
+        member("A", "2000000", {
+          AR: "100000",
+          PC: "300000",
+          BB_OUTSTANDING: "0",
+        }),
+        member("B", "500000", { AR: "1000000", BB_OUTSTANDING: "500000" }),
+      ],
+      new Map(),
+    );
+    expect(month!.consolidated).toMatchObject({
+      total: "1000000",
+      available: "500000",
+      surplus: "500000",
+      excess: "0",
+    });
+  });
+});
 
 describe("consolidated borrowing bases", () => {
   let db: Db;
@@ -229,7 +282,8 @@ describe("consolidated borrowing bases", () => {
       financialModelVersionId: version.id,
       name: "Group review",
     });
-    const months = await runAnalysisGroupBorrowingBase(db, ctx, analysis.id);
+    const months = (await runAnalysisGroupBorrowingBase(db, ctx, analysis.id))!
+      .months;
     // Each member projects from its own last month: Props from February,
     // so February already mixes a projection in, and counts as projected.
     expect(months!.filter((m) => !m.projected).map((m) => m.month)).toEqual([

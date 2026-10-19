@@ -10,6 +10,7 @@ import {
 } from "../analyses/service";
 import type { Context } from "../context";
 import {
+  lineUsageAsTyped,
   mergeLineUsage,
   type LineUsage,
   type ProposedLine,
@@ -24,6 +25,7 @@ import { DomainError, type Issue } from "../errors";
 import { monthIndex, monthOf } from "../financing/amortization";
 import { parseValue } from "../spreads/values";
 import { getSpread } from "../spreads/service";
+import { borrowingBaseIssues } from "./checks";
 import { compileBorrowingBase, type WaterfallRow } from "./compile";
 import { seasonalProfile } from "./cycle";
 import type { BorrowingBaseDefinition, LineOf } from "./definition";
@@ -76,6 +78,8 @@ export interface AnalysisBorrowingBase {
   asIs: BorrowingBaseRun | null;
   // The deal's terms apply after this month.
   proposedAfter: string | null;
+  // The last month projected, when the line closes.
+  until: string | null;
   // Projecting from the client's figures: lines it didn't project, taken
   // from their projection formulas.
   estimated: string[];
@@ -142,6 +146,13 @@ export async function runAnalysisBorrowingBases(
     lines.map((l) => l.line.id),
   );
   const lastActual = spread.periods.findLast((p) => p.quality !== "projected");
+  const spreadPeriods = spread.periods
+    .filter((p) => p.quality !== "projected")
+    .map((p) => ({
+      end: p.periodEnd,
+      figure: (code: string) =>
+        spread.values[p.id]?.[code] ?? spread.computed[p.id]?.[code],
+    }));
   const closing = scenario?.project
     ? monthOf(monthIndex(scenario.project.closing))
     : null;
@@ -158,6 +169,7 @@ export async function runAnalysisBorrowingBases(
     limit: Term,
     history: BorrowingBaseMonth[],
     proposedNew: boolean,
+    closedOn: string | null,
   ): AnalysisBorrowingBase => {
     const settings: ProjectedBorrowingBase = detail.analysis.borrowingBases[
       key
@@ -171,7 +183,21 @@ export async function runAnalysisBorrowingBases(
     const issues: Issue[] = [];
     const client = values.get(key) ?? {};
     const own = scenario?.borrowingBases[key];
-    const months = last ? monthsAfter(last, settings.months) : [];
+    const proposedLine = scenario?.lines?.find((l) => l.id === key);
+    const after = proposedLine
+      ? (closing ?? (proposedNew ? null : last))
+      : null;
+    // A line closed, in force or by the deal, isn't projected past it.
+    const until =
+      [
+        closedOn?.slice(0, 7),
+        proposedLine?.closed ? (after ?? undefined) : undefined,
+      ]
+        .filter((m): m is string => Boolean(m))
+        .sort()[0] ?? null;
+    const months = (last ? monthsAfter(last, settings.months) : []).filter(
+      (m) => !until || m <= until,
+    );
     const projected = months.map((month) => ({
       month,
       figures: {
@@ -193,10 +219,6 @@ export async function runAnalysisBorrowingBases(
         code: "client_missing",
         message: `${name}: no projected figures from the client yet, so every line comes from its projection formula.`,
       });
-    const proposedLine = scenario?.lines?.find((l) => l.id === key);
-    const after = proposedLine
-      ? (closing ?? (proposedNew ? null : last))
-      : null;
     const deal = dealTerms(proposedLine, after, limit);
     const run = runBorrowingBase({
       definition,
@@ -264,6 +286,41 @@ export async function runAnalysisBorrowingBases(
         message: `${name}: the usage assumed for interest averages ${assumed!.toFixed(0)} over the projected months, but the balance projected averages ${projectedBalance!.toFixed(0)}.`,
       });
     const first = run.months.findIndex((m) => m.projected);
+    const from = Math.max(0, (first === -1 ? run.months.length : first) - 12);
+    // The history's own checks, over the months shown.
+    const checks = borrowingBaseIssues({
+      definition,
+      compiled,
+      months: history,
+      run,
+      spread: spreadPeriods,
+    });
+    const shown = new Set(run.months.slice(from).map((m) => m.month));
+    issues.push(
+      ...checks.general,
+      ...Object.entries(checks.byMonth)
+        .filter(([month]) => shown.has(month))
+        .flatMap(([, list]) => list),
+    );
+    // Figures for months the projection doesn't reach change nothing.
+    const projectedMonths = new Set(months);
+    for (const [whose, figures] of [
+      [
+        "The client's projected figures",
+        settings.source === "client" ? client : {},
+      ],
+      ["The scenario's figures", own?.figures ?? {}],
+    ] as const) {
+      const outside = Object.keys(figures).filter(
+        (m) => !projectedMonths.has(m),
+      );
+      if (outside.length)
+        issues.push({
+          severity: "warning",
+          code: "figures_outside",
+          message: `${name}: ${whose} for ${outside.sort().join(", ")} fall outside the months projected, so they're left out.`,
+        });
+    }
     return {
       key,
       name,
@@ -276,9 +333,10 @@ export async function runAnalysisBorrowingBases(
       inputs: compiled.inputs,
       assumptions: compiled.assumptions,
       run,
-      from: Math.max(0, (first === -1 ? run.months.length : first) - 12),
+      from,
       asIs,
       proposedAfter: deal?.after ?? null,
+      until,
       estimated,
       clientFigures: client,
       usage: {
@@ -300,6 +358,7 @@ export async function runAnalysisBorrowingBases(
       line.limit,
       histories.get(line.id) ?? [],
       false,
+      line.closedOn,
     ),
   );
   // New margined lines the scenario proposes, projected alone.
@@ -316,6 +375,7 @@ export async function runAnalysisBorrowingBases(
           proposed.limit,
           [],
           true,
+          null,
         ),
       );
   return result;
@@ -647,8 +707,11 @@ export async function fillLineUsage(
     ...own,
     [key]: { ...own[key], months: { ...own[key]?.months, ...months } },
   };
-  if (scenario) await updateScenario(db, ctx, scenario.id, { lineUsage: next });
-  else await updateAnalysis(db, ctx, target.analysisId, { lineUsage: next });
+  // Stored shares go back as typed, so 100% stays 100%.
+  const typed = lineUsageAsTyped(next);
+  if (scenario)
+    await updateScenario(db, ctx, scenario.id, { lineUsage: typed });
+  else await updateAnalysis(db, ctx, target.analysisId, { lineUsage: typed });
   return next;
 }
 

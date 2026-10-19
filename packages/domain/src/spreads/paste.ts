@@ -40,6 +40,8 @@ const normalize = (s: string) =>
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .toLowerCase()
+    // "31–60 days" pasted as "31-60 days" still matches.
+    .replace(/[–—]/g, "-")
     .replace(/[:*]+$/, "")
     .replace(/\s+/g, " ")
     .trim();

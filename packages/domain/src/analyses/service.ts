@@ -26,7 +26,9 @@ import {
 import { marginedLines } from "../borrowing-bases/lines";
 import {
   checkProposedTerms,
+  lineUsageAsTyped,
   linesWithoutUsage,
+  proposedLinesAsTyped,
   mergeLineUsage,
   normalizeLineUsage,
   normalizeProposedLines,
@@ -862,8 +864,9 @@ export async function duplicateScenario(
     project: source.project,
     capex: source.capex,
     covenants: source.covenants,
-    lines: source.lines,
-    lineUsage: source.lineUsage,
+    // Stored rates go back as typed, so 100% stays 100%.
+    lines: source.lines && proposedLinesAsTyped(source.lines),
+    lineUsage: lineUsageAsTyped(source.lineUsage),
     borrowingBases: source.borrowingBases,
   });
 }

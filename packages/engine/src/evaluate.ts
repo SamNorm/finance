@@ -263,6 +263,8 @@ export function evaluateModel(run: ModelRun): Evaluation {
         const value = arg(0);
         return isError(value) ? arg(1) : value;
       }
+      case "BLANK":
+        return null;
       case "ISBLANK":
         return arg(0) === null;
       case "AND":
