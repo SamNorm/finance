@@ -305,6 +305,8 @@ export function PasteProjections({
     result: BorrowingBasePaste;
   } | null>(null);
   const [months, setMonths] = useState<Record<number, string>>({});
+  // Columns left out, by index.
+  const [skipped, setSkipped] = useState<number[]>([]);
   const [failure, setFailure] = useState<ActionFailure | null>(null);
   const [checking, startCheck] = useTransition();
   const [importing, startImport] = useTransition();
@@ -329,6 +331,13 @@ export function PasteProjections({
           result.value.columns.map((c) => [c.index, c.month ?? ""]),
         ),
       );
+      // A forecast often carries actual months too: those the projection
+      // doesn't reach start left out.
+      setSkipped(
+        result.value.columns
+          .filter((c) => c.month && !projected.has(c.month))
+          .map((c) => c.index),
+      );
     });
   }
 
@@ -341,6 +350,7 @@ export function PasteProjections({
         line.key,
         source,
         months,
+        skipped,
       );
       if (!result.ok) return setFailure(result);
       startTransition(() => {
@@ -352,18 +362,21 @@ export function PasteProjections({
   }
 
   const columns = checked?.columns ?? [];
+  const out = (i: number) => skipped.includes(columns[i]!.index);
+  const kept = columns.filter((c) => !skipped.includes(c.index));
   const figures =
     checked?.matched.reduce(
-      (n, row) => n + row.cells.filter((cell) => cell.trim()).length,
+      (n, row) =>
+        n + row.cells.filter((cell, i) => cell.trim() && !out(i)).length,
       0,
     ) ?? 0;
   const ready =
     checked &&
     !checked.issues.some((i) => i.severity === "error") &&
-    columns.length > 0 &&
+    kept.length > 0 &&
     checked.matched.length > 0 &&
-    columns.every((c) => /^\d{4}-\d{2}$/.test(months[c.index] ?? ""));
-  const outside = columns.filter(
+    kept.every((c) => /^\d{4}-\d{2}$/.test(months[c.index] ?? ""));
+  const outside = kept.filter(
     (c) => months[c.index] && !projected.has(months[c.index]!),
   );
 
@@ -420,8 +433,8 @@ export function PasteProjections({
                 {plural(checked.matched.length, "line")} matched
               </span>
               <span className="text-muted">
-                · {plural(figures, "figure")} ·{" "}
-                {plural(columns.length, "month")} ·{" "}
+                · {plural(figures, "figure")} · {plural(kept.length, "month")}
+                {skipped.length > 0 && ` (${skipped.length} left out)`} ·{" "}
                 {plural(checked.unmatched.length, "row")} skipped
               </span>
             </p>
@@ -437,15 +450,33 @@ export function PasteProjections({
                         const month = months[column.index] ?? "";
                         const name =
                           column.header || `Column ${column.index + 1}`;
+                        const left = skipped.includes(column.index);
                         return (
                           <th
                             key={column.index}
-                            className="min-w-36 px-1 pb-1 text-right align-bottom font-normal"
+                            className={`min-w-36 px-1 pb-1 text-right align-bottom font-normal ${left ? "opacity-50" : ""}`}
                           >
-                            <span className="block truncate">{name}</span>
+                            <label className="flex items-center justify-end gap-1.5">
+                              <input
+                                type="checkbox"
+                                checked={!left}
+                                onChange={(e) =>
+                                  setSkipped(
+                                    e.target.checked
+                                      ? skipped.filter(
+                                          (i) => i !== column.index,
+                                        )
+                                      : [...skipped, column.index],
+                                  )
+                                }
+                                aria-label={`Import ${name}`}
+                              />
+                              <span className="truncate">{name}</span>
+                            </label>
                             <input
                               type="month"
                               value={month}
+                              disabled={left}
                               aria-label={`Month of ${name}`}
                               onChange={(e) =>
                                 setMonths({
@@ -458,9 +489,13 @@ export function PasteProjections({
                                   ? "Day and month order assumed: check it."
                                   : undefined
                               }
-                              className={`${input} mt-1 w-36 py-1 text-xs ${column.guessed || !month ? "border-warning" : ""}`}
+                              className={`${input} mt-1 w-36 py-1 text-xs ${!left && (column.guessed || !month) ? "border-warning" : ""}`}
                             />
-                            {month && !projected.has(month) ? (
+                            {left ? (
+                              <span className="mt-1 block text-[11px] text-muted">
+                                Left out
+                              </span>
+                            ) : month && !projected.has(month) ? (
                               <span className="mt-1 block text-[11px] text-warning">
                                 Not a projected month
                               </span>
@@ -488,7 +523,7 @@ export function PasteProjections({
                         {row.cells.map((cell, i) => (
                           <td
                             key={i}
-                            className="px-1 py-1 text-right tabular-nums"
+                            className={`px-1 py-1 text-right tabular-nums ${out(i) ? "text-muted line-through" : ""}`}
                           >
                             {cell}
                           </td>
@@ -500,13 +535,14 @@ export function PasteProjections({
                 {outside.length > 0 && (
                   <p className="mt-2 text-xs text-warning">
                     {plural(outside.length, "column")} fall outside the months
-                    projected: they&apos;re saved, but left out of the
-                    projection until it reaches them.
+                    projected: they&apos;re saved, but don&apos;t count until
+                    the projection reaches them. Untick them to leave them out.
                   </p>
                 )}
-                {columns.some((c) => !months[c.index]) && (
+                {kept.some((c) => !months[c.index]) && (
                   <p className="mt-2 text-xs text-warning">
-                    Give the month of each column whose header isn&apos;t one.
+                    Give the month of each column whose header isn&apos;t one,
+                    or leave the column out.
                   </p>
                 )}
               </div>

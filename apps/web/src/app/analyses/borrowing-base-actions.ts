@@ -152,15 +152,17 @@ export async function previewProjectedBorrowingBasePasteAction(
 }
 
 // Saves the pasted projections; `months` gives a month to columns whose
-// header didn't, by column index.
+// header didn't, and `skip` leaves columns out, by column index.
 export async function importProjectedBorrowingBasePasteAction(
   analysisId: string,
   key: string,
   text: string,
   months: Record<number, string>,
+  skip: number[] = [],
 ): Promise<ActionResult<{ figures: number; months: string[] }>> {
   const result = await attempt((db, ctx) => {
     if (!isObject(months)) throw invalid("Give columns' months by column.");
+    if (!Array.isArray(skip)) throw invalid("Columns left out are a list.");
     return importProjectedBorrowingBasePaste(
       db,
       ctx,
@@ -173,6 +175,7 @@ export async function importProjectedBorrowingBasePasteAction(
           String(month ?? ""),
         ]),
       ),
+      skip.map(Number),
     );
   });
   if (result.ok) refresh();

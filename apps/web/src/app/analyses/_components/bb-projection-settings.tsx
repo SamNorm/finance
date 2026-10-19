@@ -91,6 +91,10 @@ interface BaseDraft {
   values: Record<string, { value: string; byMonth: string[] | null }>;
 }
 
+// An assumption the definition sets by calendar month: a seasonal profile,
+// which can be filled from the certificates.
+const seasonal = (a: Assumption) => Boolean(a.byMonth);
+
 const baseDraft = (line: AnalysisBorrowingBase): BaseDraft => ({
   source: line.settings.source,
   months: String(line.settings.months),
@@ -101,9 +105,13 @@ const baseDraft = (line: AnalysisBorrowingBase): BaseDraft => ({
         a.code,
         {
           value: typedValue(own?.value, a.format),
+          // A seasonal profile, set by calendar month in the definition,
+          // opens by month.
           byMonth: own?.byMonth
             ? own.byMonth.map((v) => typedValue(v, a.format))
-            : null,
+            : seasonal(a)
+              ? Array.from({ length: 12 }, () => "")
+              : null,
         },
       ];
     }),
@@ -387,35 +395,40 @@ export function ProjectionSettings({
                             </table>
                             <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
                               <span>
-                                A month left blank takes the value for every
-                                month.
+                                A month left blank takes this analysis&apos;s
+                                value for every month, or else the
+                                definition&apos;s, shown in grey.
                               </span>
-                              {!line.proposedNew && sources.length > 0 && (
-                                <span className="ml-auto flex items-center gap-2">
-                                  Fill from history, following
-                                  <select
-                                    aria-label="The figure the season follows"
-                                    value={follow}
-                                    onChange={(e) => setFollow(e.target.value)}
-                                    className={`${box} py-1 text-xs`}
-                                  >
-                                    {sources.map((s) => (
-                                      <option key={s.code} value={s.code}>
-                                        {s.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    type="button"
-                                    className={`${button.secondary} px-2 py-1 text-xs`}
-                                    disabled={pending}
-                                    onClick={() => fill(a)}
-                                  >
-                                    <History />
-                                    Fill
-                                  </button>
-                                </span>
-                              )}
+                              {!line.proposedNew &&
+                                seasonal(a) &&
+                                sources.length > 0 && (
+                                  <span className="ml-auto flex items-center gap-2">
+                                    Fill from history, following
+                                    <select
+                                      aria-label="The figure the season follows"
+                                      value={follow}
+                                      onChange={(e) =>
+                                        setFollow(e.target.value)
+                                      }
+                                      className={`${box} py-1 text-xs`}
+                                    >
+                                      {sources.map((s) => (
+                                        <option key={s.code} value={s.code}>
+                                          {s.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      className={`${button.secondary} px-2 py-1 text-xs`}
+                                      disabled={pending}
+                                      onClick={() => fill(a)}
+                                    >
+                                      <History />
+                                      Fill
+                                    </button>
+                                  </span>
+                                )}
                             </div>
                           </div>
                         </td>
