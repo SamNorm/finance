@@ -7,6 +7,7 @@ import {
   getSpread,
   listAnalyses,
   listBorrowingBases,
+  listComments,
   listBorrowingBaseTemplates,
   listCovenantMetrics,
   listCreditLines,
@@ -15,6 +16,7 @@ import {
   nextYearDebtService,
   type AnalysisSummary,
   type BorrowingBaseSummary,
+  type Comment,
   type Consolidation,
   type CreditLine,
   type Issue,
@@ -34,6 +36,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { Comments } from "@/components/comments";
 import { IssueList, IssuesSummary } from "@/components/issue-list";
 import {
   Badge,
@@ -90,7 +93,7 @@ async function SpreadView({ params, searchParams }: Props) {
     throw error;
   });
   // A consolidated client has no lines of its own: it lists its members'.
-  const [analyses, scoringModels, metrics, documents, lines, margins] =
+  const [analyses, scoringModels, metrics, documents, lines, margins, notes] =
     await Promise.all([
       listAnalyses(db, ctx, { entityId: id }),
       listScoringModels(db, ctx),
@@ -98,6 +101,7 @@ async function SpreadView({ params, searchParams }: Props) {
       listDocuments(db, ctx, { entityId: id }),
       listCreditLines(db, ctx, id),
       marginsOf(),
+      listComments(db, ctx, { entityId: id }),
     ]);
   const covenants = {
     value: "covenants",
@@ -151,6 +155,7 @@ async function SpreadView({ params, searchParams }: Props) {
         analyses={analyses}
         covenantsTab={covenants}
         documentsTab={documentsTab}
+        comments={notes}
         margins={margins}
         scoringModel={scoringModel}
         scoringModels={scoringModels.map((m) => ({
@@ -239,6 +244,8 @@ async function SpreadView({ params, searchParams }: Props) {
         }}
         analyses={analyses}
       />
+
+      <BorrowerComments entityId={entity.id} comments={notes} />
 
       <Tabs
         initial={typeof query.tab === "string" ? query.tab : undefined}
@@ -337,6 +344,7 @@ async function ConsolidatedView({
   analyses,
   covenantsTab,
   documentsTab,
+  comments,
   margins,
   scoringModel,
   scoringModels,
@@ -351,6 +359,7 @@ async function ConsolidatedView({
   covenantsTab: Tab;
   // Printed from its analyses.
   documentsTab: Tab;
+  comments: Comment[];
   margins: Margins;
   scoringModel: { id: string; name: string };
   scoringModels: { id: string; name: string; published: boolean }[];
@@ -468,6 +477,8 @@ async function ConsolidatedView({
         }}
         analyses={analyses}
       />
+
+      <BorrowerComments entityId={entity.id} comments={comments} />
 
       <Tabs
         initial={tab}
@@ -725,6 +736,24 @@ function MembersDebt({ members }: { members: Consolidation["members"] }) {
         );
       })}
     </div>
+  );
+}
+
+// The borrower's own comments, kept for good, whatever analysis is open.
+function BorrowerComments({
+  entityId,
+  comments,
+}: {
+  entityId: string;
+  comments: Comment[];
+}) {
+  return (
+    <Comments
+      owner={{ entityId }}
+      comments={comments}
+      description="Kept on the borrower for good, such as its guarantees or how it reports. Each analysis keeps its own too."
+      placeholder="Add a comment on the borrower"
+    />
   );
 }
 

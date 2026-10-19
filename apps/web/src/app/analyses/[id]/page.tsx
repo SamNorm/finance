@@ -7,6 +7,7 @@ import {
   getSpread,
   imbalance,
   isNumeric,
+  listComments,
   listItems,
   monthIndex,
   monthOf,
@@ -15,6 +16,7 @@ import {
   runAnalysisGroupBorrowingBase,
   spreadErrors,
   type AnalysisRun,
+  type Comment,
 } from "@finance/domain";
 import { listDocuments, listPrintableTemplates } from "@finance/documents";
 import { Dec } from "@finance/engine";
@@ -23,7 +25,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { Badge, Page, PageHeader } from "@/components/page";
+import { Comments } from "@/components/comments";
+import { Badge, Card, Page, PageHeader } from "@/components/page";
 import { Tabs } from "@/components/tabs";
 import { formatDate, formatDay, formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
@@ -76,16 +79,27 @@ async function AnalysisView({ params, searchParams }: Props) {
   });
   const scenario =
     detail.scenarios.find((s) => s.id === query.scenario) ?? null;
-  const [results, spread, scoringItems, debt, documents, printable, projected] =
-    await Promise.all([
-      runAnalysis(db, ctx, id, scenario?.id ?? null),
-      getSpread(db, ctx, detail.entity.id),
-      listItems(db, ctx, detail.version.scoringModelVersionId),
-      getDebtSchedules(db, ctx, detail.entity.id),
-      listDocuments(db, ctx, { analysisId: id }),
-      listPrintableTemplates(db, ctx, detail.model.id),
-      runAnalysisBorrowingBases(db, ctx, id, scenario?.id ?? null),
-    ]);
+  const [
+    results,
+    spread,
+    scoringItems,
+    debt,
+    documents,
+    printable,
+    projected,
+    comments,
+    borrowerComments,
+  ] = await Promise.all([
+    runAnalysis(db, ctx, id, scenario?.id ?? null),
+    getSpread(db, ctx, detail.entity.id),
+    listItems(db, ctx, detail.version.scoringModelVersionId),
+    getDebtSchedules(db, ctx, detail.entity.id),
+    listDocuments(db, ctx, { analysisId: id }),
+    listPrintableTemplates(db, ctx, detail.model.id),
+    runAnalysisBorrowingBases(db, ctx, id, scenario?.id ?? null),
+    listComments(db, ctx, { analysisId: id }),
+    listComments(db, ctx, { entityId: detail.entity.id }),
+  ]);
   // A consolidated client adds its members' margined lines up.
   const group = projected.some((l) => l.member)
     ? await runAnalysisGroupBorrowingBase(db, ctx, id, scenario?.id ?? null)
@@ -481,9 +495,68 @@ async function AnalysisView({ params, searchParams }: Props) {
               />
             ),
           },
+          {
+            value: "comments",
+            label: "Comments",
+            count: comments.length,
+            content: (
+              <div className="grid items-start gap-5 lg:grid-cols-2">
+                <Comments
+                  owner={{ analysisId: analysis.id }}
+                  comments={comments}
+                  description="On this analysis: what it found, what to follow up. They stay with it."
+                  placeholder="Add a comment on the analysis"
+                />
+                <BorrowerComments entity={entity} comments={borrowerComments} />
+              </div>
+            ),
+          },
         ]}
       />
     </div>
+  );
+}
+
+// The borrower's own comments, kept for good on its page, for reference.
+function BorrowerComments({
+  entity,
+  comments,
+}: {
+  entity: { id: string; name: string };
+  comments: Comment[];
+}) {
+  return (
+    <Card
+      flush
+      title={`On ${entity.name}`}
+      description={
+        <>
+          The borrower&apos;s comments, kept for good.{" "}
+          <Link
+            href={`/borrowers/${entity.id}`}
+            className="text-accent hover:underline"
+          >
+            Add or edit them on its page
+          </Link>
+          .
+        </>
+      }
+    >
+      {comments.length ? (
+        <ul className="divide-y divide-line/70">
+          {comments.map((c) => (
+            <li key={c.id} className="flex flex-col gap-1.5 px-4 py-3">
+              <span className="text-xs text-muted">
+                {formatDay(c.createdAt)}
+              </span>
+              <p className="text-sm whitespace-pre-wrap">{c.body}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-sm text-muted">None yet.</p>
+      )}
+    </Card>
   );
 }
 
