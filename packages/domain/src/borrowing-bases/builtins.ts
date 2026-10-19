@@ -64,8 +64,10 @@ export const DEFAULT_BB_CHARTS: ChartDefinition[] = [
   },
 ];
 
+// The definition's charts; the defaults when it names none, and none when
+// it says so with an empty list.
 export const chartsOf = (definition: BorrowingBaseDefinition) =>
-  definition.charts?.length ? definition.charts : DEFAULT_BB_CHARTS;
+  definition.charts ?? DEFAULT_BB_CHARTS;
 
 export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
   {

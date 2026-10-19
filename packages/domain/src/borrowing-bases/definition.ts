@@ -351,7 +351,8 @@ export function normalizeDefinition(
         ? { outstandingProjection: text(input.outstandingProjection) }
         : {}),
       ...(tests.length ? { tests } : {}),
-      ...(charts?.length ? { charts } : {}),
+      // An empty list is kept: no charts, rather than the defaults.
+      ...(charts ? { charts } : {}),
     },
     issues,
   };

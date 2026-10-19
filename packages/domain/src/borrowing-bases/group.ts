@@ -7,6 +7,13 @@ import { DomainError, type Issue } from "../errors";
 import { parseMonth } from "../credit-lines/terms";
 import { getEntity } from "../spreads/service";
 import { parseValue } from "../spreads/values";
+import {
+  GROUP_TOTALS,
+  OVERRIDE_TOTALS,
+  type GroupSummed,
+  type GroupTotal,
+  type GroupTotals,
+} from "./constants";
 import type { BorrowingBaseDefinition, CollateralType } from "./definition";
 import { marginedLines } from "./lines";
 import { runAnalysisBorrowingBases } from "./projection";
@@ -19,30 +26,6 @@ import { monthsOf } from "./service";
 // adjusted by named amounts as eliminations adjust a consolidated spread,
 // or replaced by the totals of a certificate the client sends for the
 // group.
-
-export type GroupTotal = schema.GroupTotal;
-// What's summed: the adjustable totals, plus each member's own borrowing
-// base and availability, which caps and floors make more than the sum of
-// their parts.
-export type GroupSummed = GroupTotal | "total" | "available";
-export type GroupTotals = Record<GroupSummed, string | null>;
-
-export const GROUP_TOTALS: { key: GroupTotal; label: string }[] = [
-  { key: "receivables", label: "Receivables, margined" },
-  { key: "inventory", label: "Inventory, margined" },
-  { key: "otherCollateral", label: "Other collateral, margined" },
-  { key: "priorClaims", label: "Prior claims" },
-  { key: "reserves", label: "Reserves" },
-  { key: "limit", label: "Authorized limits" },
-  { key: "outstanding", label: "Lines outstanding" },
-  { key: "otherUsage", label: "Other usage" },
-];
-
-// A group certificate can give these, the borrowing base included.
-export const OVERRIDE_TOTALS: { key: GroupSummed; label: string }[] = [
-  ...GROUP_TOTALS,
-  { key: "total", label: "Borrowing base" },
-];
 
 const SUMMED: GroupSummed[] = [
   ...GROUP_TOTALS.map((t) => t.key),

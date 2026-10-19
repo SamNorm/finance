@@ -512,12 +512,18 @@ export function checkDefinition(
         "test_metric",
         `${test.name}: "${test.metric}" isn't a figure of this borrowing base.`,
       );
-  for (const chart of definition.charts ?? [])
+  for (const chart of definition.charts ?? []) {
     for (const s of chart.series)
       if (!numeric.has(s.code.toUpperCase()))
         error(
           "chart_series",
           `${chart.title}: "${s.code}" isn't a figure of this borrowing base.`,
         );
+    if (chart.threshold && !numeric.has(chart.threshold.toUpperCase()))
+      error(
+        "chart_threshold",
+        `${chart.title}: its threshold "${chart.threshold}" isn't a figure of this borrowing base.`,
+      );
+  }
   return issues;
 }

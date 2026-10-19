@@ -13,7 +13,11 @@ import {
 } from "../scoring-models/service";
 import { fixture } from "../scoring-models/test-helpers";
 import { addPeriod, createEntity, setValue } from "../spreads/service";
-import { BUILT_IN_BORROWING_BASES } from "./builtins";
+import {
+  BUILT_IN_BORROWING_BASES,
+  chartsOf,
+  DEFAULT_BB_CHARTS,
+} from "./builtins";
 import { checkDefinition, compileBorrowingBase } from "./compile";
 import {
   normalizeDefinition,
@@ -238,6 +242,27 @@ describe("definitions", () => {
         { kind: "calculation", code: "X", label: "X", formula: "NOPE + 1" },
       ]),
     ).toEqual(["formula"]);
+  });
+
+  it("checks charts' figures and thresholds, and keeps an empty list", () => {
+    const read = (charts: unknown) =>
+      normalizeDefinition({ ...EXAMPLE, charts }, "CAD").definition;
+    const checked = (charts: unknown) =>
+      checkDefinition(read(charts), { currency: "CAD", limit: LIMIT }).map(
+        (i) => i.code,
+      );
+    expect(
+      checked([
+        {
+          title: "Usage",
+          series: [{ code: "BB_USAGE", mark: "bar" }],
+          threshold: "NOPE",
+        },
+      ]),
+    ).toEqual(["chart_threshold"]);
+    expect(read([]).charts).toEqual([]);
+    expect(chartsOf(read([]))).toEqual([]);
+    expect(chartsOf(read(undefined))).toEqual(DEFAULT_BB_CHARTS);
   });
 
   it("ships built-ins that check clean", () => {
