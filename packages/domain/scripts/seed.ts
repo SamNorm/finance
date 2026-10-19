@@ -11,12 +11,14 @@
 // - Analyses with stress and post-project scenarios; Laurentian Foods'
 //   annual review completed.
 // - Covenants in force on each borrower; the equipment deal proposes its own.
+// - Analysts' comments on each commercial borrower and its annual review.
 // Leaves existing data alone; --reset deletes the dev organization's data
 // first.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { eq, inArray, schema } from "@finance/db";
 import {
+  addComment,
   addConsolidatedPeriod,
   addCreditLine,
   addScenario,
@@ -120,6 +122,7 @@ async function borrower(
     naicsCode: string;
     riskRating: string;
     notes: string;
+    comments?: string[];
     periods: {
       end: string;
       months: number;
@@ -171,6 +174,9 @@ async function borrower(
   });
   for (const line of data.creditLines ?? [])
     await addCreditLine(db, ctx, entity.id, line);
+  // Oldest first, so the list shows them newest first.
+  for (const comment of data.comments ?? [])
+    await addComment(db, ctx, { entityId: entity.id }, comment);
   console.log(
     `Borrower ${data.name}: ${data.periods.length} periods, ${figures} figures${data.creditLines?.length ? `, ${data.creditLines.length} ${data.creditLines.length === 1 ? "line" : "lines"} of credit` : ""}.`,
   );
@@ -318,6 +324,8 @@ async function seed() {
       { usage, rates },
     );
     reviews.push(review.id);
+    for (const comment of company.reviewComments ?? [])
+      await addComment(db, ctx, { analysisId: review.id }, comment);
     // Laurentian Foods' review is done, so the overview shows one.
     if (i === 1)
       await updateAnalysis(db, ctx, review.id, { status: "completed" });

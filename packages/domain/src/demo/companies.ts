@@ -39,6 +39,10 @@ export interface DemoCompany {
   // The institution's rating, for reference; the app never computes it.
   riskRating: string;
   notes: string;
+  // The analyst's comments on the borrower, kept for good, and on its
+  // annual review.
+  comments?: string[];
+  reviewComments?: string[];
   periods: DemoPeriod[];
   // Its term debt as of its latest actual period.
   debtSchedule: DebtSchedule;
@@ -53,6 +57,8 @@ interface Profile {
   naicsCode: string;
   riskRating: string;
   notes: string;
+  comments: string[];
+  reviewComments: string[];
   // One per year from 2022: three actual years, then any the client
   // projects (quality "projected"). The yearly arrays below follow it.
   quality: StatementQuality[];
@@ -109,6 +115,13 @@ const PROFILES: Profile[] = [
     naicsCode: "332710",
     riskRating: "3",
     notes: "Owner-managed since 1998. Owns its plant.",
+    comments: [
+      "Both shareholders guarantee all borrowings, and their shareholder loans are postponed in favour of the bank.",
+      "Audited statements within 90 days of year end; borrowing base certificates by the 20th of each month.",
+    ],
+    reviewComments: [
+      "Coverage is comfortable in every year. The second machining line in 2026 is the item to follow: confirm the order book before the equipment loan is drawn.",
+    ],
     quality: ["audited", "audited", "audited"],
     revenue2021: 16_800_000,
     growth: [0.06, 0.07, 0.05],
@@ -167,6 +180,13 @@ const PROFILES: Profile[] = [
     riskRating: "5",
     notes:
       "Regional distributor to grocers and restaurants. Leases its warehouse.",
+    comments: [
+      "Leases its warehouse from Laurentian Properties, which the same shareholders own: see the group review.",
+      "The USD line pays for imports from US suppliers.",
+    ],
+    reviewComments: [
+      "Gross margin eroded for a third year as grocery chains renegotiated. Leverage is still within the covenant; renewal recommended at the current limits.",
+    ],
     quality: ["review", "review", "review"],
     revenue2021: 31_000_000,
     growth: [0.04, 0.02, -0.01],
@@ -222,6 +242,13 @@ const PROFILES: Profile[] = [
     naicsCode: "484121",
     riskRating: "6",
     notes: "Truckload carrier. Fleet financed with term loans.",
+    comments: [
+      "Quarterly interim statements, prepared by the controller.",
+      "Replaces its tractors every five years and sells the old ones on the used market.",
+    ],
+    reviewComments: [
+      "Coverage fell below the minimum in 2024 on lower freight rates; a waiver was granted. The nine months to September 2025 test above it again, as management's projections expect. Follow the year end closely.",
+    ],
     // With nine months of 2025 and management's turnaround projections for
     // 2025 and 2026.
     quality: ["compilation", "review", "review", "projected", "projected"],
@@ -572,6 +599,8 @@ export function demoCompanies(): DemoCompany[] {
       naicsCode: p.naicsCode,
       riskRating: p.riskRating,
       notes: p.notes,
+      comments: p.comments,
+      reviewComments: p.reviewComments,
       periods,
       creditLines: p.creditLines ?? [
         {

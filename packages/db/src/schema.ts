@@ -1250,3 +1250,29 @@ export const documents = pgTable(
     index("documents_template").on(t.templateId),
   ],
 ).enableRLS();
+
+// Analysts' comments: on a borrower, kept for good and shown on its page;
+// or on one of its analyses, with that analysis. They can be edited and
+// deleted, and go with what they're on.
+export const comments = pgTable(
+  "comments",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    organizationId: uuid()
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    // The analysis it's on; null for the borrower's own.
+    analysisId: uuid().references(() => analyses.id, { onDelete: "cascade" }),
+    body: text().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("comments_organization").on(t.organizationId),
+    index("comments_entity").on(t.entityId),
+    index("comments_analysis").on(t.analysisId),
+  ],
+).enableRLS();
