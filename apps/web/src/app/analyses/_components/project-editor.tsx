@@ -277,12 +277,16 @@ export function SourcesUses({
   adjustable,
   debtSchedules,
   scenarioId,
+  lineChanges,
 }: {
   project: Project;
   items: BalanceSheetItem[];
   adjustable: AdjustableItem[];
   debtSchedules: DebtSchedule[];
   scenarioId: string;
+  // The deal's changes to the lines of credit, a line each; null when it
+  // keeps the lines in force.
+  lineChanges: string[] | null;
 }) {
   const consolidated = existingLoans(debtSchedules).filter(({ loan }) =>
     project.consolidatedLoans?.includes(loan.id),
@@ -410,6 +414,23 @@ export function SourcesUses({
           be completed until they match.
         </p>
       )}
+      <div className="flex flex-col gap-1">
+        <p className="text-sm font-medium">Lines of credit</p>
+        {lineChanges?.length ? (
+          <ul className="flex flex-col gap-1 text-sm tabular-nums">
+            {lineChanges.map((change) => (
+              <li key={change}>{change}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted">
+            The deal keeps the lines in force.
+          </p>
+        )}
+        <p className="text-xs text-muted">
+          A deal&apos;s line changes are under Lines of credit, below.
+        </p>
+      </div>
       {project.subordinations.length > 0 && (
         <ul className="flex flex-col gap-1 text-sm">
           {project.subordinations.map((s) => (
@@ -859,6 +880,11 @@ export function ProjectEditor({
         {formatFigure(String(uses), "amount")}
         {Math.abs(sources - uses) >= 1 &&
           ` · out of balance by ${formatFigure(String(Math.abs(sources - uses)), "amount")}`}
+      </p>
+
+      <p className="text-sm text-muted">
+        A deal&apos;s line of credit changes, such as a higher limit or a new
+        line, are under Lines of credit, below.
       </p>
 
       <fieldset className="flex flex-col gap-2">

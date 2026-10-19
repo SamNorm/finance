@@ -3,6 +3,7 @@
 import {
   addConsolidatedPeriod,
   addConsolidationMember,
+  addCreditLine,
   addPeriod,
   createConsolidatedClient,
   createEntity,
@@ -12,6 +13,7 @@ import {
   pasteSpread,
   previewPaste,
   removeConsolidationMember,
+  removeCreditLine,
   setConsolidatedStatements,
   setCovenants,
   setDebtSchedule,
@@ -21,6 +23,7 @@ import {
   setPeriodControls,
   setValue,
   STATEMENT_QUALITIES,
+  updateCreditLine,
   updateEntity,
   updatePeriod,
   type CovenantInput,
@@ -35,7 +38,14 @@ import {
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
-import { adjustmentFields, attempt, invalid, run, text } from "@/lib/actions";
+import {
+  adjustmentFields,
+  attempt,
+  creditLineFields,
+  invalid,
+  run,
+  text,
+} from "@/lib/actions";
 
 function quality(value: unknown): StatementQuality {
   if (!STATEMENT_QUALITIES.includes(value as StatementQuality)) {
@@ -374,4 +384,29 @@ export async function saveLoanAdjustmentsAction(
       adjustmentFields(adjustments),
     ),
   );
+}
+
+// A borrower's lines of credit, a line at a time, as typed.
+export async function addCreditLineAction(
+  entityId: string,
+  line: unknown,
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    addCreditLine(db, ctx, String(entityId), creditLineFields(line)),
+  );
+}
+
+export async function updateCreditLineAction(
+  lineId: string,
+  line: unknown,
+): Promise<ActionResult> {
+  return run((db, ctx) =>
+    updateCreditLine(db, ctx, String(lineId), creditLineFields(line)),
+  );
+}
+
+export async function removeCreditLineAction(
+  lineId: string,
+): Promise<ActionResult> {
+  return run((db, ctx) => removeCreditLine(db, ctx, String(lineId)));
 }

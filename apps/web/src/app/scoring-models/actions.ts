@@ -142,12 +142,17 @@ export async function setFinancingItemsAction(
 // Which items the spread's checks against the statements read.
 export async function setCheckItemsAction(
   modelId: string,
-  items: { netIncome: string; retainedEarnings: string },
+  items: {
+    netIncome: string;
+    retainedEarnings: string;
+    lineAuthorized: string;
+  },
 ): Promise<ActionResult> {
   return run((db, ctx) =>
     setCheckItems(db, ctx, modelId, {
       netIncome: String(items.netIncome ?? ""),
       retainedEarnings: String(items.retainedEarnings ?? ""),
+      lineAuthorized: String(items.lineAuthorized ?? ""),
     }),
   );
 }

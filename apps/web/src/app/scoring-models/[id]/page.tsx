@@ -230,6 +230,17 @@ async function ScoringModelView({ params: routeParams, searchParams }: Props) {
                       ]
                     : [],
                 )}
+                inputs={publishedItems.flatMap((item) =>
+                  item.kind === "input" && item.dataType === "amount"
+                    ? [
+                        {
+                          code: item.code,
+                          label: item.label,
+                          statement: item.statement,
+                        },
+                      ]
+                    : [],
+                )}
               />
             ),
           },
@@ -298,6 +309,7 @@ function Settings({
   published,
   items,
   amounts,
+  inputs,
 }: {
   model: ScoringModelWithVersions;
   published: ScoringModelVersion | undefined;
@@ -307,6 +319,8 @@ function Settings({
     label: string;
     statement: "income_statement" | "balance_sheet";
   }[];
+  // Amounts entered in the spread, on any statement.
+  inputs: { code: string; label: string; statement: Statement }[];
 }) {
   return (
     <div className="flex max-w-4xl flex-col gap-5">
@@ -356,6 +370,7 @@ function Settings({
           modelId={model.id}
           values={model.checkItems}
           items={amounts}
+          inputs={inputs}
         />
       )}
     </div>

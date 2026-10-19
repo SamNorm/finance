@@ -20,7 +20,15 @@ import {
 } from "@finance/domain";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/action-result";
-import { adjustmentFields, attempt, invalid, run, text } from "@/lib/actions";
+import {
+  adjustmentFields,
+  attempt,
+  invalid,
+  lineUsageFields,
+  proposedLineFields,
+  run,
+  text,
+} from "@/lib/actions";
 import { ANALYSIS_STATUSES, isOneOf, PROJECTION_MODES } from "@/lib/labels";
 
 // A new scenario opens on its assumptions and project, to fill them in.
@@ -72,6 +80,8 @@ export async function updateAnalysisAction(
     projectionYears?: number;
     postProjectKeys?: string[];
     status?: string;
+    // The usage assumed for each line of credit, by line id.
+    lineUsage?: unknown;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
@@ -96,6 +106,10 @@ export async function updateAnalysisAction(
       postProjectKeys: patch.postProjectKeys?.map(String),
       status:
         patch.status === undefined ? undefined : status(String(patch.status)),
+      lineUsage:
+        patch.lineUsage === undefined
+          ? undefined
+          : lineUsageFields(patch.lineUsage),
     });
   });
 }
@@ -164,10 +178,16 @@ export async function updateScenarioAction(
     project?: ProjectInput | null;
     capex?: unknown[];
     covenants?: CovenantInput[] | null;
+    // The lines of credit proposed for its deal; null keeps those in force.
+    lines?: unknown[] | null;
+    lineUsage?: unknown;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
-    const { overrides, periodOverrides, project, capex, covenants } = patch;
+    const { overrides, periodOverrides, project, capex, covenants, lines } =
+      patch;
+    if (lines !== undefined && lines !== null && !Array.isArray(lines))
+      throw invalid("Proposed lines of credit must be a list.");
     if (capex !== undefined && !Array.isArray(capex))
       throw invalid("The capex plan must be a list of purchases.");
     if (
@@ -210,6 +230,11 @@ export async function updateScenarioAction(
       project,
       capex,
       covenants,
+      lines: lines && lines.map(proposedLineFields),
+      lineUsage:
+        patch.lineUsage === undefined
+          ? undefined
+          : lineUsageFields(patch.lineUsage),
     });
   });
 }

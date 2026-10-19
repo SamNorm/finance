@@ -5,8 +5,10 @@ import type {
   CapexYear,
   Covenant,
   DebtSchedule,
+  LineUsage,
   ModelLine,
   Project,
+  ProposedLine,
 } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import { Copy, Landmark, Pencil, Plus, Trash2 } from "lucide-react";
@@ -25,6 +27,12 @@ import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
+import {
+  lineDraft,
+  lineInput,
+  usageDrafts,
+  usageInput,
+} from "@/lib/credit-lines";
 import { formatDate, formatFigure } from "@/lib/format";
 import {
   addScenarioAction,
@@ -42,6 +50,14 @@ import {
   type ProjectDraft,
 } from "./project-editor";
 import { CapexPlan, capexDraft, capexInput } from "./capex-plan";
+import {
+  BaseCaseLines,
+  lineChanges,
+  ScenarioLines,
+  scenarioLineIds,
+  scenarioLinesDraft,
+  type LinesSetup,
+} from "./credit-lines";
 
 export interface ScenarioOption {
   id: string;
@@ -53,6 +69,10 @@ export interface ScenarioOption {
   capex: CapexItem[];
   // Proposed for its deal; null tests the borrower's in force.
   covenants: Covenant[] | null;
+  // The lines of credit proposed for its deal; null keeps those in force.
+  lines: ProposedLine[] | null;
+  // Usage assumed for lines, over the analysis's.
+  lineUsage: LineUsage;
   // How the project is out of balance, e.g. "Sources exceed uses by 500".
   imbalance?: string | null;
 }
@@ -241,38 +261,44 @@ const baseValue = (a: ModelLine) =>
     a.format,
   ) || "blank";
 
-// The base case's assumptions, which scenarios change.
+// The base case's assumptions, which scenarios change, and the usage of
+// its lines of credit.
 export function BaseCase({
   analysisId,
   assumptions,
+  creditLines,
 }: {
   analysisId: string;
   assumptions: ModelLine[];
+  creditLines: LinesSetup;
 }) {
   return (
-    <Card
-      title="Base case"
-      description="The borrower as is: the model's assumptions and no project. A scenario overrides the assumptions that change and can finance a project."
-      actions={<NewScenario analysisId={analysisId} primary />}
-    >
-      {assumptions.length ? (
-        <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-          {assumptions.map((a) => (
-            <div
-              key={a.code}
-              className="flex items-baseline justify-between gap-3 border-b border-line/70 pb-2"
-            >
-              <dt className="text-sm text-muted">{a.label}</dt>
-              <dd className="text-sm font-medium tabular-nums">
-                {baseValue(a)}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="text-sm text-muted">The model has no assumptions.</p>
-      )}
-    </Card>
+    <div className="flex flex-col gap-5">
+      <Card
+        title="Base case"
+        description="The borrower as is: the model's assumptions and no project. A scenario overrides the assumptions that change and can finance a project."
+        actions={<NewScenario analysisId={analysisId} primary />}
+      >
+        {assumptions.length ? (
+          <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+            {assumptions.map((a) => (
+              <div
+                key={a.code}
+                className="flex items-baseline justify-between gap-3 border-b border-line/70 pb-2"
+              >
+                <dt className="text-sm text-muted">{a.label}</dt>
+                <dd className="text-sm font-medium tabular-nums">
+                  {baseValue(a)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-sm text-muted">The model has no assumptions.</p>
+        )}
+      </Card>
+      <BaseCaseLines analysisId={analysisId} setup={creditLines} />
+    </div>
   );
 }
 
@@ -285,14 +311,15 @@ const filled = (byYear: Record<string, Record<string, string>>) =>
     }),
   );
 
-// A scenario's assumption overrides, project and capex plan, saved
-// together.
+// A scenario's assumption overrides, project, lines of credit and capex
+// plan, saved together.
 export function ScenarioEditor({
   analysisId,
   scenario,
   assumptions,
   years,
   setup,
+  creditLines,
   capexYears,
 }: {
   analysisId: string;
@@ -301,6 +328,7 @@ export function ScenarioEditor({
   // The periods assumptions can take a value of their own in.
   years: AssumptionYear[];
   setup: ProjectSetup;
+  creditLines: LinesSetup;
   // The saved capex plan year by year.
   capexYears: CapexYear[];
 }) {
@@ -335,6 +363,10 @@ export function ScenarioEditor({
   const savedCovenants = () =>
     scenario.covenants && covenantDrafts(scenario.covenants, setup.metrics);
   const [covenants, setCovenants] = useState(savedCovenants);
+  // The deal's proposed lines of credit and the usage assumed.
+  const savedLines = () =>
+    scenarioLinesDraft(scenario.lines, scenario.lineUsage);
+  const [lines, setLines] = useState(savedLines);
   // The saved project shows as a sources and uses table until edited.
   const [editing, setEditing] = useState(!scenario.project);
   // Once saved, show the overrides as the server keeps them. Adjustments
@@ -346,6 +378,8 @@ export function ScenarioEditor({
     scenario.project,
     scenario.capex,
     scenario.covenants,
+    scenario.lines,
+    scenario.lineUsage,
   ]);
   const [synced, setSynced] = useState(saved);
   if (synced !== saved) {
@@ -355,6 +389,7 @@ export function ScenarioEditor({
     if (!editing) setProject(toDraft(scenario.project));
     setCapex(capexDraft(scenario.capex));
     setCovenants(savedCovenants());
+    setLines(savedLines());
   }
   const capexDirty =
     JSON.stringify(capexInput(capex)) !==
@@ -366,8 +401,27 @@ export function ScenarioEditor({
       scenario.covenants &&
         covenantInput(covenantDrafts(scenario.covenants, setup.metrics)),
     );
+  // Usage is kept for the lines in force and those proposed, as the server
+  // would keep it.
+  const linesInput = {
+    lines: lines.proposed && lines.proposed.map(lineInput),
+    lineUsage: usageInput(
+      lines.usage,
+      scenarioLineIds(creditLines, lines.proposed),
+    ),
+  };
+  const linesDirty =
+    JSON.stringify(linesInput) !==
+    JSON.stringify({
+      lines: scenario.lines && scenario.lines.map(lineDraft).map(lineInput),
+      lineUsage: usageInput(
+        usageDrafts(scenario.lineUsage),
+        scenarioLineIds(creditLines, scenario.lines),
+      ),
+    });
   const dirty =
     covenantsDirty ||
+    linesDirty ||
     JSON.stringify(values) !== JSON.stringify(typed()) ||
     JSON.stringify(filled(byYear)) !== JSON.stringify(filled(typedByYear())) ||
     capexDirty ||
@@ -394,6 +448,7 @@ export function ScenarioEditor({
         project: toInput(project),
         capex: capexInput(capex),
         covenants: covenantsInput,
+        ...linesInput,
       });
       // Inside the transition, so the message lands with the refreshed results.
       startTransition(() => {
@@ -551,7 +606,7 @@ export function ScenarioEditor({
 
       <Card
         title="Project"
-        description="Sources and uses at closing, plus line of credit increases, subordinations, existing loans consolidated and adjustments. Results show it in post-project columns."
+        description="Sources and uses at closing, plus subordinations, existing loans consolidated and adjustments. Results show it in post-project columns."
         actions={
           scenario.project &&
           !editing && (
@@ -573,6 +628,9 @@ export function ScenarioEditor({
             adjustable={setup.adjustable}
             debtSchedules={setup.debtSchedules}
             scenarioId={scenario.id}
+            lineChanges={
+              scenario.lines && lineChanges(scenario.lines, creditLines.inForce)
+            }
           />
         ) : (
           <ProjectEditor
@@ -588,6 +646,16 @@ export function ScenarioEditor({
           />
         )}
       </Card>
+
+      <ScenarioLines
+        setup={creditLines}
+        draft={lines}
+        closing={
+          toInput(project) ? project.closing || setup.defaultClosing : null
+        }
+        scenarioName={scenario.name}
+        onChange={setLines}
+      />
 
       <CapexPlan
         draft={capex}

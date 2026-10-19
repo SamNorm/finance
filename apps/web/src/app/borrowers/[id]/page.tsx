@@ -6,11 +6,13 @@ import {
   getSpread,
   listAnalyses,
   listCovenantMetrics,
+  listCreditLines,
   listEntities,
   listScoringModels,
   nextYearDebtService,
   type AnalysisSummary,
   type Consolidation,
+  type CreditLine,
   type Issue,
   type Spread,
   type Statement,
@@ -52,6 +54,7 @@ import {
   Worksheet,
 } from "../_components/consolidation";
 import { BorrowerCovenants } from "../_components/covenants";
+import { CreditLines, type LineRow } from "../_components/credit-lines";
 import { DebtScheduleEditor } from "../_components/debt-schedule";
 import { Notice } from "../_components/notice";
 import { SpreadGrid, type GridPeriod } from "../_components/spread-grid";
@@ -81,12 +84,15 @@ async function SpreadView({ params, searchParams }: Props) {
     if (error instanceof DomainError && error.kind === "not_found") notFound();
     throw error;
   });
-  const [analyses, scoringModels, metrics, documents] = await Promise.all([
-    listAnalyses(db, ctx, { entityId: id }),
-    listScoringModels(db, ctx),
-    listCovenantMetrics(db, ctx, id),
-    listDocuments(db, ctx, { entityId: id }),
-  ]);
+  // A consolidated client has no lines of its own: it lists its members'.
+  const [analyses, scoringModels, metrics, documents, lines] =
+    await Promise.all([
+      listAnalyses(db, ctx, { entityId: id }),
+      listScoringModels(db, ctx),
+      listCovenantMetrics(db, ctx, id),
+      listDocuments(db, ctx, { entityId: id }),
+      listCreditLines(db, ctx, id),
+    ]);
   const covenants = {
     value: "covenants",
     label: "Covenants",
@@ -275,15 +281,18 @@ async function SpreadView({ params, searchParams }: Props) {
           {
             value: "existing-debt",
             label: "Existing debt",
-            count: entity.debtSchedule.loans.length,
+            count: entity.debtSchedule.loans.length + lines.length,
             content: (
-              <DebtScheduleEditor
-                entityId={entity.id}
-                schedule={entity.debtSchedule}
-                nextYear={Object.fromEntries(
-                  nextYear.map(({ id, ...year }) => [id, year]),
-                )}
-              />
+              <div className="flex flex-col gap-5">
+                <DebtScheduleEditor
+                  entityId={entity.id}
+                  schedule={entity.debtSchedule}
+                  nextYear={Object.fromEntries(
+                    nextYear.map(({ id, ...year }) => [id, year]),
+                  )}
+                />
+                <CreditLines entityId={entity.id} lines={lines.map(lineRow)} />
+              </div>
             ),
           },
           covenants,
@@ -337,7 +346,18 @@ async function ConsolidatedView({
   const ctx = await getContext();
   const { entity, layout } = spread;
   const { members } = consolidation;
-  const borrowers = await listEntities(db, ctx);
+  const [borrowers, memberLines] = await Promise.all([
+    listEntities(db, ctx),
+    Promise.all(
+      members.map(async (member) =>
+        (await listCreditLines(db, ctx, member.id)).map((line) => ({
+          ...lineRow(line),
+          member: { id: member.id, name: member.name },
+        })),
+      ),
+    ),
+  ]);
+  const lines = memberLines.flat();
   const candidates = borrowers.filter(
     (b) =>
       b.kind === "borrower" &&
@@ -514,8 +534,20 @@ async function ConsolidatedView({
           {
             value: "existing-debt",
             label: "Existing debt",
-            count: schedules.reduce((n, s) => n + s.loans.length, 0),
-            content: <MembersDebt members={members} />,
+            count:
+              schedules.reduce((n, s) => n + s.loans.length, 0) + lines.length,
+            content: (
+              <div className="flex flex-col gap-5">
+                <MembersDebt members={members} />
+                {members.length > 0 && (
+                  <CreditLines
+                    entityId={entity.id}
+                    lines={lines}
+                    consolidated
+                  />
+                )}
+              </div>
+            ),
           },
           covenantsTab,
           {
@@ -536,6 +568,16 @@ async function ConsolidatedView({
     </div>
   );
 }
+
+// A line of credit as the Existing debt tab lists it.
+const lineRow = (line: CreditLine): LineRow => ({
+  id: line.id,
+  name: line.name,
+  currency: line.currency,
+  limit: line.limit,
+  rate: line.rate,
+  closedOn: line.closedOn,
+});
 
 // Each member's existing loans, as of its own date, entered on its page.
 function MembersDebt({ members }: { members: Consolidation["members"] }) {

@@ -8,6 +8,8 @@ import {
   imbalance,
   isNumeric,
   listItems,
+  monthIndex,
+  monthOf,
   runAnalysis,
   spreadErrors,
   type AnalysisRun,
@@ -31,6 +33,7 @@ import { AnalysisSettings } from "../_components/analysis-settings";
 import { CovenantResults } from "../_components/covenant-results";
 import { CovenantSummary } from "../_components/covenant-summary";
 import { Repin } from "../_components/repin";
+import type { LinesSetup } from "../_components/credit-lines";
 import { ResultsTable } from "../_components/results-table";
 import {
   BaseCase,
@@ -95,8 +98,38 @@ async function AnalysisView({ params, searchParams }: Props) {
     project: s.project,
     capex: s.capex,
     covenants: s.covenants,
+    lines: s.lines,
+    lineUsage: s.lineUsage,
     imbalance: s.project && imbalance(s.project),
   }));
+  // The lines of credit, and the months their usage counts in: each
+  // projected period's. A scenario's project adds the twelve after its
+  // closing, as the editor has it.
+  const creditLines: LinesSetup = {
+    inForce: results.creditLines.inForce.map((l) => ({
+      id: l.id,
+      name: l.name,
+      currency: l.currency,
+      limit: l.limit,
+      rate: l.rate,
+      closedOn: l.closedOn ?? null,
+    })),
+    analysisUsage: analysis.lineUsage,
+    projectedMonths: [
+      ...new Set(
+        run.periods.flatMap((p) =>
+          p.projection
+            ? Array.from({ length: p.months }, (_, i) =>
+                monthOf(monthIndex(p.end) - p.months + 1 + i),
+              )
+            : [],
+        ),
+      ),
+    ],
+    lastActual: lastActual ? lastActual.end.slice(0, 7) : null,
+    withoutUsage: results.creditLines.withoutUsage,
+    borrowerHref: `/borrowers/${entity.id}?tab=existing-debt`,
+  };
   // Where the open scenario's assumptions can take a value by year:
   // projected periods, and post-project from the last fiscal year on.
   const lastYear = run.periods.findLastIndex(
@@ -225,6 +258,7 @@ async function AnalysisView({ params, searchParams }: Props) {
               offBalance || broken.length
                 ? "error"
                 : run.breakdowns.some((b) => !b.reconciles) ||
+                    results.creditLines.withoutUsage.length > 0 ||
                     [
                       ...results.covenants.run,
                       ...(results.covenants.project ?? []),
@@ -241,6 +275,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                   )}
                   {offBalance && <ProjectImbalance message={offBalance} />}
                   <Breakdowns run={run} />
+                  <LinesWithoutUsage lines={results.creditLines.withoutUsage} />
                   <CovenantResults
                     covenants={results.covenants}
                     run={run}
@@ -293,7 +328,11 @@ async function AnalysisView({ params, searchParams }: Props) {
           {
             value: "scenario",
             label: "Assumptions & project",
-            alert: offBalance ? "error" : undefined,
+            alert: offBalance
+              ? "error"
+              : results.creditLines.withoutUsage.length
+                ? "warning"
+                : undefined,
             content: scenario ? (
               <ScenarioEditor
                 key={scenario.id}
@@ -301,6 +340,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                 scenario={scenarios.find((s) => s.id === scenario.id)!}
                 assumptions={assumptions}
                 years={assumptionYears}
+                creditLines={creditLines}
                 capexYears={results.capex}
                 setup={{
                   items: scoringItems
@@ -338,7 +378,11 @@ async function AnalysisView({ params, searchParams }: Props) {
                 }}
               />
             ) : (
-              <BaseCase analysisId={analysis.id} assumptions={assumptions} />
+              <BaseCase
+                analysisId={analysis.id}
+                assumptions={assumptions}
+                creditLines={creditLines}
+              />
             ),
           },
           {
@@ -452,6 +496,38 @@ function Breakdowns({ run }: { run: AnalysisRun }) {
             );
           })}
         </ul>
+      </div>
+    </div>
+  );
+}
+
+// Lines of credit the run counts with no usage assumed: their interest
+// counts as zero, which understates debt service.
+function LinesWithoutUsage({
+  lines,
+}: {
+  lines: { id: string; name: string }[];
+}) {
+  if (!lines.length) return null;
+  return (
+    <div className="flex gap-3 rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm">
+      <TriangleAlert
+        className="mt-0.5 size-4 shrink-0 text-warning"
+        aria-hidden
+      />
+      <div className="flex flex-col gap-1">
+        <p className="font-medium text-warning">
+          Lines of credit with no usage assumed
+        </p>
+        <ul className="flex flex-col gap-0.5 text-muted">
+          {lines.map((line) => (
+            <li key={line.id}>{line.name}: its interest counts as zero.</li>
+          ))}
+        </ul>
+        <p className="text-muted">
+          Assume an average usage under Assumptions &amp; project, Lines of
+          credit.
+        </p>
       </div>
     </div>
   );
