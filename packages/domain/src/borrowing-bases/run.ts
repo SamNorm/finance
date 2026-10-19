@@ -256,6 +256,12 @@ export function runBorrowingBase(input: {
   const sourceOf = (code: string, p: number): LineageRef["source"] => {
     if (termCodes.has(code)) return "term";
     if (assumptions[code] !== undefined) return "assumption";
+    // An aged line is its buckets entered, added up.
+    const parts = compiled.derived[code];
+    if (parts) {
+      if (parts.some((b) => figuresOf(p)?.[b] !== undefined)) return "entered";
+      return months[p]!.projected ? "calculation" : "blank";
+    }
     if (entered.has(code)) {
       if (figuresOf(p)?.[code] !== undefined) return "entered";
       return months[p]!.projected ? "calculation" : "blank";

@@ -2628,6 +2628,8 @@ describe("MCP server", () => {
             code: "SALES_PROFILE",
             label: "Sales profile",
             value: "100%",
+            // Set by calendar month: a seasonal profile, which can be filled.
+            byMonth: Array.from({ length: 12 }, () => "100%"),
           },
         ],
       },
@@ -2680,7 +2682,25 @@ describe("MCP server", () => {
           {
             code: "SALES_PROFILE",
             label: "Sales profile",
-            definition: { value: "100.0%" },
+            definition: {
+              value: "100.0%",
+              byMonth: Object.fromEntries(
+                [
+                  "January",
+                  "February",
+                  "March",
+                  "April",
+                  "May",
+                  "June",
+                  "July",
+                  "August",
+                  "September",
+                  "October",
+                  "November",
+                  "December",
+                ].map((m) => [m, "100.0%"]),
+              ),
+            },
           },
         ],
       },

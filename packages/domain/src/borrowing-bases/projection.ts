@@ -586,6 +586,8 @@ export async function importProjectedBorrowingBasePaste(
   key: string,
   text: string,
   months: Record<number, string> = {},
+  // Columns to leave out, by index.
+  skip: readonly number[] = [],
 ): Promise<{ figures: number; months: string[] }> {
   const paste = await previewProjectedBorrowingBasePaste(
     db,
@@ -597,13 +599,16 @@ export async function importProjectedBorrowingBasePaste(
   const errors = paste.issues.filter((i) => i.severity === "error");
   if (errors.length)
     throw new DomainError("invalid", errors[0]!.message, errors);
+  const kept = new Set(
+    paste.columns.flatMap((c, i) => (skip.includes(c.index) ? [] : [i])),
+  );
   const columns = paste.columns.map((c) => ({
     ...c,
     month: months[c.index]
       ? parseMonth(months[c.index], c.header || "Column")
       : c.month,
   }));
-  const unread = columns.find((c) => !c.month);
+  const unread = columns.find((c, i) => kept.has(i) && !c.month);
   if (unread)
     throw new DomainError(
       "invalid",
@@ -611,7 +616,7 @@ export async function importProjectedBorrowingBasePaste(
     );
   const entries = paste.matched.flatMap((row) =>
     row.cells.flatMap((cell, i) =>
-      cell.trim()
+      kept.has(i) && cell.trim()
         ? [{ month: columns[i]!.month!, code: row.code!, value: cell }]
         : [],
     ),
@@ -624,7 +629,9 @@ export async function importProjectedBorrowingBasePaste(
       key,
       entries,
     ),
-    months: [...new Set(columns.map((c) => c.month!))].sort(),
+    months: [
+      ...new Set(columns.filter((_, i) => kept.has(i)).map((c) => c.month!)),
+    ].sort(),
   };
 }
 
@@ -732,6 +739,16 @@ export async function fillSeasonalAssumption(
     throw new DomainError(
       "not_found",
       "That line isn't margined in this analysis.",
+    );
+  const target = line.assumptions.find(
+    (a) => a.code === assumption.toUpperCase(),
+  );
+  // A profile fits an assumption set by calendar month, not a single rate
+  // such as growth.
+  if (!target?.byMonth)
+    throw new DomainError(
+      "invalid",
+      `${target?.label ?? assumption} isn't set by calendar month, so it isn't a seasonal profile to fill.`,
     );
   const code = from.toUpperCase();
   if (!line.run.cells[code])

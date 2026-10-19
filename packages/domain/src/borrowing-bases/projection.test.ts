@@ -93,6 +93,14 @@ describe("borrowing bases projected in analyses", () => {
           format: "percent",
           value: "0%",
         },
+        {
+          kind: "assumption",
+          code: "SEASON",
+          label: "Season",
+          format: "percent",
+          value: "100%",
+          byMonth: Array.from({ length: 12 }, () => "100%"),
+        },
       ],
     });
     await setBorrowingBaseValues(
@@ -181,18 +189,22 @@ describe("borrowing bases projected in analyses", () => {
     // Receivables grew 103,000 over the year: so did the balance.
     expect(at(projected!.run, "BB_OUTSTANDING", "2025-03")).toBe("563000");
     // A season filled from history: each month's receivables over the
-    // year's average, 1,065,000.
+    // year's average, 1,065,000. Growth, a single rate, isn't a season.
     const filled = await fillSeasonalAssumption(
       db,
       ctx,
       analysis.id,
       line.id,
-      "growth",
+      "season",
       "AR",
     );
-    expect(filled.assumptions!.GROWTH!.byMonth).toHaveLength(12);
-    expect(filled.assumptions!.GROWTH!.byMonth![0]).toBe("0.9484");
-    expect(filled.assumptions!.GROWTH!.byMonth![11]).toBe("1.0516");
+    expect(filled.assumptions!.SEASON!.byMonth).toHaveLength(12);
+    expect(filled.assumptions!.SEASON!.byMonth![0]).toBe("0.9484");
+    expect(filled.assumptions!.SEASON!.byMonth![11]).toBe("1.0516");
+    await rejects(
+      fillSeasonalAssumption(db, ctx, analysis.id, line.id, "growth", "AR"),
+      "invalid",
+    );
     await setAnalysisBorrowingBase(db, ctx, analysis.id, line.id, {
       assumptions: { GROWTH: "10%" },
     });
