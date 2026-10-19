@@ -154,6 +154,7 @@ Documents                              certificate (from a line), margin reports
   - **Post-project columns**, next to the last fiscal year or a year to date: the twelve months after closing, scaled to the column's months, as the project's loans and the debt schedule do (`windowOf` in `financing.ts`).
   - A month's override counts only inside those windows. It never changes actual periods as they stand, as values by year don't (`periodOverrides`, commit `cdf921c`).
 - **A line with no usage assumed** is flagged, and its interest counts as zero until it has one.
+- **A line in another currency** (a USD line beside a CAD one) is converted into the analysis's currency, its statements', at a rate per currency kept on the analysis (`exchangeRates`), which a scenario can override. Its interest, limit and average usage convert; its usage and borrowing base stay in its own currency. With no rate, it counts nothing and is flagged. There's no app-wide conversion: most deals are in one currency. The spread's check against its authorized line adds only lines in the statements' currency, since it has no rate for the year end.
 - **Line interest doesn't read the borrowing base.** The projected borrowing base has its own projected balance (§8). The analysis shows the two side by side and flags a gap, but each keeps its own figure.
 
 ### 4.4 Proposed lines in scenarios
