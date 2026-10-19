@@ -3,6 +3,7 @@
 import type { BorrowingBasePaste } from "@finance/domain";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { startTransition, useState, useTransition } from "react";
+import { toast } from "sonner";
 import { IssueList } from "@/components/issue-list";
 import { plural } from "@/components/page";
 import { button, input } from "@/components/styles";
@@ -69,6 +70,7 @@ export function PasteCertificates({
         skipped,
       );
       if (!result.ok) return setFailure(result);
+      toast.success(`${plural(kept.length, "month")} imported.`);
       startTransition(() => {
         setSource("");
         setPreview(null);

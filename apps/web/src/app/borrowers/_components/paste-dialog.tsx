@@ -3,6 +3,8 @@
 import type { PastePreview, StatementQuality } from "@finance/domain";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { startTransition, useState, useTransition } from "react";
+import { toast } from "sonner";
+import { plural } from "@/components/page";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
 import { Modal } from "@/components/ui";
@@ -71,6 +73,7 @@ export function PasteDialog({
     startImport(async () => {
       const result = await pasteSpreadAction(entityId, source, targets);
       if (!result.ok) return setFailure(result);
+      toast.success(`${plural(targets.length, "period")} pasted.`);
       startTransition(() => {
         setSource("");
         setPreview(null);

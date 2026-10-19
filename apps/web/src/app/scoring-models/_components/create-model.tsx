@@ -192,7 +192,10 @@ export function ModelActions({
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) => {
       const result = await updateModelAction(model.id, form);
-      if (result.ok) setEditing(false);
+      if (result.ok) {
+        toast.success("Details saved.");
+        setEditing(false);
+      }
       return result;
     },
     null,

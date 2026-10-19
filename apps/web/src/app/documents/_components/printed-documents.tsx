@@ -153,7 +153,8 @@ export function PrintedDocuments({
                       )
                         startDelete(async () => {
                           const result = await deleteDocumentAction(d.id);
-                          if (!result.ok) toast.error(result.message);
+                          if (result.ok) toast.success(`"${d.title}" deleted.`);
+                          else toast.error(result.message);
                         });
                     }}
                   >

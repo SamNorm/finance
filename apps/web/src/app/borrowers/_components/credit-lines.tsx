@@ -81,7 +81,8 @@ export function CreditLines({
       return;
     startRemove(async () => {
       const result = await removeCreditLineAction(line.id);
-      if (!result.ok) toast.error(result.message);
+      if (result.ok) toast.success(`${line.name} deleted.`);
+      else toast.error(result.message);
     });
   }
 
@@ -341,8 +342,9 @@ function LineForm({
       const result = line
         ? await updateCreditLineAction(line.id, fields)
         : await addCreditLineAction(entityId, fields);
-      if (result.ok) onDone();
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(`${name} ${line ? "saved" : "added"}.`);
+      onDone();
     });
   }
 

@@ -63,7 +63,10 @@ export function TemplateActions({
   const [detailsState, detailsAction, savingDetails] = useActionState(
     async (_: ActionResult | null, form: FormData) => {
       const result = await updateTemplateDetailsAction(template.id, form);
-      if (result.ok) startTransition(close);
+      if (result.ok) {
+        toast.success("Details saved.");
+        startTransition(close);
+      }
       return result;
     },
     null,

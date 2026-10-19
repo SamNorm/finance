@@ -43,7 +43,10 @@ export function BorrowerActions({
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) => {
       const result = await updateEntityAction(entity.id, form);
-      if (result.ok) startTransition(() => setEditing(false));
+      if (result.ok) {
+        toast.success("Details saved.");
+        startTransition(() => setEditing(false));
+      }
       return result;
     },
     null,

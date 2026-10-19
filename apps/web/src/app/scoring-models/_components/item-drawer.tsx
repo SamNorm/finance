@@ -7,6 +7,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
 import {
   AGGREGATIONS,
   DATA_TYPES,
@@ -129,6 +130,7 @@ function ItemForm({
                 defaults: { statement, parentCode: parentCode || null },
               }
             : null;
+        toast.success(editing.mode === "new" ? "Item added." : "Item saved.");
         startTransition(() => onChange(next));
       }
       return result;
@@ -162,8 +164,9 @@ function ItemForm({
     setDeleteFailure(null);
     startDelete(async () => {
       const result = await removeItemAction(versionId, item.code);
-      if (result.ok) startTransition(() => onChange(null));
-      else setDeleteFailure(result.message);
+      if (!result.ok) return setDeleteFailure(result.message);
+      toast.success(`"${item.label}" removed.`);
+      startTransition(() => onChange(null));
     });
   }
 

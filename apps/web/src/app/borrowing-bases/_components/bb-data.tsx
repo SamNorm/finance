@@ -12,6 +12,7 @@ import {
   useTransition,
   type FormEvent,
 } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { button, card, input } from "@/components/styles";
@@ -452,8 +453,9 @@ function MonthForm({
         receivedOn,
         note,
       });
-      if (result.ok) startTransition(onDone);
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(`${describeMonth(value)} ${month ? "saved" : "added"}.`);
+      startTransition(onDone);
     });
   }
 
@@ -471,8 +473,9 @@ function MonthForm({
     setFailure(null);
     startRemove(async () => {
       const result = await removeBorrowingBaseMonthAction(lineId, month.month);
-      if (result.ok) startTransition(onDone);
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(`${describeMonth(month.month)} removed.`);
+      startTransition(onDone);
     });
   }
 

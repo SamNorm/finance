@@ -3,6 +3,7 @@
 import { Gauge } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { button } from "@/components/styles";
 import { Modal } from "@/components/ui";
@@ -120,6 +121,11 @@ export function MarginDialog({
     startStart(async () => {
       const result = await startBorrowingBaseAction(lineId, fromChoice(choice));
       if (!result.ok) return setFailure(result.message);
+      toast.success(
+        replacing
+          ? `${lineName} starts over from ${nameOf(choice)}.`
+          : `${lineName} is margined.`,
+      );
       // Closed before leaving: a page kept hidden for the back button would
       // otherwise keep its modal open over the next one.
       onClose();

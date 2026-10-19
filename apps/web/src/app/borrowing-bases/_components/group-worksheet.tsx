@@ -10,6 +10,7 @@ import {
 import { ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Badge, Card } from "@/components/page";
@@ -322,7 +323,8 @@ function Adjustments({
           amount,
         })),
       );
-      if (!result.ok) setFailure(result.message);
+      if (result.ok) toast.success("Adjustments saved.");
+      else setFailure(result.message);
     });
   }
 
@@ -453,7 +455,10 @@ function Certificate({
         totals,
         text,
       );
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(
+        totals ? "Group certificate saved." : "Group certificate removed.",
+      );
     });
   }
 

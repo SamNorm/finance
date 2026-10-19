@@ -23,6 +23,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Menu, MenuItem } from "@/components/menu";
@@ -365,6 +366,8 @@ export function DefinitionEditor({
         renames,
       );
       if (!result.ok) return setFailure(result);
+      if (result.value.length) toast.warning("Saved, with warnings.");
+      else toast.success("Saved.");
       onWarnings(result.value);
     });
   }

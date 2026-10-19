@@ -2,6 +2,7 @@
 
 import type { ChartDefinition, ModelLine } from "@finance/domain";
 import { useState, useTransition, type ReactNode } from "react";
+import { toast } from "sonner";
 import type { ActionResult } from "@/lib/action-result";
 import { button, input } from "./styles";
 import { Field, Modal } from "./ui";
@@ -127,8 +128,9 @@ function BuilderForm({
     setFailure(null);
     startTransition(async () => {
       const result = await onSave(draft);
-      if (result.ok) onClose();
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(initial ? "Chart saved." : "Chart added.");
+      onClose();
     });
   }
 

@@ -49,7 +49,8 @@ export function ModelCharts({
         versionId,
         charts.filter((c) => c.id !== chart.id),
       );
-      if (!result.ok) toast.error(result.message);
+      if (result.ok) toast.success("Chart removed.");
+      else toast.error(result.message);
     });
   }
 

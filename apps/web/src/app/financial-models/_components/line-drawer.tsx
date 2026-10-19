@@ -10,6 +10,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
@@ -144,6 +145,7 @@ function LineForm({
                 defaults: { kind, format },
               }
             : null;
+        toast.success(editing.mode === "new" ? "Line added." : "Line saved.");
         startTransition(() => onChange(next));
       }
       return result;
@@ -165,8 +167,9 @@ function LineForm({
     setDeleteFailure(null);
     startDelete(async () => {
       const result = await removeLineAction(versionId, line.code);
-      if (result.ok) startTransition(() => onChange(null));
-      else setDeleteFailure(result.message);
+      if (!result.ok) return setDeleteFailure(result.message);
+      toast.success(`"${line.label}" removed.`);
+      startTransition(() => onChange(null));
     });
   }
 

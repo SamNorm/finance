@@ -11,6 +11,7 @@ import {
   useTransition,
   type FormEvent,
 } from "react";
+import { toast } from "sonner";
 import { IssueList } from "@/components/issue-list";
 import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
@@ -188,8 +189,9 @@ function LineForm({
         limit: termInput(limit),
         certificateDueDays: due,
       });
-      if (result.ok) startTransition(onDone);
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(`${line.name} saved.`);
+      startTransition(onDone);
     });
   }
 
@@ -373,8 +375,9 @@ function TermChangeForm({
         value,
         from: from === "month" ? month : null,
       });
-      if (result.ok) startTransition(() => onDone(result.value));
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success("Term changed.");
+      startTransition(() => onDone(result.value));
     });
   }
 

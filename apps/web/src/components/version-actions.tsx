@@ -57,11 +57,12 @@ export function VersionActions({
     });
   }
 
-  function publish(versionId: string) {
+  function publish(draft: Version) {
     setFailure(null);
     startTransition(async () => {
-      const result = await publishAction(versionId, notes);
+      const result = await publishAction(draft.id, notes);
       if (!result.ok) return setFailure(result);
+      toast.success(`v${draft.number} published.`);
       startTransition(() => setPublishing(false));
     });
   }
@@ -162,7 +163,7 @@ export function VersionActions({
               type="button"
               disabled={pending}
               className={button.primary}
-              onClick={() => publish(version.id)}
+              onClick={() => publish(version)}
             >
               {pending ? "Publishing…" : `Publish v${version.number}`}
             </button>

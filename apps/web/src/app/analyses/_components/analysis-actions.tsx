@@ -30,7 +30,10 @@ export function AnalysisActions({
       const result = await updateAnalysisAction(analysis.id, {
         name: String(form.get("name") ?? ""),
       });
-      if (result.ok) startTransition(() => setRenaming(false));
+      if (result.ok) {
+        toast.success("Analysis renamed.");
+        startTransition(() => setRenaming(false));
+      }
       return result;
     },
     null,
@@ -42,6 +45,8 @@ export function AnalysisActions({
       setStatus(next);
       const result = await updateAnalysisAction(analysis.id, { status: next });
       if (!result.ok) toast.error(result.message);
+      else
+        toast.success(next === "completed" ? "Marked completed." : "Reopened.");
     });
   }
 

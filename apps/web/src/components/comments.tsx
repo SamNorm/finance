@@ -3,6 +3,7 @@
 import type { Comment } from "@finance/domain";
 import { MessageSquare, Pencil, Trash2 } from "lucide-react";
 import { useState, useTransition, type KeyboardEvent } from "react";
+import { toast } from "sonner";
 import {
   addCommentAction,
   removeCommentAction,
@@ -37,8 +38,9 @@ export function Comments({
     setFailure(null);
     startTransition(async () => {
       const result = await addCommentAction(owner, draft);
-      if (result.ok) setDraft("");
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      setDraft("");
+      toast.success("Comment added.");
     });
   }
 
@@ -106,8 +108,9 @@ function CommentItem({ comment }: { comment: Comment }) {
     setFailure(null);
     startTransition(async () => {
       const result = await updateCommentAction(comment.id, draft);
-      if (result.ok) setEditing(false);
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      setEditing(false);
+      toast.success("Comment saved.");
     });
   }
 
@@ -123,7 +126,8 @@ function CommentItem({ comment }: { comment: Comment }) {
     setFailure(null);
     startTransition(async () => {
       const result = await removeCommentAction(comment.id);
-      if (!result.ok) setFailure(result.message);
+      if (result.ok) toast.success("Comment deleted.");
+      else setFailure(result.message);
     });
   }
 

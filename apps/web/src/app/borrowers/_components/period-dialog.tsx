@@ -8,6 +8,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { button, input } from "@/components/styles";
 import { Field, Icon, keepFields, Modal } from "@/components/ui";
@@ -88,7 +89,10 @@ function PeriodForm({
       const result = period
         ? await updatePeriodAction(period.id, form)
         : await addPeriodAction(entityId, form);
-      if (result.ok) startTransition(onClose);
+      if (result.ok) {
+        toast.success(period ? "Period saved." : "Period added.");
+        startTransition(onClose);
+      }
       return result;
     },
     null,
@@ -107,8 +111,9 @@ function PeriodForm({
       return;
     startDelete(async () => {
       const result = await deletePeriodAction(period.id);
-      if (result.ok) startTransition(onClose);
-      else setDeleteFailure(result.message);
+      if (!result.ok) return setDeleteFailure(result.message);
+      toast.success("Period deleted.");
+      startTransition(onClose);
     });
   }
 
@@ -254,8 +259,9 @@ function StatementControls({
     setFailure(null);
     startForce(async () => {
       const result = await forceRetainedEarningsAction(period.id, sent);
-      if (result.ok) setLines(result.value.map(toDraft));
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success("Forced to roll forward.");
+      setLines(result.value.map(toDraft));
     });
   }
 

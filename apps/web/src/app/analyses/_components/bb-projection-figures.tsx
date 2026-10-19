@@ -16,6 +16,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { IssueList } from "@/components/issue-list";
 import { plural } from "@/components/page";
 import { button, card, input } from "@/components/styles";
@@ -353,6 +354,7 @@ export function PasteProjections({
         skipped,
       );
       if (!result.ok) return setFailure(result);
+      toast.success(`${plural(kept.length, "month")} imported.`);
       startTransition(() => {
         setSource("");
         setPreview(null);

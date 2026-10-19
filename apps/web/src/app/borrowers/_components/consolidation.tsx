@@ -18,6 +18,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
 import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Popover } from "@/components/menu";
@@ -372,8 +373,9 @@ function PeriodForm({
           })),
         },
       );
-      if (result.ok) startTransition(onClose);
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success(period ? "Period saved." : "Period added.");
+      startTransition(onClose);
     });
   }
 
@@ -390,8 +392,9 @@ function PeriodForm({
       return;
     startDelete(async () => {
       const result = await deletePeriodAction(period.id);
-      if (result.ok) startTransition(onClose);
-      else setFailure(result.message);
+      if (!result.ok) return setFailure(result.message);
+      toast.success("Period deleted.");
+      startTransition(onClose);
     });
   }
 
@@ -694,11 +697,12 @@ export function Members({
   const [adding, setAdding] = useState(candidates[0]?.id ?? "");
   const [pending, startTransition] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
-  const act = (work: () => Promise<ActionResult>) => {
+  const act = (work: () => Promise<ActionResult>, done: string) => {
     setFailure(null);
     startTransition(async () => {
       const result = await work();
-      if (!result.ok) setFailure(result.message);
+      if (result.ok) toast.success(done);
+      else setFailure(result.message);
     });
   };
   return (
@@ -726,7 +730,10 @@ export function Members({
               className={button.secondary}
               disabled={pending || !adding}
               onClick={() =>
-                act(() => addConsolidationMemberAction(entityId, adding))
+                act(
+                  () => addConsolidationMemberAction(entityId, adding),
+                  `${candidates.find((c) => c.id === adding)?.name ?? "Member"} added.`,
+                )
               }
             >
               <Icon name="plus" />
@@ -790,8 +797,9 @@ export function Members({
                           danger: true,
                         })
                       )
-                        act(() =>
-                          removeConsolidationMemberAction(entityId, m.id),
+                        act(
+                          () => removeConsolidationMemberAction(entityId, m.id),
+                          `${m.name} removed.`,
                         );
                     }}
                   >

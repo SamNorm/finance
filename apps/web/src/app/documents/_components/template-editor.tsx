@@ -14,6 +14,7 @@ import {
 } from "@finance/documents/templates";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 import { IssueList } from "@/components/issue-list";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/menu";
 import { Card } from "@/components/page";
@@ -391,7 +392,10 @@ export function TemplateEditor({
                 editing.index === null
                   ? [...blocks, block]
                   : blocks.map((b, i) => (i === editing.index ? block : b));
-              saveBlocks(next, () => setEditing(null));
+              saveBlocks(next, () => {
+                toast.success("Section saved.");
+                setEditing(null);
+              });
             }}
           />
         )}
