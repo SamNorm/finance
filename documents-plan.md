@@ -26,6 +26,8 @@ _Status: phase 1 built (§4); phase 3 built but for personal templates, which wa
 | Model documentation         | A financial model version's lines, formulas, assumptions, scoring model binding, publish date, and changes from the previous version                            | Model risk management and validation (e.g. OSFI E-23) |
 | Calculation trace           | The lineage of selected figures: formula, inputs, sources                                                                                                       | Adjudicator, audit                                    |
 
+The borrowing base certificate and margin history print from a margined line, and the projected margin from an analysis: borrowing-base-plan.md §12.
+
 ## 3. How institutions get their own documents
 
 ### 3.1 One data contract

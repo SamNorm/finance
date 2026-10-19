@@ -134,20 +134,26 @@ Each financial model version contains:
   - **Sources:** new loans (amount, rate and terms, starting at closing), and other funds such as equity injected or cash on hand.
   - **Uses:** what the money buys or repays: equipment, a building, debt refinanced, costs.
   - **Balance sheet postings:** each source and use posts to a balance sheet item. New loans go to the long-term debt and current portion items, set once per scoring model, so the post-project balance sheet balances when the table does.
-  - **Outside the table**, because they move no funds at closing:
-    - Line of credit increases, whose interest on the expected average use adds to debt service.
-    - Subordinations: debt postponed and treated as equity.
+  - **Outside the table**, because they move no funds at closing: subordinations, debt postponed and treated as equity. A deal's lines of credit are the scenario's (below).
 - **Post-project columns** sit next to the last fiscal year automatically, and next to the year to date or any projected year on a click. Columns group into historical years, year to date and projections, and each group folds away.
   - **Actual periods:** pro forma at closing. The full amounts, and the first twelve months of payments on new and existing loans.
   - **Projected years:** read the loans' schedules, with repayments out of cash.
   - **Earlier years** stay as they were, so comparisons with them read history.
 - **How formulas see the project:** balance sheet items carry it; the P&L doesn't change. Built-in inputs give the rest, and are zero outside post-project columns:
-  - `PROFORMA_INTEREST`, `PROFORMA_PRINCIPAL` and `PROFORMA_LINE_INTEREST` for debt service, and `PROFORMA_PREPAYMENTS` for extra payments.
+  - `PROFORMA_INTEREST` and `PROFORMA_PRINCIPAL` for debt service, `PROFORMA_LINE_INTEREST` for what the deal's lines of credit add, and `PROFORMA_PREPAYMENTS` for extra payments.
   - `PROFORMA_DEBT` and `PROFORMA_DEBT_CURRENT` for projections computed from assumptions.
   - `PROFORMA_TO_EQUITY` for subordinations.
 
   A model takes new principal either from the current portion or from `PROFORMA_PRINCIPAL`, never both. Lineage shows each source's share.
 
+- **Lines of credit** (borrowing-base-plan.md §4) are kept on the borrower, like its existing loans: a name, a currency, a rate, and an authorized limit that's a term, which can differ by season (more from October to March) and step from a month (an amendment). A consolidated client's are its members'. The spread flags limits that don't add up to its authorized line at the latest year end.
+  - **Interest in analyses:** each analysis assumes each line's average usage, a share of its limit, with any month overridden by an amount; a scenario overrides it. Interest is each month's usage at the line's rate, over a projected year's months or the twelve after closing. Models read `LINE_INTEREST`, `LINE_AUTHORIZED` and `LINE_AVERAGE_USAGE`, blank in actual periods as the debt schedule's are.
+  - **A deal's lines:** a scenario proposes them, as it proposes covenants: an existing line's new limit or rate, a new line, a line closed, and its borrowing base's terms. They apply from closing, or with no project from the first projected month.
+- **Borrowing bases** (borrowing-base-plan.md) margin a line month by month: what's real (terms and the client's certificates) on the line, what's projected in analyses.
+  - **The definition:** typed lines the app compiles into the waterfall: collateral (entered, aged, or a formula; in a currency converted at the month's rate), less ineligibles, times advance rates, up to caps, in groups with caps of their own; prior claims and reserves off the gross; usage beside the balance. Rates, caps and reserves are terms. Every figure has lineage. Lines start from a built-in, an organization's published template, or another line's.
+  - **The history:** monthly certificates, reported or verified, entered or pasted, checked against the spread at its period ends; the margin and overline tests and custom ones each month; the business cycle by fiscal year and over twelve months; overdue certificates.
+  - **Projected in analyses:** twelve months ahead by default, from the client's projections entered in the analysis or from the definition's projection formulas and assumptions; a scenario's changes and a deal's terms from closing; the projected balance against the usage assumed for interest.
+  - **Consolidated clients** add up their members' lines as totals, with adjustments and a group certificate overriding a month.
 - **Covenants** are terms of a credit agreement, not of a model: a firm reuses its models across deals, but chooses covenants case by case and sometimes year by year.
   - **Where they're kept:** the covenants in force are kept on the borrower, like its existing loans, and every analysis of it tests them. A scenario can propose its deal's own, starting from those in force, like a project's new loans.
   - **What each is:** a financial model line by its code (e.g. `DSCR`), at least or at most a threshold that can step from a fiscal year (3.5x, then 3.0x from 2026), with a note for the agreement's wording. An analysis whose model lacks the line says so.
