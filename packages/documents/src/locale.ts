@@ -131,6 +131,10 @@ const en = {
   averageUsage: "Average usage",
   interestAYear: "Interest, a year",
   notAssumed: "Not assumed",
+  noRate: (currency: string) => `No ${currency} rate`,
+  // A line's interest in its own currency, and the rate it converts at:
+  // "USD 33,000 at 1.37".
+  convertedAt: (amount: string, rate: string) => `${amount} at ${rate}`,
   ofTheLimit: (share: string) => `${share} of the limit`,
   monthsEntered: (count: number) =>
     `${count} ${count === 1 ? "month" : "months"} entered`,
@@ -342,6 +346,8 @@ const fr: Words = {
   averageUsage: "Utilisation moyenne",
   interestAYear: "Intérêts annuels",
   notAssumed: "Aucune hypothèse",
+  noRate: (currency) => `Aucun taux ${currency}`,
+  convertedAt: (amount, rate) => `${amount} à ${rate}`,
   ofTheLimit: (share) => `${share} de l'autorisation`,
   monthsEntered: (count) => `${count} mois saisi${count > 1 ? "s" : ""}`,
   atClosing: "à la clôture",

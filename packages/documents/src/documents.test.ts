@@ -4,6 +4,7 @@ import {
   deleteAnalysis,
   getAnalysis,
   updateAnalysis,
+  updateCreditLine,
   type Context,
 } from "@finance/domain";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -165,6 +166,35 @@ describe("documents", () => {
     await updateAnalysis(db, ctx, analysisId, {
       lineUsage: { [line!.id]: { share: "60%" } },
     });
+  });
+
+  it("convert a line in another currency at the analysis's rate", async () => {
+    const html = async () =>
+      (
+        await previewDocument(db, ctx, {
+          analysisId,
+          scenarioId: null,
+          template: "debt-summary",
+        })
+      ).html;
+    const data = await analysisDocumentData(db, ctx, analysisId, null);
+    const [line] = data.creditLines.inForce;
+    await updateCreditLine(db, ctx, line!.id, { currency: "USD" });
+    expect(await html()).toContain('<span class="fail">No USD rate</span>');
+    await updateAnalysis(db, ctx, analysisId, {
+      exchangeRates: { USD: "1.25" },
+    });
+    // Drawn in US dollars; its interest in the analysis's Canadian.
+    const converted = await html();
+    for (const words of [
+      "Operating line<small>USD</small>",
+      "1,350,000<small>60% of the limit</small>",
+      '<td class="num">121,500<small>USD 97,200 at 1.25</small></td>',
+      "2025 projected · CAD",
+    ])
+      expect(converted).toContain(words);
+    await updateCreditLine(db, ctx, line!.id, { currency: "CAD" });
+    await updateAnalysis(db, ctx, analysisId, { exchangeRates: {} });
   });
 
   it("word lines of credit in French", async () => {

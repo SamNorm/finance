@@ -11,6 +11,7 @@ import {
   type CycleSummary,
   type DebtSchedule,
   type ExistingLoan,
+  type FinancingPart,
   type LineCode,
   type LineTerms,
   type ProjectLoan,
@@ -659,9 +660,10 @@ function linePeriod(data: AnalysisDocumentData) {
 
 // The lines of credit beside the loans, as the deal leaves them: those in
 // force (closed ones no longer count), each as the scenario proposes it,
-// then the new ones; with the usage assumed and a year's interest on it.
+// then the new ones; with the usage assumed, in the line's currency, and a
+// year's interest on it, in the analysis's.
 function linesOfCredit(data: AnalysisDocumentData, l: Locale): string {
-  const { inForce, usage, proposed } = data.creditLines;
+  const { inForce, usage, proposed, currency, rates } = data.creditLines;
   const byId = new Map((proposed ?? []).map((line) => [line.id, line]));
   const ids = new Set(inForce.map((line) => line.id));
   const shown: {
@@ -697,21 +699,27 @@ function linesOfCredit(data: AnalysisDocumentData, l: Locale): string {
       ? l.w.asOfMonth(l.month(monthIndex(last.end) + 1))
       : "";
   const at = linePeriod(data);
-  const part = (code: LineCode, id: string) => {
+  const part = (
+    code: LineCode,
+    id: string,
+  ): Pick<FinancingPart, "value" | "converted"> | null => {
     const value = at?.run.creditLines[code][at.p];
     return value
-      ? Number(value.parts.find((x) => x.id === id)?.value ?? 0)
+      ? (value.parts.find((x) => x.id === id) ?? { value: "0" })
       : null;
   };
   // Interest over a period's months, to a year's.
   const scale = at ? 12 / at.run.periods[at.p]!.months : 1;
   const amount = (value: number | null) =>
     value === null ? "–" : escape(l.figure(String(value), "amount"));
+  const foreign = (line: LineTerms) =>
+    currency !== undefined && line.currency !== currency;
   const rows = shown
     .map(({ line, change }) => {
       const own = usage[line.id];
       const months = Object.keys(own?.months ?? {}).length;
       const assumed = own?.share !== undefined || months > 0;
+      const unrated = foreign(line) && rates?.[line.currency] === undefined;
       const tag =
         change === "changed"
           ? l.w.lineChanged(escape(when))
@@ -721,7 +729,19 @@ function linesOfCredit(data: AnalysisDocumentData, l: Locale): string {
               ? l.w.lineCancelled(escape(when))
               : "";
       const interest = part("LINE_INTEREST", line.id);
-      const annual = interest === null ? null : interest * scale;
+      const annual = interest && Number(interest.value) * scale;
+      const average = part("LINE_AVERAGE_USAGE", line.id);
+      // Drawn in the line's own currency.
+      const drawn =
+        average && Number(average.converted?.amount ?? average.value);
+      const converted = interest?.converted
+        ? `<small>${l.w.convertedAt(
+            escape(
+              `${line.currency} ${l.figure(String(Number(interest.converted.amount) * scale), "amount")}`,
+            ),
+            escape(l.exchange(interest.converted.rate)),
+          )}</small>`
+        : "";
       const how = [
         own?.share !== undefined
           ? l.w.ofTheLimit(escape(l.rate(own.share)))
@@ -733,14 +753,27 @@ function linesOfCredit(data: AnalysisDocumentData, l: Locale): string {
           ? "–"
           : !assumed
             ? `<span class="fail">${l.w.notAssumed}</span>`
-            : `${amount(part("LINE_AVERAGE_USAGE", line.id))}${how.length ? `<small>${how.join(" · ")}</small>` : ""}`;
-      return `<tr><td>${escape(line.name)}<small>${escape(line.currency)}${tag}</small></td><td>${escape(l.limit(line.limit))}</td><td class="num">${escape(l.rate(line.rate))}</td><td class="num">${used}</td><td class="num">${change === "cancelled" || !assumed ? "–" : amount(annual)}</td></tr>`;
+            : unrated
+              ? "–"
+              : `${amount(drawn)}${how.length ? `<small>${how.join(" · ")}</small>` : ""}`;
+      const cost =
+        change === "cancelled" || !assumed
+          ? "–"
+          : unrated
+            ? `<span class="fail">${l.w.noRate(escape(line.currency))}</span>`
+            : `${amount(annual)}${converted}`;
+      return `<tr><td>${escape(line.name)}<small>${escape(line.currency)}${tag}</small></td><td>${escape(l.limit(line.limit))}</td><td class="num">${escape(l.rate(line.rate))}</td><td class="num">${used}</td><td class="num">${cost}</td></tr>`;
     })
     .join("");
-  const note = at
-    ? `<small>${escape(at.run.periods[at.p]!.end.slice(0, 4))} ${at.post ? l.w.postProjectNote : l.w.projectedNote}</small>`
+  const note = (suffix = "") =>
+    at
+      ? `<small>${escape(at.run.periods[at.p]!.end.slice(0, 4))} ${at.post ? l.w.postProjectNote : l.w.projectedNote}${suffix}</small>`
+      : "";
+  // With a line in another currency, interest says which it's in.
+  const inCurrency = shown.some(({ line }) => foreign(line))
+    ? ` · ${escape(currency!)}`
     : "";
-  return `<table class="figures"><thead><tr><th>${l.w.lineOfCredit}</th><th>${l.w.limit}</th><th class="num">${l.w.rate}</th><th class="num">${l.w.averageUsage}${note}</th><th class="num">${l.w.interestAYear}${note}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table class="figures"><thead><tr><th>${l.w.lineOfCredit}</th><th>${l.w.limit}</th><th class="num">${l.w.rate}</th><th class="num">${l.w.averageUsage}${note()}</th><th class="num">${l.w.interestAYear}${note(inCurrency)}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // A loan year by year from its start, as the app's "By year" view shows it.

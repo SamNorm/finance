@@ -27,6 +27,7 @@ import {
   type Context,
   type FinancingPart,
   type LineCode,
+  type ExchangeRates,
   type LineUsage,
   type ModelLine,
   type OwnedDebtSchedule,
@@ -182,11 +183,15 @@ export interface DocumentData {
   // The borrower's lines of credit in force, or a consolidated client's
   // members'; the usage the run assumes for each, by line id (the
   // scenario's over the analysis's); and the lines the scenario proposes
-  // for its deal, null for those in force.
+  // for its deal, null for those in force. The run counts in `currency`,
+  // the statements', and converts lines in another at `rates`; snapshots
+  // from before lines converted have neither.
   creditLines: {
     inForce: OwnedLine[];
     usage: LineUsage;
     proposed: ProposedLine[] | null;
+    currency?: string;
+    rates?: ExchangeRates;
   } | null;
   // Labels of the scoring model items the deal posts to.
   items: Record<string, string>;
@@ -419,6 +424,8 @@ export async function analysisDocumentData(
       inForce: results.creditLines.inForce,
       usage: results.creditLines.usage,
       proposed: scenario?.lines ?? null,
+      currency: results.creditLines.currency,
+      rates: results.creditLines.rates,
     },
     items: Object.fromEntries(
       items.filter((i) => posted.has(i.code)).map((i) => [i.code, i.label]),
