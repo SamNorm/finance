@@ -1,12 +1,15 @@
 import {
   COLLATERAL_CODES,
   fxCode,
+  GROUP_TOTALS,
   type BorrowingBaseDefinition,
   type BorrowingBaseFormat,
   type BorrowingBaseLine,
   type BorrowingBaseLineKind,
   type BorrowingBaseTest,
   type CollateralType,
+  type GroupSummed,
+  type GroupTotals,
 } from "@finance/domain/borrowing-bases";
 import type { Term } from "@finance/domain/terms";
 import type { WaterfallRow } from "@finance/domain";
@@ -379,3 +382,98 @@ export const newTest = (): TestDraft => ({
   test: "min",
   threshold: { ...BLANK_TERM },
 });
+
+// A consolidated client's figures (borrowing-base-plan.md §7.5), in
+// waterfall order: its totals, and the figures they give.
+export type GroupFigureKey =
+  GroupSummed | "gross" | "usage" | "surplus" | "excess" | "utilization";
+
+export const GROUP_FIGURES: {
+  key: GroupFigureKey;
+  label: string;
+  format: "amount" | "percent";
+  kind: "line" | "subtotal" | "total";
+}[] = [
+  ...(["receivables", "inventory", "otherCollateral"] as const).map((key) => ({
+    key,
+    label: GROUP_TOTALS.find((t) => t.key === key)!.label,
+    format: "amount" as const,
+    kind: "line" as const,
+  })),
+  {
+    key: "gross",
+    label: "Gross borrowing base",
+    format: "amount",
+    kind: "subtotal",
+  },
+  { key: "priorClaims", label: "Prior claims", format: "amount", kind: "line" },
+  { key: "reserves", label: "Reserves", format: "amount", kind: "line" },
+  { key: "total", label: "Borrowing base", format: "amount", kind: "total" },
+  {
+    key: "limit",
+    label: "Authorized limits",
+    format: "amount",
+    kind: "line",
+  },
+  {
+    key: "available",
+    label: "Availability",
+    format: "amount",
+    kind: "subtotal",
+  },
+  {
+    key: "outstanding",
+    label: "Lines outstanding",
+    format: "amount",
+    kind: "line",
+  },
+  { key: "otherUsage", label: "Other usage", format: "amount", kind: "line" },
+  { key: "usage", label: "Usage", format: "amount", kind: "subtotal" },
+  {
+    key: "surplus",
+    label: "Margin surplus (deficit)",
+    format: "amount",
+    kind: "total",
+  },
+  {
+    key: "excess",
+    label: "Excess availability",
+    format: "amount",
+    kind: "line",
+  },
+  {
+    key: "utilization",
+    label: "Utilization",
+    format: "percent",
+    kind: "line",
+  },
+];
+
+// What a member line's totals give, as the group's do: for display.
+export function memberFigures(
+  totals: GroupTotals,
+): Record<GroupFigureKey, number | null> {
+  const n = (key: GroupSummed) =>
+    totals[key] === null ? null : Number(totals[key]);
+  const add = (...values: (number | null)[]) =>
+    values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
+  const usage = add(n("outstanding"), n("otherUsage"));
+  const limit = n("limit");
+  return {
+    receivables: n("receivables"),
+    inventory: n("inventory"),
+    otherCollateral: n("otherCollateral"),
+    priorClaims: n("priorClaims"),
+    reserves: n("reserves"),
+    total: n("total"),
+    available: n("available"),
+    limit,
+    outstanding: n("outstanding"),
+    otherUsage: n("otherUsage"),
+    gross: add(n("receivables"), n("inventory"), n("otherCollateral")),
+    usage,
+    surplus: add(n("total")) - usage,
+    excess: add(n("available")) - usage,
+    utilization: limit ? usage / limit : null,
+  };
+}

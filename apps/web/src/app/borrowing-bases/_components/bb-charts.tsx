@@ -80,7 +80,8 @@ export function BorrowingBaseCharts({
   const [removing, startRemove] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
   const [overlaid, setOverlaid] = useState("BB_USAGE");
-  const own = Boolean(definition.charts?.length);
+  // An empty list is the borrowing base's own: no charts.
+  const own = definition.charts !== undefined;
   const byCode = new Map(figures.map((f) => [f.code, f]));
   const chartable = figures.filter((f) => CHARTABLE.includes(f.format));
   // The chart builder picks among a model's lines; figures read as such.
@@ -198,7 +199,12 @@ export function BorrowingBaseCharts({
             {failure}
           </p>
         )}
-        <div className="grid gap-3 p-3 lg:grid-cols-2">
+        {charts.length === 0 && (
+          <p className="px-4 py-8 text-center text-sm text-muted">
+            No charts. Add one over any of the borrowing base&apos;s figures.
+          </p>
+        )}
+        <div className="grid gap-3 p-3 empty:hidden lg:grid-cols-2">
           {charts.map((chart) => (
             <MetricChart
               key={chart.id}
@@ -216,12 +222,7 @@ export function BorrowingBaseCharts({
                   <button
                     type="button"
                     className="rounded px-1.5 py-0.5 text-xs text-muted hover:bg-danger-soft hover:text-danger disabled:opacity-40"
-                    disabled={removing || charts.length === 1}
-                    title={
-                      charts.length === 1
-                        ? "A borrowing base shows at least one chart."
-                        : undefined
-                    }
+                    disabled={removing}
                     onClick={() => remove(chart)}
                   >
                     Remove

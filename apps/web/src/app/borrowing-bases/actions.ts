@@ -10,6 +10,8 @@ import {
   setBorrowingBaseMonth,
   setBorrowingBaseTerm,
   setBorrowingBaseValues,
+  setGroupBorrowingBaseAdjustments,
+  setGroupBorrowingBaseOverride,
   startBorrowingBase,
   updateCreditLine,
   type BorrowingBasePaste,
@@ -177,7 +179,7 @@ export async function setBorrowingBaseDefinitionAction(
 }
 
 // Replaces the borrowing base's charts, the rest of its definition as
-// saved. With none, it shows the default charts.
+// saved; an empty list leaves it none.
 export async function saveBorrowingBaseChartsAction(
   lineId: string,
   charts: unknown,
@@ -253,5 +255,58 @@ export async function updateMarginedLineAction(
       limit: termFields(fields.limit),
       certificateDueDays: String(fields.certificateDueDays ?? ""),
     });
+  });
+}
+
+// A consolidated client's month: its adjustments, named amounts on one of
+// the group's totals, negative to reduce. They replace the month's.
+export async function setGroupAdjustmentsAction(
+  entityId: string,
+  month: string,
+  adjustments: { id?: string; name: string; total: string; amount: string }[],
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (!Array.isArray(adjustments))
+      throw invalid("Adjustments must be a list.");
+    return setGroupBorrowingBaseAdjustments(
+      db,
+      ctx,
+      String(entityId),
+      String(month),
+      adjustments.map((a) => ({
+        id: typeof a?.id === "string" ? a.id : undefined,
+        name: String(a?.name ?? ""),
+        total: String(a?.total ?? ""),
+        amount: String(a?.amount ?? ""),
+      })),
+    );
+  });
+}
+
+// A certificate the client sends for the group: its totals replace the
+// sum's that month, those left blank stay the sum's; none removes it.
+export async function setGroupOverrideAction(
+  entityId: string,
+  month: string,
+  totals: Record<string, string> | null,
+  note: string | null,
+): Promise<ActionResult> {
+  return run((db, ctx) => {
+    if (totals !== null && !isObject(totals))
+      throw invalid("A group certificate's totals are given by total.");
+    return setGroupBorrowingBaseOverride(
+      db,
+      ctx,
+      String(entityId),
+      String(month),
+      totals &&
+        Object.fromEntries(
+          Object.entries(totals).map(([key, value]) => [
+            key,
+            String(value ?? ""),
+          ]),
+        ),
+      note === null ? null : String(note ?? ""),
+    );
   });
 }

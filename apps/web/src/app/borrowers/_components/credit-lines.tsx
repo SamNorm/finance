@@ -56,6 +56,8 @@ export function CreditLines({
 }: {
   entityId: string;
   lines: LineRow[];
+  // A consolidated client's members' lines, which its group borrowing base
+  // adds up when any is margined.
   consolidated?: boolean;
   // What a line's borrowing base can start from, to margin it.
   sources?: MarginSources;
@@ -96,7 +98,17 @@ export function CreditLines({
         )
       }
       actions={
-        !consolidated && (
+        consolidated ? (
+          lines.some((l) => l.borrowingBase) && (
+            <Link
+              href={`/borrowing-bases/group/${entityId}`}
+              className={button.secondary}
+            >
+              <Gauge />
+              Group borrowing base
+            </Link>
+          )
+        ) : (
           <button
             type="button"
             className={button.secondary}
