@@ -1,7 +1,9 @@
-import { toolGuide, type Effect } from "@finance/mcp/guide";
+import { toolGuide, type Effect, type GuideArea } from "@finance/mcp/guide";
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Badge, Card, Page, PageHeader, plural } from "@/components/page";
 import type { Tone } from "@/components/styles";
+import { Tabs } from "@/components/tabs";
 
 export const metadata: Metadata = { title: "AI assistant" };
 
@@ -22,8 +24,10 @@ const EFFECTS: Record<Effect, { label: string; tone: Tone; means: string }> = {
 
 // What an AI assistant connected to the app over MCP can do, read from the
 // MCP server's own tools: the list can't miss one, and says what each gives
-// back in the analyst's terms.
-export default function AssistantHelpPage() {
+// back in the analyst's terms. One area shows at a time.
+export default function AssistantHelpPage({
+  searchParams,
+}: PageProps<"/help">) {
   const areas = toolGuide();
   const tools = areas.flatMap((area) => area.tools);
   const counts = (Object.keys(EFFECTS) as Effect[]).map(
@@ -74,72 +78,70 @@ export default function AssistantHelpPage() {
           </dl>
         </Card>
 
-        <nav aria-label="Areas" className="flex flex-wrap gap-2">
-          {areas.map((area) => (
-            <a
-              key={area.id}
-              href={`#${area.id}`}
-              className="rounded-md border border-line bg-surface px-2.5 py-1 text-xs text-muted shadow-xs hover:bg-surface-2 hover:text-foreground"
-            >
-              {area.title}
-            </a>
-          ))}
-        </nav>
-
-        {areas.map((area) => (
-          <div
-            key={area.id}
-            id={area.id}
-            className="scroll-mt-16 md:scroll-mt-6"
-          >
-            <Card
-              title={area.title}
-              description={area.about}
-              actions={
-                <span className="text-xs text-muted">
-                  {plural(area.tools.length, "action")}
-                </span>
-              }
-              flush
-            >
-              <ul className="divide-y divide-line/70">
-                {area.tools.map((tool) => (
-                  <li
-                    key={tool.name}
-                    className="grid gap-x-6 gap-y-1.5 px-4 py-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]"
-                  >
-                    <div className="flex min-w-0 flex-col items-start gap-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="text-sm font-medium">
-                          {tool.title}
-                        </span>
-                        <Badge tone={EFFECTS[tool.effect].tone}>
-                          {EFFECTS[tool.effect].label}
-                        </Badge>
-                      </div>
-                      <code
-                        className="font-mono text-[11px] break-all text-muted"
-                        title="The name your assistant shows when it uses this action"
-                      >
-                        {tool.name}
-                      </code>
-                    </div>
-                    <div className="flex min-w-0 flex-col gap-1 text-sm">
-                      <p>{tool.does}</p>
-                      <p className="text-muted">
-                        <span className="font-medium text-foreground">
-                          Gives back:
-                        </span>{" "}
-                        {tool.returns}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          </div>
-        ))}
+        <Suspense fallback={null}>
+          <Areas areas={areas} searchParams={searchParams} />
+        </Suspense>
       </div>
     </Page>
+  );
+}
+
+async function Areas({
+  areas,
+  searchParams,
+}: {
+  areas: GuideArea[];
+  searchParams: PageProps<"/help">["searchParams"];
+}) {
+  const { area } = await searchParams;
+  return (
+    <Tabs
+      variant="chips"
+      param="area"
+      initial={typeof area === "string" ? area : undefined}
+      tabs={areas.map((area) => ({
+        value: area.id,
+        label: area.title,
+        count: area.tools.length,
+        content: <AreaTools area={area} />,
+      }))}
+    />
+  );
+}
+
+function AreaTools({ area }: { area: GuideArea }) {
+  return (
+    <Card title={area.title} description={area.about} flush>
+      <ul className="divide-y divide-line/70">
+        {area.tools.map((tool) => (
+          <li
+            key={tool.name}
+            className="grid gap-x-6 gap-y-1.5 px-4 py-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]"
+          >
+            <div className="flex min-w-0 flex-col items-start gap-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-sm font-medium">{tool.title}</span>
+                <Badge tone={EFFECTS[tool.effect].tone}>
+                  {EFFECTS[tool.effect].label}
+                </Badge>
+              </div>
+              <code
+                className="font-mono text-[11px] break-all text-muted"
+                title="The name your assistant shows when it uses this action"
+              >
+                {tool.name}
+              </code>
+            </div>
+            <div className="flex min-w-0 flex-col gap-1 text-sm">
+              <p>{tool.does}</p>
+              <p className="text-muted">
+                <span className="font-medium text-foreground">Gives back:</span>{" "}
+                {tool.returns}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
