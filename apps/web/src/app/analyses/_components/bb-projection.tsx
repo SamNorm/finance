@@ -14,6 +14,8 @@ import { Dec } from "@finance/engine";
 import { Gauge, History, TrendingUp, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useState, useTransition, type ReactNode } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { IssueList, IssuesSummary } from "@/components/issue-list";
 import { Badge, Card, EmptyState, Stat, plural } from "@/components/page";
 import { button } from "@/components/styles";
@@ -704,10 +706,7 @@ function UsageCheck({
 }) {
   const { scenario } = setup;
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const usage = setup.usage[line.key];
   const months = line.run.months
     .map((m, p) => ({ m, p }))
@@ -728,18 +727,20 @@ function UsageCheck({
   };
   const where = scenario ? `in ${scenario.name}` : "in the base case";
 
-  function fill(from: "certificates" | "projection") {
+  async function fill(from: "certificates" | "projection") {
     const what =
       from === "certificates"
         ? "the balance in the certificates, the same months of the latest year"
         : "the balance projected here, month by month";
     if (
-      !confirm(
-        `Fill ${line.name}'s usage ${where} from ${what}? It writes an amount for each month the analysis counts interest in that has one, replacing amounts typed for them. They're then yours to change; nothing is read again.`,
-      )
+      !(await ask({
+        title: `Fill ${line.name}'s usage ${where}?`,
+        body: `From ${what}. It writes an amount for each month the analysis counts interest in that has one, replacing amounts typed for them. They're then yours to change; nothing is read again.`,
+        action: "Fill usage",
+      }))
     )
       return;
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await fillLineUsageAction(
         setup.analysisId,
@@ -747,17 +748,11 @@ function UsageCheck({
         line.key,
         from,
       );
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? {
-                ok: true,
-                message:
-                  "Usage filled. Results count its interest from these months.",
-              }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok)
+        toast.success("Usage filled.", {
+          description: "Results count its interest from these months.",
+        });
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -798,7 +793,7 @@ function UsageCheck({
       }
     >
       <div className="flex flex-col">
-        {(line.usage.gap || feedback || !usage) && (
+        {(line.usage.gap || failure || !usage) && (
           <div className="flex flex-col gap-1 border-b border-line px-4 py-2.5 text-sm">
             {line.usage.gap && (
               <p className="flex items-start gap-2 text-warning">
@@ -820,11 +815,7 @@ function UsageCheck({
                 , or fill it here.
               </p>
             )}
-            {feedback && (
-              <p className={feedback.ok ? "text-success" : "text-danger"}>
-                {feedback.message}
-              </p>
-            )}
+            {failure && <p className="text-danger">{failure}</p>}
           </div>
         )}
         <div className="overflow-x-auto">

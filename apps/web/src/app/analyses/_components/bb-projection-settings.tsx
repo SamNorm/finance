@@ -10,6 +10,8 @@ import type {
 } from "@finance/domain/borrowing-bases";
 import { CalendarRange, History } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { Segmented } from "@/components/ui";
@@ -63,20 +65,13 @@ const definitionValue = (a: Assumption) =>
     : formatFigure(a.value, a.format) || "Blank";
 
 function Feedback({
-  feedback,
+  failure,
   dirty,
 }: {
-  feedback: { ok: boolean; message: string } | null;
+  failure: string | null;
   dirty: boolean;
 }) {
-  if (feedback)
-    return (
-      <span
-        className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-      >
-        {feedback.message}
-      </span>
-    );
+  if (failure) return <span className="text-sm text-danger">{failure}</span>;
   return dirty ? (
     <span className="flex items-center gap-2 text-sm text-muted">
       <span className="size-2 rounded-full bg-warning" />
@@ -168,10 +163,7 @@ export function ProjectionSettings({
     setDraft(baseDraft(line));
   }
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const dirty =
     JSON.stringify(baseInput(draft)) !==
     JSON.stringify(baseInput(baseDraft(line)));
@@ -187,33 +179,30 @@ export function ProjectionSettings({
     }));
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await setAnalysisBorrowingBaseAction(
         analysisId,
         line.key,
         baseInput(draft),
       );
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved. The projection is updated." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved. The projection is updated.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
-  function fill(a: Assumption) {
+  async function fill(a: Assumption) {
     const figure = sources.find((s) => s.code === follow);
     if (!figure) return;
     if (
-      !confirm(
-        `Fill ${a.label} month by month from ${figure.label}: each calendar month's share of a typical month over the last three years of certificates. It replaces its values by month and saves them${dirty ? "; other unsaved changes here are lost" : ""}.`,
-      )
+      !(await ask({
+        title: `Fill ${a.label} month by month from ${figure.label}?`,
+        body: `Each calendar month gets its share of a typical month over the last three years of certificates. It replaces ${a.label}'s values by month and saves them${dirty ? "; other unsaved changes here are lost" : ""}.`,
+        action: "Fill",
+      }))
     )
       return;
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await fillSeasonalAssumptionAction(
         analysisId,
@@ -221,16 +210,11 @@ export function ProjectionSettings({
         a.code,
         figure.code,
       );
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? {
-                ok: true,
-                message: `${a.label} filled from ${figure.label}. Review the months: they're now the analysis's own.`,
-              }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok)
+        toast.success(`${a.label} filled from ${figure.label}.`, {
+          description: "Review the months: they're now the analysis's own.",
+        });
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -449,7 +433,7 @@ export function ProjectionSettings({
           >
             {pending ? "Saving…" : "Save projection"}
           </button>
-          <Feedback feedback={feedback} dirty={dirty} />
+          <Feedback failure={failure} dirty={dirty} />
         </div>
       </div>
     </Card>
@@ -522,10 +506,7 @@ export function ScenarioProjection({
     setDraft(scenarioDraft(line, own));
   }
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const dirty =
     JSON.stringify(scenarioAssumptionsInput(draft)) !==
     JSON.stringify(scenarioAssumptionsInput(scenarioDraft(line, own)));
@@ -551,7 +532,7 @@ export function ScenarioProjection({
         : definitionValue(a);
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     const assumptions = scenarioAssumptionsInput(draft);
     const figures = own?.figures ?? {};
     startTransition(async () => {
@@ -562,13 +543,8 @@ export function ScenarioProjection({
           ? { assumptions, figures }
           : null,
       );
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved. The projection is updated." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved. The projection is updated.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -673,7 +649,7 @@ export function ScenarioProjection({
             >
               {pending ? "Saving…" : "Save assumptions"}
             </button>
-            <Feedback feedback={feedback} dirty={dirty} />
+            <Feedback failure={failure} dirty={dirty} />
           </div>
         </div>
       )}

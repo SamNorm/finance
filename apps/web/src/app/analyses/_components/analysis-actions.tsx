@@ -8,6 +8,8 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal } from "@/components/ui";
@@ -23,7 +25,6 @@ export function AnalysisActions({
   const [renaming, setRenaming] = useState(false);
   const [deleting, startDelete] = useTransition();
   const [status, setStatus] = useOptimistic(analysis.status);
-  const [failure, setFailure] = useState<string | null>(null);
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) => {
       const result = await updateAnalysisAction(analysis.id, {
@@ -37,20 +38,26 @@ export function AnalysisActions({
 
   function toggle() {
     const next = status === "completed" ? "in_progress" : "completed";
-    setFailure(null);
     startTransition(async () => {
       setStatus(next);
       const result = await updateAnalysisAction(analysis.id, { status: next });
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
-  function remove() {
-    if (!confirm(`Delete the analysis "${analysis.name}" and its scenarios?`))
+  async function remove() {
+    if (
+      !(await ask({
+        title: `Delete the analysis "${analysis.name}"?`,
+        body: "Its scenarios are deleted with it.",
+        action: "Delete analysis",
+        danger: true,
+      }))
+    )
       return;
     startDelete(async () => {
       const result = await deleteAnalysisAction(analysis.id);
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -88,7 +95,6 @@ export function AnalysisActions({
           </MenuItem>
         </Menu>
       </div>
-      {failure && <p className="text-xs text-danger">{failure}</p>}
       <Modal
         open={renaming}
         onClose={() => setRenaming(false)}

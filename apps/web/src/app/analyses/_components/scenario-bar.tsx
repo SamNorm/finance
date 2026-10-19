@@ -16,6 +16,8 @@ import { Copy, Landmark, Pencil, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useActionState, useState, useTransition } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import {
   CovenantEditor,
   covenantDrafts,
@@ -438,13 +440,10 @@ export function ScenarioEditor({
   const [pending, startTransition] = useTransition();
   const [deleting, startDelete] = useTransition();
   const [copying, startCopy] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     const overrides = Object.fromEntries(
       Object.entries(values).filter(([, v]) => v.trim()),
     );
@@ -457,15 +456,9 @@ export function ScenarioEditor({
         covenants: covenantsInput,
         ...linesInput,
       });
-      // Inside the transition, so the message lands with the refreshed results.
-      startTransition(() => {
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved. Results and charts are updated." }
-            : { ok: false, message: result.message },
-        );
-        if (result.ok && toInput(project)) setEditing(false);
-      });
+      if (!result.ok) return setFailure(result.message);
+      toast.success("Saved. Results and charts are updated.");
+      if (toInput(project)) startTransition(() => setEditing(false));
     });
   }
 
@@ -493,8 +486,7 @@ export function ScenarioEditor({
                     analysisId,
                     scenario.id,
                   );
-                  if (!result.ok)
-                    setFeedback({ ok: false, message: result.message });
+                  if (!result.ok) toast.error(result.message);
                 })
               }
             >
@@ -505,15 +497,21 @@ export function ScenarioEditor({
               icon={<Trash2 />}
               danger
               disabled={deleting}
-              onSelect={() => {
-                if (!confirm(`Delete the scenario "${scenario.name}"?`)) return;
+              onSelect={async () => {
+                if (
+                  !(await ask({
+                    title: `Delete the scenario "${scenario.name}"?`,
+                    action: "Delete scenario",
+                    danger: true,
+                  }))
+                )
+                  return;
                 startDelete(async () => {
                   const result = await deleteScenarioAction(
                     analysisId,
                     scenario.id,
                   );
-                  if (!result.ok)
-                    setFeedback({ ok: false, message: result.message });
+                  if (!result.ok) toast.error(result.message);
                 });
               }}
             >
@@ -752,12 +750,8 @@ export function ScenarioEditor({
         >
           {pending ? "Saving…" : "Save scenario"}
         </button>
-        {feedback ? (
-          <span
-            className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-          >
-            {feedback.message}
-          </span>
+        {failure ? (
+          <span className="text-sm text-danger">{failure}</span>
         ) : (
           <span className="flex items-center gap-2 text-sm text-muted">
             {dirty && <span className="size-2 rounded-full bg-warning" />}

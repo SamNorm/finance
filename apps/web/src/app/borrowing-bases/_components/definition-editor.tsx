@@ -23,6 +23,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Menu, MenuItem } from "@/components/menu";
 import { Card } from "@/components/page";
@@ -898,8 +899,15 @@ function TestForm({
         onRemove={
           isNew
             ? undefined
-            : () => {
-                if (confirm(`Remove the test "${initial.name}"?`)) onRemove();
+            : async () => {
+                if (
+                  await ask({
+                    title: `Remove the test "${initial.name}"?`,
+                    action: "Remove",
+                    danger: true,
+                  })
+                )
+                  onRemove();
               }
         }
       />
@@ -1221,17 +1229,20 @@ function LineDrawerForm({
     });
   }
 
-  function remove() {
+  async function remove() {
     const extra =
       d.kind === "collateral" && ineligibles
-        ? ` Its ${ineligibles} ineligible ${ineligibles === 1 ? "line goes" : "lines go"} with it.`
+        ? `Its ${ineligibles} ineligible ${ineligibles === 1 ? "line goes" : "lines go"} with it. `
         : d.kind === "group"
-          ? " Its collateral lines stay, in no group."
+          ? "Its collateral lines stay, in no group. "
           : "";
     if (
-      confirm(
-        `Remove ${name}?${extra} Its figures stay in the months entered, unused. Formulas that read it will show an error.`,
-      )
+      await ask({
+        title: `Remove ${name}?`,
+        body: `${extra}Its figures stay in the months entered, unused. Formulas that read it will show an error.`,
+        action: "Remove",
+        danger: true,
+      })
     )
       onRemove();
   }

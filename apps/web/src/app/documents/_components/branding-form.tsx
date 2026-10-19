@@ -2,6 +2,7 @@
 
 import { ImageUp, X } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { Field } from "@/components/ui";
@@ -21,10 +22,7 @@ export function BrandingForm({
   const [logo, setLogo] = useState(branding.logo ?? "");
   const [notice, setNotice] = useState(branding.notice ?? "");
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   function pick(file: File | undefined) {
     if (!file) return;
@@ -34,17 +32,12 @@ export function BrandingForm({
   }
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await saveBrandingAction({ color, logo, notice });
-      setFeedback(
-        result.ok
-          ? {
-              ok: true,
-              message: "Saved. Documents printed from now on use it.",
-            }
-          : { ok: false, message: result.message },
-      );
+      if (result.ok)
+        toast.success("Saved. Documents printed from now on use it.");
+      else setFailure(result.message);
     });
   }
 
@@ -125,13 +118,7 @@ export function BrandingForm({
             >
               {pending ? "Saving…" : "Save branding"}
             </button>
-            {feedback && (
-              <span
-                className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-              >
-                {feedback.message}
-              </span>
-            )}
+            {failure && <span className="text-sm text-danger">{failure}</span>}
           </div>
         </div>
         {/* How a document's top reads with it. */}

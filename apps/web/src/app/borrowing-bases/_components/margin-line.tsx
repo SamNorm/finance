@@ -3,6 +3,7 @@
 import { Gauge } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { startTransition, useState, useTransition } from "react";
+import { ask } from "@/components/confirm";
 import { button } from "@/components/styles";
 import { Modal } from "@/components/ui";
 import { startBorrowingBaseAction } from "../actions";
@@ -103,13 +104,16 @@ export function MarginDialog({
     );
   };
 
-  function start() {
+  async function start() {
     if (!choice) return;
     if (
       replacing &&
-      !confirm(
-        `Replace ${lineName}'s borrowing base with ${nameOf(choice)}? Its lines and terms are replaced; its months of certificates are kept.`,
-      )
+      !(await ask({
+        title: `Replace ${lineName}'s borrowing base?`,
+        body: `Its lines and terms are replaced with ${nameOf(choice)}'s; its months of certificates are kept.`,
+        action: "Replace",
+        danger: true,
+      }))
     )
       return;
     setFailure(null);

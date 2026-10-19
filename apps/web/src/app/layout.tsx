@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppShell } from "@/components/app-shell";
 import { BOOT_SCRIPT } from "@/components/boot-script";
+import { ConfirmDialog } from "@/components/confirm";
+import { Toasts } from "@/components/toasts";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,6 +35,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full">
         <AppShell>{children}</AppShell>
+        <ConfirmDialog />
+        <Toasts />
       </body>
     </html>
   );

@@ -2,6 +2,7 @@
 
 import type { Statement as AnyStatement } from "@finance/domain";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { STATEMENTS } from "@/lib/labels";
@@ -45,22 +46,14 @@ export function CheckItems({
     lineAuthorized: values.lineAuthorized ?? "",
   });
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await setCheckItemsAction(modelId, chosen);
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -134,13 +127,7 @@ export function CheckItems({
           >
             {pending ? "Saving…" : "Save"}
           </button>
-          {feedback && (
-            <span
-              className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-            >
-              {feedback.message}
-            </span>
-          )}
+          {failure && <span className="text-sm text-danger">{failure}</span>}
         </div>
       </div>
     </Card>

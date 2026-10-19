@@ -7,6 +7,8 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button, input } from "@/components/styles";
@@ -47,11 +49,12 @@ export function TemplateActions({
   const [dialog, setDialog] = useState<"details" | "copy" | null>(null);
   const close = () => setDialog(null);
 
-  function act(action: () => Promise<ActionResult>) {
+  function act(action: () => Promise<ActionResult>, done?: string) {
     setFailure(null);
     start(async () => {
       const result = await action();
       if (!result.ok) setFailure(result);
+      else if (done) toast.success(done);
     });
   }
 
@@ -81,14 +84,18 @@ export function TemplateActions({
             type="button"
             disabled={pending}
             className={button.danger}
-            onClick={() => {
+            onClick={async () => {
               if (
-                confirm(
-                  "Discard the draft's changes and go back to what's published?",
-                )
+                await ask({
+                  title: "Discard the draft's changes?",
+                  body: "The template goes back to what's published.",
+                  action: "Discard changes",
+                  danger: true,
+                })
               )
-                act(() =>
-                  discardBorrowingBaseTemplateChangesAction(template.id),
+                act(
+                  () => discardBorrowingBaseTemplateChangesAction(template.id),
+                  "Changes discarded.",
                 );
             }}
           >
@@ -106,7 +113,10 @@ export function TemplateActions({
             }
             className={button.primary}
             onClick={() =>
-              act(() => publishBorrowingBaseTemplateAction(template.id))
+              act(
+                () => publishBorrowingBaseTemplateAction(template.id),
+                "Published.",
+              )
             }
           >
             {pending
@@ -216,13 +226,16 @@ function ArchiveItem({
   act,
 }: {
   template: TemplateFacts;
-  act: (action: () => Promise<ActionResult>) => void;
+  act: (action: () => Promise<ActionResult>, done?: string) => void;
 }) {
   return template.archived ? (
     <MenuItem
       icon={<ArchiveRestore />}
       onSelect={() =>
-        act(() => archiveBorrowingBaseTemplateAction(template.id, false))
+        act(
+          () => archiveBorrowingBaseTemplateAction(template.id, false),
+          `${template.name} restored.`,
+        )
       }
     >
       Restore
@@ -231,7 +244,10 @@ function ArchiveItem({
     <MenuItem
       icon={<Archive />}
       onSelect={() =>
-        act(() => archiveBorrowingBaseTemplateAction(template.id, true))
+        act(
+          () => archiveBorrowingBaseTemplateAction(template.id, true),
+          `${template.name} archived.`,
+        )
       }
     >
       Archive
@@ -250,11 +266,14 @@ function DeleteItem({
     <MenuItem
       icon={<Trash2 />}
       danger
-      onSelect={() => {
+      onSelect={async () => {
         if (
-          confirm(
-            `Delete ${template.name}? Lines started from it keep their own borrowing base.`,
-          )
+          await ask({
+            title: `Delete ${template.name}?`,
+            body: "Lines started from it keep their own borrowing base.",
+            action: "Delete",
+            danger: true,
+          })
         )
           act(() => deleteBorrowingBaseTemplateAction(template.id));
       }}
@@ -267,12 +286,11 @@ function DeleteItem({
 // A row's "…" menu on the list: archive or restore, and delete.
 export function TemplateRowMenu({ template }: { template: TemplateFacts }) {
   const [, start] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
-  function act(action: () => Promise<ActionResult>) {
-    setFailure(null);
+  function act(action: () => Promise<ActionResult>, done?: string) {
     start(async () => {
       const result = await action();
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
+      else if (done) toast.success(done);
     });
   }
   return (
@@ -281,7 +299,6 @@ export function TemplateRowMenu({ template }: { template: TemplateFacts }) {
         <ArchiveItem template={template} act={act} />
         <DeleteItem template={template} act={act} />
       </Menu>
-      {failure && <p className="text-xs text-danger">{failure}</p>}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import {
   updateCommentAction,
 } from "@/app/comments/actions";
 import { formatDay } from "@/lib/format";
+import { ask } from "./confirm";
 import { Badge, Card } from "./page";
 import { button, input } from "./styles";
 
@@ -110,8 +111,15 @@ function CommentItem({ comment }: { comment: Comment }) {
     });
   }
 
-  function remove() {
-    if (!confirm("Delete this comment?")) return;
+  async function remove() {
+    if (
+      !(await ask({
+        title: "Delete this comment?",
+        action: "Delete",
+        danger: true,
+      }))
+    )
+      return;
     setFailure(null);
     startTransition(async () => {
       const result = await removeCommentAction(comment.id);

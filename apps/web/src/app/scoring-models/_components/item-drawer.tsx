@@ -16,6 +16,7 @@ import {
 } from "@/lib/labels";
 import { removeItemAction, saveItemAction } from "../actions";
 import type { ActionResult } from "../types";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal, Segmented } from "@/components/ui";
@@ -147,10 +148,15 @@ function ItemForm({
   );
   const parent = items.find((i) => i.code === parentCode);
 
-  function remove() {
+  async function remove() {
     if (
       !item ||
-      !confirm(`Remove "${item.label}" (${item.code}) from this draft?`)
+      !(await ask({
+        title: `Remove "${item.label}" (${item.code})?`,
+        body: "It's removed from this draft.",
+        action: "Remove",
+        danger: true,
+      }))
     )
       return;
     setDeleteFailure(null);

@@ -10,6 +10,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
 import { Field, keepFields, Modal, Segmented } from "@/components/ui";
@@ -150,12 +151,15 @@ function LineForm({
     null,
   );
 
-  function remove() {
+  async function remove() {
     if (
       !line ||
-      !confirm(
-        `Remove "${line.label}" (${line.code})? Formulas that use it will show an error.`,
-      )
+      !(await ask({
+        title: `Remove "${line.label}" (${line.code})?`,
+        body: "Formulas that use it will show an error.",
+        action: "Remove",
+        danger: true,
+      }))
     )
       return;
     setDeleteFailure(null);

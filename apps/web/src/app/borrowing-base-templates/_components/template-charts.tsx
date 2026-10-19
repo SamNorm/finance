@@ -3,7 +3,9 @@
 import type { ChartDefinition, ModelLine } from "@finance/domain";
 import { ChartColumn, ChartLine } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ChartBuilder, type ChartDraft } from "@/components/chart-builder";
+import { ask } from "@/components/confirm";
 import { Card } from "@/components/page";
 import { button, table } from "@/components/styles";
 import { Icon } from "@/components/ui";
@@ -32,7 +34,6 @@ export function TemplateCharts({
 }) {
   const [editing, setEditing] = useState<ChartDefinition | "new" | null>(null);
   const [removing, startRemove] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
   const byCode = new Map(figures.map((f) => [f.code, f]));
   // The chart builder picks among a model's lines; figures read as such.
   const lines: ModelLine[] = figures
@@ -58,15 +59,21 @@ export function TemplateCharts({
     return saveBorrowingBaseTemplateChartsAction(templateId, next);
   }
 
-  function remove(chart: ChartDefinition) {
-    if (!confirm(`Remove the chart "${chart.title}"?`)) return;
-    setFailure(null);
+  async function remove(chart: ChartDefinition) {
+    if (
+      !(await ask({
+        title: `Remove the chart "${chart.title}"?`,
+        action: "Remove",
+        danger: true,
+      }))
+    )
+      return;
     startRemove(async () => {
       const result = await saveBorrowingBaseTemplateChartsAction(
         templateId,
         charts.filter((c) => c.id !== chart.id),
       );
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -90,11 +97,6 @@ export function TemplateCharts({
         </button>
       }
     >
-      {failure && (
-        <p className="border-b border-line px-4 py-2 text-sm text-danger">
-          {failure}
-        </p>
-      )}
       {charts.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-muted">
           No charts. Add one over any of the borrowing base&apos;s figures.

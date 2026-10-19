@@ -13,6 +13,7 @@ import {
 } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import { useId, useState, useTransition, type ReactNode } from "react";
+import { toast } from "sonner";
 import type { ActionResult } from "@/lib/action-result";
 import { formatDate } from "@/lib/format";
 import { button, input } from "./styles";
@@ -223,10 +224,7 @@ function ScheduleBuilder({
   const [view, setView] = useState<"payments" | "years">("payments");
   const [selected, setSelected] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const previews = drafts.map((d) => previewOf(d, start));
   const adjusted = (adjustments: Adjustment[]) =>
@@ -327,16 +325,11 @@ function ScheduleBuilder({
 
   function onSave() {
     if (!save) return;
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await save(drafts.map(toInput));
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -500,7 +493,7 @@ function ScheduleBuilder({
               ))}
             </div>
           )}
-          {(dirty || feedback) && (
+          {(dirty || failure) && (
             <div className="flex flex-wrap items-center gap-2">
               {dirty && (
                 <>
@@ -525,12 +518,8 @@ function ScheduleBuilder({
               {blocked && dirty && (
                 <span className="text-sm text-muted">{blocked}</span>
               )}
-              {feedback && (
-                <span
-                  className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-                >
-                  {feedback.message}
-                </span>
+              {failure && (
+                <span className="text-sm text-danger">{failure}</span>
               )}
             </div>
           )}

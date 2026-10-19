@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { button, input } from "@/components/styles";
 import { Field, Modal } from "@/components/ui";
@@ -46,12 +48,21 @@ export function VersionActions({
   const [publishing, setPublishing] = useState(false);
   const [notes, setNotes] = useState("");
 
-  function act(action: () => Promise<ActionResult>, then?: () => void) {
-    setFailure(null);
+  // Starting or discarding a draft; publishing shows its failure in its
+  // dialog instead, with the issues to fix.
+  function act(action: () => Promise<ActionResult>) {
     startTransition(async () => {
       const result = await action();
+      if (!result.ok) toast.error(result.message);
+    });
+  }
+
+  function publish(versionId: string) {
+    setFailure(null);
+    startTransition(async () => {
+      const result = await publishAction(versionId, notes);
       if (!result.ok) return setFailure(result);
-      if (then) startTransition(then);
+      startTransition(() => setPublishing(false));
     });
   }
 
@@ -66,14 +77,16 @@ export function VersionActions({
               type="button"
               disabled={pending}
               className={button.danger}
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  confirm(
-                    `Discard draft v${version.number} and all its changes?`,
-                  )
-                ) {
+                  await ask({
+                    title: `Discard draft v${version.number}?`,
+                    body: "All its changes are lost.",
+                    action: "Discard draft",
+                    danger: true,
+                  })
+                )
                   act(() => discardDraftAction(version.id));
-                }
               }}
             >
               Discard draft
@@ -83,7 +96,10 @@ export function VersionActions({
               disabled={pending || publishBlocker !== null}
               title={publishBlocker ?? undefined}
               className={button.primary}
-              onClick={() => setPublishing(true)}
+              onClick={() => {
+                setFailure(null);
+                setPublishing(true);
+              }}
             >
               Publish v{version.number}
             </button>
@@ -103,9 +119,6 @@ export function VersionActions({
           </button>
         )}
       </div>
-      {failure && !publishing && (
-        <p className="text-xs text-danger">{failure.message}</p>
-      )}
 
       {version?.status === "draft" && (
         <Modal
@@ -149,12 +162,7 @@ export function VersionActions({
               type="button"
               disabled={pending}
               className={button.primary}
-              onClick={() =>
-                act(
-                  () => publishAction(version.id, notes),
-                  () => setPublishing(false),
-                )
-              }
+              onClick={() => publish(version.id)}
             >
               {pending ? "Publishing…" : `Publish v${version.number}`}
             </button>

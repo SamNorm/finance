@@ -3,7 +3,9 @@
 import type { ChartDefinition, ModelLine } from "@finance/domain";
 import { ChartColumn, ChartLine } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ChartBuilder, type ChartDraft } from "@/components/chart-builder";
+import { ask } from "@/components/confirm";
 import { Card } from "@/components/page";
 import { button } from "@/components/styles";
 import { Icon } from "@/components/ui";
@@ -23,7 +25,6 @@ export function ModelCharts({
 }) {
   const [editing, setEditing] = useState<ChartDefinition | "new" | null>(null);
   const [removing, startRemove] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
   const labels = new Map(lines.map((l) => [l.code, l.label]));
 
   async function save(chart: ChartDraft) {
@@ -34,15 +35,21 @@ export function ModelCharts({
     return saveModelChartsAction(versionId, next);
   }
 
-  function remove(chart: ChartDefinition) {
-    if (!confirm(`Remove the chart "${chart.title}"?`)) return;
-    setFailure(null);
+  async function remove(chart: ChartDefinition) {
+    if (
+      !(await ask({
+        title: `Remove the chart "${chart.title}"?`,
+        action: "Remove",
+        danger: true,
+      }))
+    )
+      return;
     startRemove(async () => {
       const result = await saveModelChartsAction(
         versionId,
         charts.filter((c) => c.id !== chart.id),
       );
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -64,7 +71,6 @@ export function ModelCharts({
         )
       }
     >
-      {failure && <p className="px-4 pt-3 text-sm text-danger">{failure}</p>}
       {charts.length === 0 ? (
         <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
           <span className="grid size-10 place-items-center rounded-full bg-surface-2 text-muted">

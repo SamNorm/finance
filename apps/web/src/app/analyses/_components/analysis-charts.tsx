@@ -8,7 +8,9 @@ import type {
   RunPeriod,
 } from "@finance/domain";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ChartBuilder, type ChartDraft } from "@/components/chart-builder";
+import { ask } from "@/components/confirm";
 import {
   MetricChart,
   type ChartFormat,
@@ -52,7 +54,6 @@ export function AnalysisCharts({
 }) {
   const [editing, setEditing] = useState<ChartDefinition | "new" | null>(null);
   const [removing, startRemove] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
   const periods = chartPeriods(run.periods);
   const byCode = new Map(lines.map((l) => [l.code, l]));
 
@@ -125,15 +126,21 @@ export function AnalysisCharts({
     return saveAnalysisChartsAction(analysisId, next);
   }
 
-  function remove(chart: ChartDefinition) {
-    if (!confirm(`Remove the chart "${chart.title}"?`)) return;
-    setFailure(null);
+  async function remove(chart: ChartDefinition) {
+    if (
+      !(await ask({
+        title: `Remove the chart "${chart.title}"?`,
+        action: "Remove",
+        danger: true,
+      }))
+    )
+      return;
     startRemove(async () => {
       const result = await saveAnalysisChartsAction(
         analysisId,
         charts.filter((c) => c.id !== chart.id),
       );
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -165,7 +172,6 @@ export function AnalysisCharts({
           Chart
         </button>
       </div>
-      {failure && <p className="text-sm text-danger">{failure}</p>}
       {all.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-2">
           {all.map(({ chart, own }) => (

@@ -4,6 +4,8 @@ import type { Term } from "@finance/domain";
 import { Gauge, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition, type FormEvent } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { Badge, Card } from "@/components/page";
 import { button, input, table } from "@/components/styles";
@@ -66,19 +68,20 @@ export function CreditLines({
   const [editing, setEditing] = useState<LineRow | "new" | null>(null);
   const [margining, setMargining] = useState<LineRow | null>(null);
   const [removing, startRemove] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
 
-  function remove(line: LineRow) {
+  async function remove(line: LineRow) {
     if (
-      !confirm(
-        `Delete ${line.name}? Analyses stop counting it, in past years too. A line repaid and cancelled is better closed.`,
-      )
+      !(await ask({
+        title: `Delete ${line.name}?`,
+        body: "Analyses stop counting it, in past years too. A line repaid and cancelled is better closed.",
+        action: "Delete line",
+        danger: true,
+      }))
     )
       return;
-    setFailure(null);
     startRemove(async () => {
       const result = await removeCreditLineAction(line.id);
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -221,11 +224,6 @@ export function CreditLines({
             </tbody>
           </table>
         </div>
-      )}
-      {failure && (
-        <p className="border-t border-line px-4 py-2 text-sm text-danger">
-          {failure}
-        </p>
       )}
       <Modal
         open={editing !== null}

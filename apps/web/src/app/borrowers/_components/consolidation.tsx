@@ -18,6 +18,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Popover } from "@/components/menu";
 import { Card } from "@/components/page";
@@ -376,12 +377,15 @@ function PeriodForm({
     });
   }
 
-  function remove() {
+  async function remove() {
     if (
       !period ||
-      !confirm(
-        `Delete the period ending ${formatDate(period.periodEnd)}? The members' statements stay.`,
-      )
+      !(await ask({
+        title: `Delete the period ending ${formatDate(period.periodEnd)}?`,
+        body: "The members' statements stay.",
+        action: "Delete period",
+        danger: true,
+      }))
     )
       return;
     startDelete(async () => {
@@ -777,11 +781,14 @@ export function Members({
                     className={button.icon}
                     aria-label={`Remove ${m.name}`}
                     disabled={pending}
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        confirm(
-                          `Remove ${m.name} and its statements from every period? It stays a borrower.`,
-                        )
+                        await ask({
+                          title: `Remove ${m.name}?`,
+                          body: "Its statements are removed from every period. It stays a borrower.",
+                          action: "Remove",
+                          danger: true,
+                        })
                       )
                         act(() =>
                           removeConsolidationMemberAction(entityId, m.id),

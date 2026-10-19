@@ -7,7 +7,9 @@ import type {
 } from "@finance/domain";
 import type { BorrowingBaseDefinition } from "@finance/domain/borrowing-bases";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ChartBuilder, type ChartDraft } from "@/components/chart-builder";
+import { ask } from "@/components/confirm";
 import {
   MetricChart,
   type ChartFormat,
@@ -78,7 +80,6 @@ export function BorrowingBaseCharts({
 }) {
   const [editing, setEditing] = useState<ChartDefinition | "new" | null>(null);
   const [removing, startRemove] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
   const [overlaid, setOverlaid] = useState("BB_USAGE");
   // An empty list is the borrowing base's own: no charts.
   const own = definition.charts !== undefined;
@@ -139,15 +140,21 @@ export function BorrowingBaseCharts({
     return saveBorrowingBaseChartsAction(lineId, next);
   }
 
-  function remove(chart: ChartDefinition) {
-    if (!confirm(`Remove the chart "${chart.title}"?`)) return;
-    setFailure(null);
+  async function remove(chart: ChartDefinition) {
+    if (
+      !(await ask({
+        title: `Remove the chart "${chart.title}"?`,
+        action: "Remove",
+        danger: true,
+      }))
+    )
+      return;
     startRemove(async () => {
       const result = await saveBorrowingBaseChartsAction(
         lineId,
         charts.filter((c) => c.id !== chart.id),
       );
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -194,11 +201,6 @@ export function BorrowingBaseCharts({
           </button>
         }
       >
-        {failure && (
-          <p className="border-b border-line px-4 py-2 text-sm text-danger">
-            {failure}
-          </p>
-        )}
         {charts.length === 0 && (
           <p className="px-4 py-8 text-center text-sm text-muted">
             No charts. Add one over any of the borrowing base&apos;s figures.

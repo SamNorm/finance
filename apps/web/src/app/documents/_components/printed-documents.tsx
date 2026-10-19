@@ -2,7 +2,9 @@
 
 import { Trash2 } from "lucide-react";
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Card } from "@/components/page";
 import { button, table } from "@/components/styles";
 import { deleteDocumentAction } from "../actions";
@@ -56,7 +58,6 @@ export function PrintedDocuments({
   description: string;
   showAnalysis?: boolean;
 }) {
-  const [failure, setFailure] = useState<string | null>(null);
   const [deleting, startDelete] = useTransition();
   // A line's documents print a month; an analysis's, a scenario.
   const fromLines = documents.filter((d) => d.creditLineId).length;
@@ -141,16 +142,18 @@ export function PrintedDocuments({
                     className={button.icon}
                     aria-label={`Delete ${d.title}`}
                     disabled={deleting}
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        confirm(
-                          `Delete "${d.title}"? A copy already in a credit file isn't affected.`,
-                        )
+                        await ask({
+                          title: `Delete "${d.title}"?`,
+                          body: "A copy already in a credit file isn't affected.",
+                          action: "Delete",
+                          danger: true,
+                        })
                       )
                         startDelete(async () => {
-                          setFailure(null);
                           const result = await deleteDocumentAction(d.id);
-                          if (!result.ok) setFailure(result.message);
+                          if (!result.ok) toast.error(result.message);
                         });
                     }}
                   >
@@ -162,11 +165,6 @@ export function PrintedDocuments({
           </tbody>
         </table>
       </div>
-      {failure && (
-        <p className="border-t border-line px-4 py-2.5 text-sm text-danger">
-          {failure}
-        </p>
-      )}
     </Card>
   );
 }

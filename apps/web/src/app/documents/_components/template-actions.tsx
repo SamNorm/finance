@@ -7,6 +7,8 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button, input } from "@/components/styles";
@@ -49,11 +51,12 @@ export function TemplateActions({
   const [dialog, setDialog] = useState<"details" | "copy" | null>(null);
   const close = () => setDialog(null);
 
-  function act(action: () => Promise<ActionResult>) {
+  function act(action: () => Promise<ActionResult>, done?: string) {
     setFailure(null);
     start(async () => {
       const result = await action();
       if (!result.ok) setFailure(result);
+      else if (done) toast.success(done);
     });
   }
 
@@ -80,13 +83,19 @@ export function TemplateActions({
             type="button"
             disabled={pending}
             className={button.danger}
-            onClick={() => {
+            onClick={async () => {
               if (
-                confirm(
-                  "Discard the draft's changes and go back to what's published?",
-                )
+                await ask({
+                  title: "Discard the draft's changes?",
+                  body: "The document goes back to what's published.",
+                  action: "Discard changes",
+                  danger: true,
+                })
               )
-                act(() => discardTemplateChangesAction(template.id));
+                act(
+                  () => discardTemplateChangesAction(template.id),
+                  "Changes discarded.",
+                );
             }}
           >
             Discard changes
@@ -102,7 +111,9 @@ export function TemplateActions({
                 : undefined
             }
             className={button.primary}
-            onClick={() => act(() => publishTemplateAction(template.id))}
+            onClick={() =>
+              act(() => publishTemplateAction(template.id), "Published.")
+            }
           >
             {pending
               ? "Publishing…"
@@ -123,7 +134,10 @@ export function TemplateActions({
             <MenuItem
               icon={<ArchiveRestore />}
               onSelect={() =>
-                act(() => archiveTemplateAction(template.id, false))
+                act(
+                  () => archiveTemplateAction(template.id, false),
+                  `${template.name} restored.`,
+                )
               }
             >
               Restore
@@ -132,7 +146,10 @@ export function TemplateActions({
             <MenuItem
               icon={<Archive />}
               onSelect={() =>
-                act(() => archiveTemplateAction(template.id, true))
+                act(
+                  () => archiveTemplateAction(template.id, true),
+                  `${template.name} archived.`,
+                )
               }
             >
               Archive
@@ -141,11 +158,14 @@ export function TemplateActions({
           <MenuItem
             icon={<Trash2 />}
             danger
-            onSelect={() => {
+            onSelect={async () => {
               if (
-                confirm(
-                  `Delete ${template.name}? Documents printed from it stay as printed.`,
-                )
+                await ask({
+                  title: `Delete ${template.name}?`,
+                  body: "Documents printed from it stay as printed.",
+                  action: "Delete",
+                  danger: true,
+                })
               )
                 act(() => deleteTemplateAction(template.id));
             }}

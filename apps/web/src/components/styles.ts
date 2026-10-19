@@ -10,6 +10,8 @@ export const button = {
   secondary: `${base} border border-line bg-surface shadow-xs hover:bg-surface-2`,
   ghost: `${base} text-muted hover:bg-surface-2 hover:text-foreground`,
   danger: `${base} text-danger hover:bg-danger-soft`,
+  // The button that goes ahead with a delete, where it's the main one.
+  dangerSolid: `${base} bg-danger text-danger-fg shadow-xs hover:opacity-90`,
   icon: "inline-flex size-7 items-center justify-center rounded text-muted hover:bg-surface-2 hover:text-foreground disabled:opacity-30 focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:outline-none [&_svg]:size-4",
 };
 

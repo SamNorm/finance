@@ -2,6 +2,8 @@
 
 import { CircleOff, RotateCcw } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { setBorrowingBaseDefinitionAction } from "../actions";
 import { MarginDialog, type MarginSources } from "./margin-line";
@@ -19,24 +21,26 @@ export function BorrowingBaseActions({
 }) {
   const [restarting, setRestarting] = useState(false);
   const [stopping, startStop] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
 
-  function stop() {
+  async function stop() {
     if (
-      !confirm(
-        `Stop margining ${lineName}? Its borrowing base's lines and terms are removed. Its months of certificates are kept, in case it's margined again.`,
-      )
+      !(await ask({
+        title: `Stop margining ${lineName}?`,
+        body: "Its borrowing base's lines and terms are removed. Its months of certificates are kept, in case it's margined again.",
+        action: "Stop margining",
+        danger: true,
+      }))
     )
       return;
-    setFailure(null);
     startStop(async () => {
       const result = await setBorrowingBaseDefinitionAction(lineId, null);
-      if (!result.ok) setFailure(result.message);
+      if (result.ok) toast.success(`Stopped margining ${lineName}.`);
+      else toast.error(result.message);
     });
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <>
       <Menu label={`${lineName} actions`}>
         <MenuItem icon={<RotateCcw />} onSelect={() => setRestarting(true)}>
           Start over from…
@@ -51,7 +55,6 @@ export function BorrowingBaseActions({
           {stopping ? "Stopping…" : "Stop margining"}
         </MenuItem>
       </Menu>
-      {failure && <p className="text-xs text-danger">{failure}</p>}
       <MarginDialog
         open={restarting}
         onClose={() => setRestarting(false)}
@@ -60,6 +63,6 @@ export function BorrowingBaseActions({
         sources={sources}
         replacing
       />
-    </div>
+    </>
   );
 }

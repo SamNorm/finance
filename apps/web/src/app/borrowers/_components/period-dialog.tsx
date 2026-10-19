@@ -8,6 +8,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { ask } from "@/components/confirm";
 import { button, input } from "@/components/styles";
 import { Field, Icon, keepFields, Modal } from "@/components/ui";
 import type { ActionResult } from "@/lib/action-result";
@@ -93,12 +94,15 @@ function PeriodForm({
     null,
   );
 
-  function remove() {
+  async function remove() {
     if (
       !period ||
-      !confirm(
-        `Delete the period ending ${formatDate(period.periodEnd)} and its figures?`,
-      )
+      !(await ask({
+        title: `Delete the period ending ${formatDate(period.periodEnd)}?`,
+        body: "Its figures are deleted with it.",
+        action: "Delete period",
+        danger: true,
+      }))
     )
       return;
     startDelete(async () => {

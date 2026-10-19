@@ -3,6 +3,7 @@
 import type { Covenant } from "@finance/domain";
 import { Scale } from "lucide-react";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import {
   blankCovenant,
   CovenantEditor,
@@ -35,25 +36,17 @@ export function BorrowerCovenants({
     setDrafts(saved);
   }
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const dirty =
     JSON.stringify(covenantInput(drafts)) !==
     JSON.stringify(covenantInput(saved));
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await saveCovenantsAction(entityId, covenantInput(drafts));
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved. Analyses test them now." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved. Analyses test them now.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -98,12 +91,8 @@ export function BorrowerCovenants({
           >
             {pending ? "Saving…" : "Save covenants"}
           </button>
-          {feedback ? (
-            <span
-              className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-            >
-              {feedback.message}
-            </span>
+          {failure ? (
+            <span className="text-sm text-danger">{failure}</span>
           ) : (
             dirty && (
               <span className="flex items-center gap-2 text-sm text-muted">

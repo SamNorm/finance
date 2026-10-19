@@ -2,6 +2,8 @@
 
 import { Pencil, Trash2 } from "lucide-react";
 import { useActionState, useState, useTransition } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button, input } from "@/components/styles";
 import { Field, Icon, keepFields, Modal } from "@/components/ui";
@@ -187,7 +189,6 @@ export function ModelActions({
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, startDelete] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) => {
       const result = await updateModelAction(model.id, form);
@@ -197,12 +198,19 @@ export function ModelActions({
     null,
   );
 
-  function remove() {
-    if (!confirm(`Delete ${model.name} and all its versions?`)) return;
-    setFailure(null);
+  async function remove() {
+    if (
+      !(await ask({
+        title: `Delete ${model.name}?`,
+        body: "All its versions are deleted with it.",
+        action: "Delete model",
+        danger: true,
+      }))
+    )
+      return;
     startDelete(async () => {
       const result = await deleteModelAction(model.id);
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -222,7 +230,6 @@ export function ModelActions({
           {deleting ? "Deleting…" : "Delete model"}
         </MenuItem>
       </Menu>
-      {failure && <p className="text-xs text-danger">{failure}</p>}
       <Modal
         open={editing}
         onClose={() => setEditing(false)}

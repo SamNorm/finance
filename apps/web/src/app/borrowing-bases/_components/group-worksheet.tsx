@@ -10,6 +10,7 @@ import {
 import { ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { Badge, Card } from "@/components/page";
 import { button, input } from "@/components/styles";
@@ -456,11 +457,14 @@ function Certificate({
     });
   }
 
-  function remove() {
+  async function remove() {
     if (
-      !confirm(
-        `Remove the group certificate for ${describeMonth(month.month)}? The month goes back to the members' figures added up.`,
-      )
+      !(await ask({
+        title: `Remove the group certificate for ${describeMonth(month.month)}?`,
+        body: "The month goes back to the members' figures added up.",
+        action: "Remove",
+        danger: true,
+      }))
     )
       return;
     save(null, null);

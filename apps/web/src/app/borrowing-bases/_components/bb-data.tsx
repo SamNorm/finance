@@ -12,6 +12,7 @@ import {
   useTransition,
   type FormEvent,
 } from "react";
+import { ask } from "@/components/confirm";
 import { IssueList } from "@/components/issue-list";
 import { button, card, input } from "@/components/styles";
 import { Field, Icon, Modal, Segmented } from "@/components/ui";
@@ -456,12 +457,15 @@ function MonthForm({
     });
   }
 
-  function remove() {
+  async function remove() {
     if (
       !month ||
-      !confirm(
-        `Remove ${describeMonth(month.month)} and its ${Object.keys(month.figures).length} figures?`,
-      )
+      !(await ask({
+        title: `Remove ${describeMonth(month.month)}?`,
+        body: `Its ${Object.keys(month.figures).length} figures are removed with it.`,
+        action: "Remove",
+        danger: true,
+      }))
     )
       return;
     setFailure(null);

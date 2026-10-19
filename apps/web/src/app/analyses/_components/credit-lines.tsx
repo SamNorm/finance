@@ -12,6 +12,7 @@ import { Dec } from "@finance/engine";
 import { ChevronDown, Pencil, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Badge, Card } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { TermChanges } from "@/components/term-editor";
@@ -417,10 +418,7 @@ export function BaseCaseLines({
     setRates({ ...setup.analysisRates });
   }
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const ids = new Set(setup.inForce.map((l) => l.id));
   const dirty =
     JSON.stringify(usageInput(drafts, ids)) !==
@@ -437,19 +435,14 @@ export function BaseCaseLines({
     }));
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await updateAnalysisAction(analysisId, {
         lineUsage: usageInput(drafts, ids),
         exchangeRates: ratesInput(rates),
       });
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved. Results and charts are updated." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved. Results and charts are updated.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -490,12 +483,8 @@ export function BaseCaseLines({
             >
               {pending ? "Saving…" : "Save"}
             </button>
-            {feedback ? (
-              <span
-                className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-              >
-                {feedback.message}
-              </span>
+            {failure ? (
+              <span className="text-sm text-danger">{failure}</span>
             ) : (
               dirty && (
                 <span className="flex items-center gap-2 text-sm text-muted">

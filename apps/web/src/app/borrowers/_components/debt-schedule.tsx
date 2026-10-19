@@ -4,6 +4,7 @@ import type { DebtSchedule } from "@finance/domain";
 import { REPAYMENTS, type Adjustment } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { ExcelLink } from "@/components/excel-link";
 import { LoanSchedule } from "@/components/loan-schedule";
 import { Card } from "@/components/page";
@@ -83,29 +84,21 @@ export function DebtScheduleEditor({
     JSON.stringify(loans.map(toInput)) !==
       JSON.stringify(schedule.loans.map(toDraft).map(toInput));
   const [pending, startTransition] = useTransition();
-  const [feedback, setFeedback] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const update = (key: string, patch: Partial<Draft>) =>
     setLoans((list) =>
       list.map((l) => (l.key === key ? { ...l, ...patch } : l)),
     );
 
   function save() {
-    setFeedback(null);
+    setFailure(null);
     startTransition(async () => {
       const result = await saveDebtScheduleAction(entityId, {
         asOf,
         loans: loans.map(toInput),
       });
-      startTransition(() =>
-        setFeedback(
-          result.ok
-            ? { ok: true, message: "Saved." }
-            : { ok: false, message: result.message },
-        ),
-      );
+      if (result.ok) toast.success("Saved.");
+      else startTransition(() => setFailure(result.message));
     });
   }
 
@@ -364,13 +357,7 @@ export function DebtScheduleEditor({
         >
           {pending ? "Saving…" : "Save existing debt"}
         </button>
-        {feedback && (
-          <span
-            className={`text-sm ${feedback.ok ? "text-success" : "text-danger"}`}
-          >
-            {feedback.message}
-          </span>
-        )}
+        {failure && <span className="text-sm text-danger">{failure}</span>}
       </div>
     </Card>
   );

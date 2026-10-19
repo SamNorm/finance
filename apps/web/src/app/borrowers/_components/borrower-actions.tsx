@@ -7,6 +7,8 @@ import {
   useState,
   useTransition,
 } from "react";
+import { toast } from "sonner";
+import { ask } from "@/components/confirm";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
 import { button } from "@/components/styles";
 import { keepFields, Modal } from "@/components/ui";
@@ -38,7 +40,6 @@ export function BorrowerActions({
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, startDelete] = useTransition();
-  const [failure, setFailure] = useState<string | null>(null);
   const [state, formAction, pending] = useActionState(
     async (_: ActionResult | null, form: FormData) => {
       const result = await updateEntityAction(entity.id, form);
@@ -48,19 +49,21 @@ export function BorrowerActions({
     null,
   );
 
-  function remove() {
+  async function remove() {
     if (
-      !confirm(
-        consolidated
-          ? `Delete ${entity.name} with its periods and analyses? Its members and their spreads stay.`
-          : `Delete ${entity.name} with all its periods and figures?`,
-      )
+      !(await ask({
+        title: `Delete ${entity.name}?`,
+        body: consolidated
+          ? "Its periods and analyses are deleted with it. Its members and their spreads stay."
+          : "All its periods and figures are deleted with it.",
+        action: consolidated ? "Delete consolidated client" : "Delete borrower",
+        danger: true,
+      }))
     )
       return;
-    setFailure(null);
     startDelete(async () => {
       const result = await deleteEntityAction(entity.id);
-      if (!result.ok) setFailure(result.message);
+      if (!result.ok) toast.error(result.message);
     });
   }
 
@@ -84,9 +87,6 @@ export function BorrowerActions({
               : "Delete borrower"}
         </MenuItem>
       </Menu>
-      {failure && (
-        <p className="w-full text-right text-xs text-danger">{failure}</p>
-      )}
       <Modal
         open={editing}
         onClose={() => setEditing(false)}
