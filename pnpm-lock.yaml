@@ -72,6 +72,9 @@ importers:
       '@finance/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@finance/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       lucide-react:
         specifier: 1.49.0
         version: 1.49.0(@types/react@19.3.0)(react@19.3.0)

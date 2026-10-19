@@ -6,7 +6,8 @@ export type NavIcon =
   | "scoring"
   | "financial"
   | "templates"
-  | "documents";
+  | "documents"
+  | "assistant";
 
 export interface NavItem {
   href: string;
@@ -55,6 +56,10 @@ export const navSections = (modelsLabel: string): NavSection[] => [
       },
       { href: "/documents", label: "Documents", icon: "documents" },
     ],
+  },
+  {
+    label: "Help",
+    items: [{ href: "/help", label: "AI assistant", icon: "assistant" }],
   },
 ];
 

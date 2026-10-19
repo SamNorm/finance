@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bot,
   Building2,
   ChartLine,
   FileText,
@@ -23,6 +24,7 @@ const ICONS: Record<NavIcon, typeof Sigma> = {
   financial: Sigma,
   templates: LayoutTemplate,
   documents: FileText,
+  assistant: Bot,
 };
 
 // The sidebar's sections. `pathname` is null while it loads, in the static
