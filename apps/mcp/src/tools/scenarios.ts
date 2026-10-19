@@ -4,12 +4,14 @@ import {
   deleteScenario,
   duplicateScenario,
   getAnalysis,
+  getCreditLines,
   getDebtSchedules,
   getScenario,
   updateScenario,
   type Context,
   type ModelLine,
   type OwnedDebtSchedule,
+  type OwnedLine,
   type Scenario,
 } from "@finance/domain";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -19,10 +21,13 @@ import { figure } from "../format";
 import { describeProject } from "../loans";
 import { describeCapex } from "./capex";
 import { describeCovenants } from "./covenants";
+import { describeScenarioLines } from "./credit-lines";
 import { ADD, CHANGE, invalid, respond } from "../respond";
 
 // An analysis's scenarios: each overrides some of the model's assumptions
-// and can finance a project. The base case is the borrower as is.
+// and the usage of lines of credit, can finance a project, and can propose
+// its deal's covenants and lines of credit. The base case is the borrower
+// as is.
 
 const VALUES =
   'Percentages take their percent sign ("-15%", "2.5%"): a number without one is taken as is, so "5" is 500%. Ratios and amounts are plain numbers ("1.25", "500000").';
@@ -34,6 +39,7 @@ export function describeScenario(
   s: Scenario,
   lines: readonly ModelLine[],
   debtSchedules?: readonly OwnedDebtSchedule[],
+  creditLines: readonly OwnedLine[] = [],
 ) {
   const byCode = new Map(lines.map((l) => [l.code, l]));
   return {
@@ -61,16 +67,17 @@ export function describeScenario(
     capexPlan: describeCapex(s.capex),
     // The deal's own covenants; null tests the borrower's in force.
     proposedCovenants: s.covenants && describeCovenants(s.covenants),
+    ...describeScenarioLines(s, creditLines),
   };
 }
 
 async function described(db: Db, ctx: Context, scenario: Scenario) {
   const { lines, entity } = await getAnalysis(db, ctx, scenario.analysisId);
-  return describeScenario(
-    scenario,
-    lines,
-    await getDebtSchedules(db, ctx, entity.id),
-  );
+  const [debtSchedules, creditLines] = await Promise.all([
+    getDebtSchedules(db, ctx, entity.id),
+    getCreditLines(db, ctx, entity.id),
+  ]);
+  return describeScenario(scenario, lines, debtSchedules, creditLines);
 }
 
 export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
@@ -78,7 +85,7 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
     "add_scenario",
     {
       title: "Add a scenario",
-      description: `Adds a scenario to an analysis, to stress its assumptions or to finance a project; add the project's entries afterwards, starting with add_project_loan or add_project_use. ${BY_YEAR} ${VALUES}`,
+      description: `Adds a scenario to an analysis, to stress its assumptions or to finance a project; add the project's entries afterwards, starting with add_project_loan or add_project_use, and the deal's lines of credit with set_proposed_line. ${BY_YEAR} ${VALUES}`,
       inputSchema: z.object({
         analysisId,
         name: z
@@ -166,7 +173,7 @@ export function scenarioTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Duplicate a scenario",
       description:
-        "Copies a scenario, its overrides (every year and by year) and its project, to vary from it: the same deal with a longer amortization, say.",
+        "Copies a scenario, its overrides (every year and by year), its project and capex plan, and the covenants, lines of credit and line usage it proposes, to vary from it: the same deal with a longer amortization, say.",
       inputSchema: z.object({
         scenarioId,
         name: z

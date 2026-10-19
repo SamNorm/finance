@@ -53,7 +53,12 @@ NET_INCOME,Net income,IS,,,,,,`;
 
 let db: Db;
 let ctx: Context;
-let ids: { acme: string; analysis: string; scenario: string };
+let ids: {
+  acme: string;
+  analysis: string;
+  scenario: string;
+  scoringModel: string;
+};
 
 // An organization with one scoring model, a borrower with two years, a
 // published debt service model and an analysis with an empty scenario.
@@ -165,7 +170,12 @@ beforeAll(async () => {
   const scenario = await addScenario(db, ctx, analysis.id, {
     name: "New plant",
   });
-  ids = { acme: acme.id, analysis: analysis.id, scenario: scenario.id };
+  ids = {
+    acme: acme.id,
+    analysis: analysis.id,
+    scenario: scenario.id,
+    scoringModel: scoringModel.id,
+  };
 });
 
 const clients: Client[] = [];
@@ -289,6 +299,13 @@ describe("MCP server", () => {
       update_existing_loan: "changes",
       remove_existing_loan: "changes",
       set_debt_schedule_date: "changes",
+      add_line_of_credit: "adds",
+      update_line_of_credit: "changes",
+      remove_line_of_credit: "changes",
+      set_line_usage: "changes",
+      set_proposed_line: "changes",
+      remove_proposed_line: "changes",
+      use_lines_in_force: "changes",
     });
   });
 
@@ -1466,6 +1483,379 @@ describe("MCP server", () => {
     },
     60_000,
   );
+
+  it("keeps a borrower's lines of credit, a line at a time", async () => {
+    const call = await connect();
+    const {
+      value: [boreale],
+    } = await call("list_borrowers", { search: "boréale" });
+    // A seasonal operating line: more from October to March.
+    const { value: operating } = await call("add_line_of_credit", {
+      borrowerId: boreale.id,
+      name: "Operating line",
+      limit: {
+        value: "2,000,000",
+        seasons: [{ months: "10-3", value: "2,500,000" }],
+      },
+      rate: "7.2%",
+    });
+    expect(operating.line).toEqual({
+      id: expect.any(String),
+      name: "Operating line",
+      currency: "CAD",
+      limit: "2,000,000 (2,500,000 October to March)",
+      limitTerm: {
+        value: "2,000,000",
+        seasons: [{ months: [10, 11, 12, 1, 2, 3], value: "2,500,000" }],
+      },
+      rate: "7.2%",
+    });
+    const { value: usd } = await call("add_line_of_credit", {
+      borrowerId: boreale.id,
+      name: "USD line",
+      currency: "usd",
+      limit: 500000,
+      rate: "8%",
+    });
+    expect(usd.line).toMatchObject({ currency: "USD", limit: "500,000" });
+    expect(usd.line).not.toHaveProperty("limitTerm");
+    expect(
+      await call("add_line_of_credit", {
+        borrowerId: boreale.id,
+        name: "Overlapping",
+        limit: {
+          value: "1,000,000",
+          seasons: [
+            { months: "1-3", value: "1,200,000" },
+            { months: [3], value: "1,500,000" },
+          ],
+        },
+        rate: "5%",
+      }),
+    ).toEqual({
+      error: "Overlapping, limit: two seasons can't share a month.",
+    });
+
+    // An amendment from a month is a step; closing keeps the line.
+    const { value: amended } = await call("update_line_of_credit", {
+      lineId: usd.line.id,
+      limit: {
+        value: "500,000",
+        steps: [{ from: "2026-06", value: "750,000" }],
+      },
+      closedOn: "2027-03-31",
+    });
+    expect(amended.line).toEqual({
+      id: usd.line.id,
+      name: "USD line",
+      currency: "USD",
+      limit: "500,000; from June 2026, 750,000",
+      limitTerm: {
+        value: "500,000",
+        steps: [{ from: "2026-06", value: "750,000" }],
+      },
+      rate: "8%",
+      closedOn: "2027-03-31",
+    });
+    const { value: reopened } = await call("update_line_of_credit", {
+      lineId: usd.line.id,
+      closedOn: null,
+    });
+    expect(reopened.line).not.toHaveProperty("closedOn");
+    expect(
+      await call("update_line_of_credit", { lineId: usd.line.id }),
+    ).toEqual({ error: "Give at least one field to change." });
+    const { value: borrower } = await call("get_borrower", {
+      borrowerId: boreale.id,
+    });
+    expect(borrower.linesOfCredit.map((l: { name: string }) => l.name)).toEqual(
+      ["Operating line", "USD line"],
+    );
+    const { value: removed } = await call("remove_line_of_credit", {
+      lineId: usd.line.id,
+    });
+    expect(removed).toMatchObject({
+      removed: "USD line",
+      borrower: "Société Boréale",
+      linesOfCredit: [{ name: "Operating line" }],
+    });
+    await call("remove_line_of_credit", { lineId: operating.line.id });
+  });
+
+  it("counts lines' interest on the usage assumed, and a deal's proposed lines", async () => {
+    const call = await connect();
+    // A model reading the lines' interest, and what a deal adds to it.
+    const { draft } = await createFinancialModel(db, ctx, {
+      name: "Line interest",
+      scoringModelId: ids.scoringModel,
+    });
+    await addLine(db, ctx, draft.id, {
+      code: "LINES",
+      label: "Line interest",
+      kind: "calculation",
+      formula: "LINE_INTEREST",
+    });
+    await addLine(db, ctx, draft.id, {
+      code: "ADDED",
+      label: "Added post-project",
+      kind: "calculation",
+      formula: "PROFORMA_LINE_INTEREST",
+    });
+    const version = await publishFinancialModelVersion(db, ctx, draft.id);
+    const analysis = await createAnalysis(db, ctx, {
+      entityId: ids.acme,
+      financialModelVersionId: version.id,
+      name: "Lines",
+      projectionYears: 1,
+    });
+    const { value: added } = await call("add_line_of_credit", {
+      borrowerId: ids.acme,
+      name: "Operating line",
+      limit: "1,000,000",
+      rate: "6%",
+    });
+    const line = added.line.id;
+    // Its consolidated client reads it as its member's.
+    const {
+      value: [group],
+    } = await call("list_borrowers", { search: "acme group" });
+    const { value: consolidated } = await call("get_borrower", {
+      borrowerId: group.id,
+    });
+    expect(consolidated.linesOfCredit).toEqual([
+      {
+        id: `${ids.acme}/${line}`,
+        member: "Acme Fabrication",
+        name: "Operating line (Acme Fabrication)",
+        currency: "CAD",
+        limit: "1,000,000",
+        rate: "6%",
+      },
+    ]);
+    expect(
+      (
+        await call("update_line_of_credit", {
+          lineId: `${ids.acme}/${line}`,
+          rate: "7%",
+        })
+      ).error,
+    ).toMatch(/^That's a member's line as its consolidated client reads it/);
+    const run = async (scenarioId?: string) =>
+      (
+        await call("run_analysis", {
+          analysisId: analysis.id,
+          ...(scenarioId ? { scenarioId } : {}),
+        })
+      ).value;
+
+    // No usage assumed: no interest in the projected year, and flagged.
+    let results = await run();
+    expect(results.warnings).toEqual([
+      "Operating line has no usage assumed, so its interest counts as zero. Ask the user for it, then set it with set_line_usage.",
+    ]);
+    expect(results.lines[0]).toEqual({
+      code: "LINES",
+      label: "Line interest",
+      values: [null, null, "0"],
+    });
+
+    // Half drawn on average, and all of it in December.
+    const { value: half } = await call("set_line_usage", {
+      analysisId: analysis.id,
+      lineId: line,
+      share: "50%",
+      months: { "2025-12": "1,000,000" },
+    });
+    expect(half).toEqual({
+      analysis: "Lines",
+      line: "Operating line",
+      usage: { averageUsage: "50%", months: { "2025-12": "1,000,000" } },
+    });
+    results = await run();
+    expect(results).not.toHaveProperty("warnings");
+    // 11 months at 500,000 and December at 1,000,000, at 6%.
+    expect(results.lines[0].values).toEqual([null, null, "32,500"]);
+    const { value: shareOnly } = await call("set_line_usage", {
+      analysisId: analysis.id,
+      lineId: line,
+      months: { "2025-12": null },
+    });
+    expect(shareOnly.usage).toEqual({ averageUsage: "50%" });
+
+    // A stress draws more, then on a larger line from the first projected
+    // month, then on the line in force again.
+    const { value: stress } = await call("add_scenario", {
+      analysisId: analysis.id,
+      name: "Stress",
+    });
+    const { value: drawn } = await call("set_line_usage", {
+      scenarioId: stress.id,
+      lineId: line,
+      share: "80%",
+    });
+    expect(drawn).toEqual({
+      scenario: "Stress",
+      line: "Operating line",
+      override: { averageUsage: "80%" },
+      usage: { averageUsage: "80%" },
+    });
+    expect((await run(stress.id)).lines[0].values).toEqual([
+      null,
+      null,
+      "48,000",
+    ]);
+    const { value: larger } = await call("set_proposed_line", {
+      scenarioId: stress.id,
+      lineId: line,
+      limit: "1,500,000",
+    });
+    expect(larger).toMatchObject({
+      line: {
+        id: line,
+        limit: "1,500,000",
+        rate: "6%",
+        change: "changed",
+        inForce: { limit: "1,000,000" },
+      },
+      proposedLinesApply: "from the first projected month",
+    });
+    expect((await run(stress.id)).lines[0].values).toEqual([
+      null,
+      null,
+      "72,000",
+    ]);
+    const { value: closed } = await call("set_proposed_line", {
+      scenarioId: stress.id,
+      lineId: line,
+      closed: true,
+    });
+    expect(closed.line).toMatchObject({
+      limit: "1,500,000",
+      change: "closed at the deal",
+    });
+    expect((await run(stress.id)).lines[0].values).toEqual([null, null, "0"]);
+    const { value: inForce } = await call("use_lines_in_force", {
+      scenarioId: stress.id,
+    });
+    expect(inForce).toMatchObject({
+      proposedLinesOfCredit: null,
+      lineOfCreditUsage: [
+        { lineId: line, line: "Operating line", averageUsage: "80%" },
+      ],
+    });
+    expect((await run(stress.id)).lines[0].values).toEqual([
+      null,
+      null,
+      "48,000",
+    ]);
+
+    // A deal adds a line and raises the operating line from closing.
+    const { value: deal } = await call("add_scenario", {
+      analysisId: analysis.id,
+      name: "Deal",
+    });
+    await call("add_project_use", {
+      scenarioId: deal.id,
+      name: "New press",
+      amount: "100,000",
+      postsTo: "MACHINERY",
+      closing: "2024-12-31",
+    });
+    await call("add_project_funds", {
+      scenarioId: deal.id,
+      name: "Equity injection",
+      amount: "100,000",
+      postsTo: "EQUITY",
+    });
+    const { value: proposed } = await call("set_proposed_line", {
+      scenarioId: deal.id,
+      name: "Equipment line",
+      limit: "300,000",
+      rate: "8%",
+    });
+    // The proposal starts from a copy of the lines in force.
+    expect(proposed.proposedLinesOfCredit).toMatchObject([
+      { id: line, name: "Operating line", change: "as in force" },
+      { name: "Equipment line", limit: "300,000", change: "new line" },
+    ]);
+    const equipment = proposed.line.id;
+    await call("set_proposed_line", {
+      scenarioId: deal.id,
+      lineId: line,
+      limit: "1,500,000",
+    });
+    results = await run(deal.id);
+    expect(results.warnings).toEqual([
+      expect.stringMatching(/^Equipment line has no usage assumed/),
+    ]);
+    expect(
+      await call("set_line_usage", {
+        analysisId: analysis.id,
+        lineId: equipment,
+        share: "50%",
+      }),
+    ).toEqual({
+      error:
+        "That isn't one of the borrower's lines of credit. A new line a scenario proposes takes its usage in that scenario.",
+    });
+    await call("set_line_usage", {
+      scenarioId: deal.id,
+      lineId: equipment,
+      share: "50%",
+    });
+    results = await run(deal.id);
+    expect(results).not.toHaveProperty("warnings");
+    // As is, the operating line's 500,000 at 6%. Post-project, 750,000 at
+    // 6% and 150,000 at 8%: 15,000 and 12,000 more.
+    const [interest, more] = results.lines;
+    expect(interest.values).toEqual([null, null, "30,000"]);
+    expect(interest.postProject).toEqual([null, "57,000", "57,000"]);
+    expect(more.code).toBe("ADDED");
+    expect(more.postProject).toEqual([null, "27,000", "27,000"]);
+
+    const { value: detail } = await call("get_analysis", {
+      analysisId: analysis.id,
+    });
+    expect(detail.linesOfCredit).toEqual([
+      {
+        id: line,
+        name: "Operating line",
+        currency: "CAD",
+        limit: "1,000,000",
+        rate: "6%",
+        usage: { averageUsage: "50%" },
+      },
+    ]);
+    expect(detail.scenarios[1]).toMatchObject({
+      name: "Deal",
+      lineOfCreditUsage: [
+        { lineId: equipment, line: "Equipment line", averageUsage: "50%" },
+      ],
+      proposedLinesOfCredit: [
+        { id: line, limit: "1,500,000", change: "changed" },
+        { id: equipment, rate: "8%", change: "new line" },
+      ],
+      proposedLinesApply:
+        "post-project, from the project's closing; the scenario as is keeps the lines in force",
+    });
+
+    // Dropping the new line drops its usage; once nothing's left to change,
+    // the deal uses the lines in force.
+    const { value: dropped } = await call("remove_proposed_line", {
+      scenarioId: deal.id,
+      lineId: equipment,
+    });
+    expect(dropped).toMatchObject({
+      lineOfCreditUsage: [],
+      proposedLinesOfCredit: [{ id: line, change: "changed" }],
+    });
+    const { value: none } = await call("remove_proposed_line", {
+      scenarioId: deal.id,
+      lineId: line,
+    });
+    expect(none.proposedLinesOfCredit).toBeNull();
+    await call("remove_line_of_credit", { lineId: line });
+  });
 
   it("acts within the caller's organization only", async () => {
     const call = await connect({ organizationId: randomUUID() });

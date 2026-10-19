@@ -2,6 +2,7 @@ import type { Db } from "@finance/db";
 import {
   createAnalysis,
   getAnalysis,
+  getCreditLines,
   getDebtSchedules,
   getEntity,
   getFinancialModel,
@@ -28,6 +29,7 @@ import { imbalanceWarning } from "../loans";
 import { ADD, CHANGE, invalid, matches, READ, respond } from "../respond";
 import { describeCapexYears } from "./capex";
 import { describeCovenantResults } from "./covenants";
+import { describeLinesInAnalysis } from "./credit-lines";
 import { describeScenario } from "./scenarios";
 
 const value = (cell: ResultCell | undefined, line: ModelLine) =>
@@ -136,7 +138,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get an analysis",
       description:
-        "An analysis's settings, its model's lines (codes to pass to run_analysis), and its scenarios: assumption overrides, for every year and year by year, and the project each finances (sources and uses at closing, with each new loan's payment and maturity). The base case is the borrower as is and isn't a scenario.",
+        "An analysis's settings, its model's lines (codes to pass to run_analysis), the borrower's lines of credit with the usage the analysis assumes for each, and its scenarios: assumption overrides, for every year and year by year, the project each finances (sources and uses at closing, with each new loan's payment and maturity), its usage of lines of credit over the analysis's, and the covenants and lines of credit its deal proposes (each proposed line new, changed from the line in force, or closed at the deal). The base case is the borrower as is and isn't a scenario.",
       inputSchema: z.object({ analysisId }),
       annotations: READ,
     },
@@ -144,7 +146,10 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
       respond(async () => {
         const detail = await getAnalysis(db, ctx, analysisId);
         const { analysis, lines } = detail;
-        const debtSchedules = await getDebtSchedules(db, ctx, detail.entity.id);
+        const [debtSchedules, creditLines] = await Promise.all([
+          getDebtSchedules(db, ctx, detail.entity.id),
+          getCreditLines(db, ctx, detail.entity.id),
+        ]);
         const warnings = await spreadWarnings(
           db,
           ctx,
@@ -182,8 +187,14 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
                 ? { default: figure(l.defaultValue, l.format) }
                 : {}),
             })),
+          // The borrower's lines in force, and the usage the base case and
+          // every scenario assume for each; null counts no interest.
+          linesOfCredit: describeLinesInAnalysis(
+            creditLines,
+            analysis.lineUsage,
+          ),
           scenarios: detail.scenarios.map((s) =>
-            describeScenario(s, lines, debtSchedules),
+            describeScenario(s, lines, debtSchedules, creditLines),
           ),
         };
       }),
@@ -194,7 +205,7 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Run an analysis",
       description:
-        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested each fiscal year (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. Values are rounded as the app shows them; flags read Pass or Fail.",
+        "Computes an analysis's results: each model line's value in each period, for the base case or a scenario. A scenario with a project also gets post-project values: the borrower with the project, from the last fiscal year on (pro forma at closing) and in projected years. A scenario with a capex plan also gets it year by year. Covenants are tested each fiscal year (the scenario's proposed ones, or the borrower's in force): the figure against its threshold, the margin, and for a ratio of two lines the room in dollars and how far its base can fall. Lines of credit reach the model through built-in inputs (LINE_INTEREST, LINE_AUTHORIZED, LINE_AVERAGE_USAGE, PROFORMA_LINE_INTEREST) on the usage assumed; a line with none is flagged. Values are rounded as the app shows them; flags read Pass or Fail.",
       inputSchema: z.object({
         analysisId,
         scenarioId: z
@@ -243,6 +254,10 @@ export function analysisTools(server: McpServer, db: Db, ctx: Context) {
         const warnings = [
           ...(await spreadWarnings(db, ctx, detail.entity.id, detail.analysis)),
           ...(off ? [imbalanceWarning(off)] : []),
+          ...results.creditLines.withoutUsage.map(
+            (line) =>
+              `${line.name} has no usage assumed, so its interest counts as zero. Ask the user for it, then set it with set_line_usage.`,
+          ),
         ];
         return {
           analysis: detail.analysis.name,

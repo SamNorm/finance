@@ -1,5 +1,6 @@
 import type { Db } from "@finance/db";
 import {
+  getCreditLines,
   getDebtSchedules,
   getEntity,
   getScoringModel,
@@ -14,6 +15,7 @@ import { borrowerId } from "../fields";
 import { figure } from "../format";
 import { describeDebtSchedule } from "../loans";
 import { describeCovenants } from "./covenants";
+import { describeCreditLines } from "./credit-lines";
 import { describeControls } from "./spreads";
 import { invalid, matches, READ, respond } from "../respond";
 
@@ -55,19 +57,22 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get a borrower",
       description:
-        "A borrower's profile, its spread periods, its existing loans (the debt schedule, with each loan's payment and maturity) and its analyses. For a consolidated client, its members and their loans, each member's debt schedule as of its own date.",
+        "A borrower's profile, its spread periods, its existing loans (the debt schedule, with each loan's payment and maturity), its lines of credit (each limit in words, and as a term when it changes by season or step, and the rate), its covenants in force and its analyses. For a consolidated client, its members and their loans, each member's debt schedule as of its own date, and their lines of credit, keyed \"member/line\" as its analyses read them: change those on the members.",
       inputSchema: z.object({ borrowerId }),
       annotations: READ,
     },
     ({ borrowerId }) =>
       respond(async () => {
         const entity = await getEntity(db, ctx, borrowerId);
-        const [spread, scoringModel, analyses, debt] = await Promise.all([
-          getSpread(db, ctx, entity.id),
-          getScoringModel(db, ctx, entity.scoringModelId),
-          listAnalyses(db, ctx, { entityId: entity.id }),
-          getDebtSchedules(db, ctx, entity.id),
-        ]);
+        const [spread, scoringModel, analyses, debt, lines] = await Promise.all(
+          [
+            getSpread(db, ctx, entity.id),
+            getScoringModel(db, ctx, entity.scoringModelId),
+            listAnalyses(db, ctx, { entityId: entity.id }),
+            getDebtSchedules(db, ctx, entity.id),
+            getCreditLines(db, ctx, entity.id),
+          ],
+        );
         const { consolidation } = spread;
         return {
           id: entity.id,
@@ -99,6 +104,8 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
                 ...describeDebtSchedule(schedule),
               }))
             : describeDebtSchedule(entity.debtSchedule),
+          // Their terms in force; analyses assume their usage.
+          linesOfCredit: describeCreditLines(lines),
           // The credit agreement's covenants in force, which every analysis
           // tests.
           covenants: describeCovenants(entity.covenants),

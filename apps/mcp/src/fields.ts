@@ -59,6 +59,47 @@ export const moratorium = z
   })
   .describe("Payments suspended from the start of the loan's schedule.");
 
+// A line of credit's limit, as a term: an amount, or one that differs in
+// some months every year and steps from a month.
+const seasons = z
+  .array(
+    z.object({
+      months: z
+        .union([z.array(z.number().int().min(1).max(12)), z.string()])
+        .describe(
+          'Calendar months, every year: a list, [10, 11, 12, 1, 2, 3], or a range, "10-3" for October to March.',
+        ),
+      value: amount("The limit in those months"),
+    }),
+  )
+  .describe("Months with a limit of their own, every year.");
+
+export const limit = z
+  .union([
+    z.union([z.string(), z.number()]),
+    z.object({
+      value: amount("The limit outside any season"),
+      seasons: seasons.optional(),
+      steps: z
+        .array(
+          z.object({
+            from: z.string().describe('The month it starts in, "2026-06".'),
+            value: amount("The limit from then on"),
+            seasons: seasons
+              .optional()
+              .describe(
+                "Its own seasons: a step replaces the value and the seasons before it, so repeat any that still apply.",
+              ),
+          }),
+        )
+        .optional()
+        .describe("Later limits, each from a month, as amended."),
+    }),
+  ])
+  .describe(
+    'The authorized limit: an amount, "2,000,000". When it changes, {value, seasons, steps}: {"value": "2,000,000", "seasons": [{"months": "10-3", "value": "2,500,000"}]} is 2,500,000 from October to March every year and 2,000,000 otherwise; a step such as {"from": "2026-06", "value": "3,000,000"} changes it from a month on.',
+  );
+
 export const postsTo = z
   .string()
   .describe(

@@ -6,6 +6,7 @@ import { capexTools } from "./tools/capex";
 import { borrowerTools } from "./tools/borrowers";
 import { consolidationTools } from "./tools/consolidation";
 import { covenantTools } from "./tools/covenants";
+import { creditLineTools } from "./tools/credit-lines";
 import { documentTools } from "./tools/documents";
 import { loanTools } from "./tools/loans";
 import { projectTools } from "./tools/projects";
@@ -20,11 +21,12 @@ import { spreadTools } from "./tools/spreads";
 // What the client's model reads first, to know what it's working with.
 const INSTRUCTIONS = `Credit analysis for commercial lending.
 - Borrowers have spreads: financial statements by period, entered against one of the organization's scoring models.
-- An analysis runs a published financial model version over a borrower's periods. Its base case is the borrower as is. Its scenarios stress assumptions and can finance a project: sources and uses at closing (new loans, other funds), subordinations and adjustments, and the lines of credit the deal proposes. A project's effect shows in post-project values. A scenario can also plan capex in projected years, partly financed by loans whose debt service the model reads.
+- An analysis runs a published financial model version over a borrower's periods. Its base case is the borrower as is. Its scenarios stress assumptions and can finance a project: sources and uses at closing (new loans, other funds), subordinations and adjustments. A project's effect shows in post-project values. A scenario can also plan capex in projected years, partly financed by loans whose debt service the model reads, and propose its deal's lines of credit.
+- A borrower's lines of credit are real, like its existing loans: each has a currency, an annual rate and an authorized limit that can differ by season every year and step from a month. Analyses count their interest on the usage they assume (set_line_usage): a share of the limit, any month overridden with an amount drawn; a scenario can override it. A line with no usage assumed counts no interest, and run_analysis flags it. A scenario proposes its deal's lines (set_proposed_line): a new limit or rate, a new line, a line closed; they apply from closing post-project, or without a project from the first projected month. Change the borrower's lines only for terms in force.
 - Covenants are terms of a credit agreement, not of a model. A borrower's covenants in force are tested by every analysis of it; a scenario can propose its deal's own. Each tests a model line by code, at least or at most a threshold that can step by fiscal year. run_analysis reports each year's figure, threshold, margin and room before a breach.
 - A project's sources must equal its uses before the analysis can be completed. Projects are built a piece at a time, so tell the user when totals don't match yet.
 - Spreads come from the institution's scoring system. To enter one the user pastes, preview it, show the user what was read and get their confirmation, then import it.
-- A consolidated client adds up other borrowers' spreads on the same scoring model, when there are no consolidated statements from the accountant: each period takes one set of statements per member, less eliminations of what they owe, sell or pay each other. Its figures and existing loans are its members': change them on the members. Analyses run on it like on any borrower.
+- A consolidated client adds up other borrowers' spreads on the same scoring model, when there are no consolidated statements from the accountant: each period takes one set of statements per member, less eliminations of what they owe, sell or pay each other. Its figures, existing loans and lines of credit are its members': change them on the members. Analyses run on it like on any borrower.
 - A spread's critical errors (a balance sheet that doesn't balance, net income that isn't the one printed on the statements) keep its periods out of analyses until fixed. Retained earnings that don't roll forward are a warning; force them only when the user asks.
 - Documents for the credit file are printed as PDFs with generate_document and kept as printed; give the user the link it returns. Every figure in them comes from the app. An analysis prints as the built-in documents (an analysis report, a deal summary, a debt summary) and the organization's own; list_document_templates says which.
 - The organization's own documents are made of the app's sections (describe_document_sections). You can write one as a draft; a person reviews and publishes it in the app before analysts print it, so give the user its link.
@@ -46,6 +48,7 @@ export function createServer(db: Db, ctx: Context): McpServer {
   projectTools(server, db, ctx);
   capexTools(server, db, ctx);
   loanTools(server, db, ctx);
+  creditLineTools(server, db, ctx);
   documentTools(server, db, ctx);
   return server;
 }

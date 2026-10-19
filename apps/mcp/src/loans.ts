@@ -107,8 +107,9 @@ export function loanPayments(loan: Amortizing, start: string) {
 }
 
 // A scenario's sources and uses at closing, its subordinations,
-// consolidated loans and adjustments, and whether it balances. The borrower's debt schedules (a consolidated client's
-// members') name the loans consolidated.
+// consolidated loans and adjustments, and whether it balances. The
+// borrower's debt schedules (a consolidated client's members') name the
+// loans consolidated.
 export function describeProject(
   project: Project,
   debtSchedules: readonly OwnedDebtSchedule[] = [],
