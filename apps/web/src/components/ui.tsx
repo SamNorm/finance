@@ -24,7 +24,8 @@ export function keepFields(dispatch: (form: FormData) => void) {
 
 // A native <dialog>, opened as a modal while `open` is true. Escape and the
 // close button call onClose. `side` turns it into a full-height panel; `wide`
-// gives a centered one more room.
+// gives a centered one more room. Its text starts left, whatever the
+// alignment where it's opened, such as an empty state's.
 export function Modal({
   open,
   onClose,
@@ -53,8 +54,8 @@ export function Modal({
       onClose={onClose}
       className={
         side
-          ? "fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-none w-[min(460px,100vw)] max-w-none border-l border-line bg-surface p-0 text-foreground shadow-2xl"
-          : `m-auto ${wide ? "w-[min(1040px,calc(100vw-2rem))]" : "w-[min(720px,calc(100vw-2rem))]"} max-w-none rounded-xl border border-line bg-surface p-0 text-foreground shadow-2xl`
+          ? "fixed inset-y-0 right-0 left-auto m-0 h-dvh max-h-none w-[min(460px,100vw)] max-w-none border-l border-line bg-surface p-0 text-left text-foreground shadow-2xl"
+          : `m-auto ${wide ? "w-[min(1040px,calc(100vw-2rem))]" : "w-[min(720px,calc(100vw-2rem))]"} max-w-none rounded-xl border border-line bg-surface p-0 text-left text-foreground shadow-2xl`
       }
     >
       {open && (
