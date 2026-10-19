@@ -499,6 +499,44 @@ export const borrowingBaseQuality = pgEnum("borrowing_base_quality", [
   "verified",
 ]);
 
+// What a consolidated client's borrowing base adds up each month across its
+// members' margined lines (borrowing-base-plan.md §7.5): sums of totals, not
+// of line codes, since members' lines differ.
+export type GroupTotal =
+  | "receivables"
+  | "inventory"
+  | "otherCollateral"
+  | "priorClaims"
+  | "reserves"
+  | "limit"
+  | "outstanding"
+  | "otherUsage";
+
+// A consolidated client's month: named adjustments added to its members'
+// totals, as eliminations adjust its spread, and, when the client sends a
+// certificate for the group, the totals it gives, which replace the sum.
+export const groupBorrowingBaseMonths = pgTable(
+  "group_borrowing_base_months",
+  {
+    entityId: uuid()
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    // "YYYY-MM".
+    month: text().notNull(),
+    adjustments: jsonb()
+      .$type<
+        { id: string; name: string; total: GroupTotal; amount: string }[]
+      >()
+      .notNull()
+      .default([]),
+    override: jsonb().$type<Partial<Record<GroupTotal, string>>>(),
+    note: text(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.entityId, t.month] })],
+).enableRLS();
+
 // A margined line's monthly history: each month's certificate, reported by
 // the client or verified by a field exam or an audit (§7).
 export const borrowingBaseMonths = pgTable(

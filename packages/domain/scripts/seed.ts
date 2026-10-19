@@ -46,6 +46,7 @@ import {
   setPeriodControls,
   setAnalysisBorrowingBase,
   setBorrowingBaseMonth,
+  setGroupBorrowingBaseAdjustments,
   setBorrowingBaseValues,
   startBorrowingBase,
   updateAnalysis,
@@ -413,6 +414,46 @@ async function seed() {
   });
   console.log(
     `Borrowing base: ${certificates.length} months of certificates for Northwind's operating line.`,
+  );
+
+  // Laurentian Foods margins its CAD line too; it comes within a whisker of
+  // its borrowing base each September. Its consolidated group takes out
+  // what Laurentian Properties owes it.
+  const foodsLines = await getCreditLines(db, ctx, borrowers[1]!.entity.id);
+  const foodsCad = foodsLines.find((l) => l.currency === "CAD")!;
+  await startBorrowingBase(db, ctx, foodsCad.id, {
+    builtIn: "receivables-inventory",
+  });
+  const foodsCertificates = demoCertificates(companies[1]!, {
+    2023: 2_100_000,
+    2024: 2_600_000,
+  });
+  await setBorrowingBaseValues(
+    db,
+    ctx,
+    foodsCad.id,
+    foodsCertificates.flatMap((c) =>
+      Object.entries(c.figures).map(([code, value]) => ({
+        month: c.month,
+        code,
+        value,
+      })),
+    ),
+  );
+  for (const c of foodsCertificates)
+    await setBorrowingBaseMonth(db, ctx, foodsCad.id, c.month, {
+      quality: c.quality,
+      receivedOn: c.receivedOn,
+    });
+  await setGroupBorrowingBaseAdjustments(db, ctx, group.id, "2024-12", [
+    {
+      name: "Due from Laurentian Properties",
+      total: "receivables",
+      amount: "-45000",
+    },
+  ]);
+  console.log(
+    "Borrowing base: Laurentian Foods' CAD line, and its group's adjusted for what Laurentian Properties owes.",
   );
 
   const realEstate = await scoringModel(

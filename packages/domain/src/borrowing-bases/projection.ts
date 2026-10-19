@@ -64,6 +64,7 @@ export interface AnalysisBorrowingBase {
   // A line the scenario proposes, with no history.
   proposedNew: boolean;
   settings: ProjectedBorrowingBase;
+  definition: BorrowingBaseDefinition;
   rows: WaterfallRow[];
   inputs: WaterfallRow[];
   assumptions: LineOf<"assumption">[];
@@ -270,6 +271,7 @@ export async function runAnalysisBorrowingBases(
       member,
       proposedNew,
       settings,
+      definition,
       rows: compiled.rows,
       inputs: compiled.inputs,
       assumptions: compiled.assumptions,
