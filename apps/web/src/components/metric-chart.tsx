@@ -51,6 +51,10 @@ export interface MetricChartProps {
   periods: ChartPeriod[];
   series: ChartSeries[];
   threshold?: ChartThreshold | null;
+  // How a threshold that changes steps, for its legend: "by year".
+  steps?: string;
+  // Bars stack as parts of a whole, such as a borrowing base by collateral.
+  stacked?: boolean;
   // Buttons for the card header, such as edit and remove.
   actions?: ReactNode;
   height?: number;
@@ -100,6 +104,8 @@ export function MetricChart({
   periods,
   series,
   threshold = null,
+  steps = "by year",
+  stacked = false,
   actions,
   height = 220,
 }: MetricChartProps) {
@@ -128,10 +134,30 @@ export function MetricChart({
   const labelEnd =
     !hasBars &&
     series.filter((s) => s.mark === "line" && !s.reference).length === 1;
+  // Room on the right for that label, as wide as the figure.
+  const endLabel = labelEnd
+    ? show(
+        series
+          .find((s) => s.mark === "line" && !s.reference)
+          ?.values.findLast((v) => v !== null),
+        format,
+      )
+    : "";
+  // Many periods, such as months, read as a line without a dot on each.
+  const dense = periods.length > 12;
+  const bars = series.filter((s) => s.mark === "bar");
+  // Stacked bars reach their sum, each period.
+  const stacks = stacked
+    ? periods.map((_, p) =>
+        bars.reduce((sum, s) => sum + (s.values[p] ?? 0), 0),
+      )
+    : [];
   const ticks = niceTicks([
     ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)),
+    ...stacks,
     ...limits,
   ]);
+  const lastBar = series.findLastIndex((s) => s.mark === "bar");
   // The base case draws first, behind the scenario it compares with.
   const order = series
     .map((s, i) => ({ s, i }))
@@ -178,7 +204,7 @@ export function MetricChart({
                 />
               </svg>
               {threshold.label}
-              {flat !== null ? ` ${show(flat, format)}` : ", by year"}
+              {flat !== null ? ` ${show(flat, format)}` : `, ${steps}`}
             </li>
           )}
         </ul>
@@ -234,7 +260,12 @@ export function MetricChart({
           responsive
           style={{ width: "100%", height }}
           data={data}
-          margin={{ top: 20, right: labelEnd ? 48 : 8, bottom: 0, left: 0 }}
+          margin={{
+            top: 20,
+            right: labelEnd ? Math.max(48, 12 + endLabel.length * 7) : 8,
+            bottom: 0,
+            left: 0,
+          }}
           barGap={2}
           barCategoryGap="30%"
         >
@@ -321,7 +352,8 @@ export function MetricChart({
                 name={s.label}
                 fill={color(s, i)}
                 maxBarSize={24}
-                radius={[4, 4, 0, 0]}
+                stackId={stacked ? "stack" : undefined}
+                radius={!stacked || i === lastBar ? [4, 4, 0, 0] : 0}
                 isAnimationActive={false}
               />
             ) : (
@@ -334,12 +366,16 @@ export function MetricChart({
                 strokeWidth={2}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                dot={{
-                  r: 4,
-                  fill: color(s, i),
-                  stroke: "var(--surface)",
-                  strokeWidth: 2,
-                }}
+                dot={
+                  dense
+                    ? false
+                    : {
+                        r: 4,
+                        fill: color(s, i),
+                        stroke: "var(--surface)",
+                        strokeWidth: 2,
+                      }
+                }
                 activeDot={{
                   r: 5,
                   fill: color(s, i),

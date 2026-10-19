@@ -1,10 +1,15 @@
-import type {
-  BorrowingBaseFormat,
-  BorrowingBaseLine,
-  BorrowingBaseLineKind,
-  CollateralType,
-  Term,
-} from "@finance/domain";
+import {
+  COLLATERAL_CODES,
+  fxCode,
+  type BorrowingBaseDefinition,
+  type BorrowingBaseFormat,
+  type BorrowingBaseLine,
+  type BorrowingBaseLineKind,
+  type BorrowingBaseTest,
+  type CollateralType,
+} from "@finance/domain/borrowing-bases";
+import type { Term } from "@finance/domain/terms";
+import type { WaterfallRow } from "@finance/domain";
 import { Dec } from "@finance/engine";
 import {
   BLANK_TERM,
@@ -12,15 +17,15 @@ import {
   newKey,
   termDraft,
   termInput,
+  typedAmount,
   typedRate,
   type TermDraft,
 } from "./credit-lines";
 import { formatFigure } from "./format";
 
-// Borrowing bases as the app shows and edits them: months, figures and a
-// definition's lines as typed. Plain functions, safe in client components,
-// which can't import the domain's definition module (it reaches
-// node:crypto).
+// Borrowing bases as the app shows and edits them: months, figures, and a
+// definition's lines and tests as typed. Plain functions, safe in client
+// components, over what the domain shares with the browser.
 
 export type Quality = "reported" | "verified";
 
@@ -42,6 +47,11 @@ export function addMonths(month: string, n: number): string {
   const count = year * 12 + (m - 1) + n;
   return `${Math.floor(count / 12)}-${String((count % 12) + 1).padStart(2, "0")}`;
 }
+
+// The calendar months of a fiscal year in order, 1 to 12: with a March
+// year end, April first.
+export const fiscalMonths = (yearEndMonth: number) =>
+  Array.from({ length: 12 }, (_, i) => ((yearEndMonth + i) % 12) + 1);
 
 // The month before today's: the certificate usually expected next.
 export function lastMonthOf(today: string): string {
@@ -239,17 +249,12 @@ export function computedCodes(
           code: `${d.code}.AGED_OUT`,
           label: `${d.label}, aged out`,
         });
-      for (const [suffix, what] of [
-        ["INELIGIBLE", "ineligible"],
-        ["ELIGIBLE", "eligible"],
-        ["RATE", "advance rate"],
-        ...(d.cap ? [["CAP", "cap"]] : []),
-        ["MARGINED", "margined"],
-      ])
-        codes.push({
-          code: `${d.code}.${suffix}`,
-          label: `${d.label}, ${what}`,
-        });
+      for (const { suffix, label } of COLLATERAL_CODES)
+        if (suffix !== "CAP" || d.cap)
+          codes.push({
+            code: `${d.code}.${suffix}`,
+            label: `${d.label}, ${label.toLowerCase()}`,
+          });
     }
     if (d.kind === "group") {
       if (d.cap)
@@ -260,8 +265,9 @@ export function computedCodes(
   return codes;
 }
 
-// The foreign currencies the lines use, each entered as a rate each month.
-export function currenciesOf(
+// The rates of the foreign currencies the lines use, entered each month
+// (FX.USD).
+export function ratesOf(
   drafts: readonly LineDraft[],
   facility: string,
 ): string[] {
@@ -277,5 +283,99 @@ export function currenciesOf(
     const code = currency?.trim().toUpperCase();
     if (code && code !== facility) set.add(code);
   }
-  return [...set].sort();
+  return [...set].sort().map(fxCode);
 }
+
+// A test as typed (§6.3): a figure at least or at most a threshold, which
+// can step from a month and differ by season as other terms do. The
+// threshold is typed as the figure shows: "250,000", "15%" or "1.25x".
+export interface TestDraft {
+  key: string;
+  id?: string;
+  name: string;
+  metric: string;
+  test: "min" | "max";
+  threshold: TermDraft;
+}
+
+export const typedThreshold = (format: BorrowingBaseFormat) =>
+  format === "percent"
+    ? typedRate
+    : format === "ratio"
+      ? (raw: string) => `${Number(raw)}x`
+      : typedAmount;
+
+export const testDraft = (
+  test: BorrowingBaseTest,
+  format: BorrowingBaseFormat,
+): TestDraft => ({
+  key: test.id,
+  id: test.id,
+  name: test.name,
+  metric: test.metric,
+  test: test.test,
+  threshold: termDraft(test.threshold, typedThreshold(format)),
+});
+
+export const testInput = (draft: TestDraft) => ({
+  ...(draft.id ? { id: draft.id } : {}),
+  name: draft.name,
+  metric: draft.metric,
+  test: draft.test,
+  threshold: termInput(draft.threshold),
+});
+
+// A figure a test or a chart can read: any row of the waterfall but
+// headings, named so it reads alone ("Trade receivables, eligible"), under
+// its section.
+export interface Figure {
+  code: string;
+  label: string;
+  format: BorrowingBaseFormat;
+  section: string;
+}
+
+export function figuresOf(
+  rows: readonly WaterfallRow[],
+  definition: BorrowingBaseDefinition,
+): Figure[] {
+  const labels = new Map(rows.map((r) => [r.code, r.label]));
+  const parents = new Map(
+    definition.lines.flatMap((l) =>
+      l.kind === "ineligible" ? [[l.code, l.of] as const] : [],
+    ),
+  );
+  let section = "";
+  return rows.flatMap((row) => {
+    if (row.kind === "section") {
+      section = row.label;
+      return [];
+    }
+    if (row.kind === "line" && row.lineKind === "group") return [];
+    const dot = row.code.indexOf(".");
+    const parent =
+      row.kind === "detail" && !row.code.startsWith("BB_")
+        ? dot > 0
+          ? row.code.slice(0, dot)
+          : parents.get(row.code)
+        : undefined;
+    const of = parent && labels.get(parent);
+    return [
+      {
+        code: row.code,
+        label: of ? `${of}, ${row.label.toLowerCase()}` : row.label,
+        format: row.format,
+        section,
+      },
+    ];
+  });
+}
+
+// A new test, on excess availability until another figure is chosen.
+export const newTest = (): TestDraft => ({
+  key: newKey(),
+  name: "",
+  metric: "BB_EXCESS",
+  test: "min",
+  threshold: { ...BLANK_TERM },
+});

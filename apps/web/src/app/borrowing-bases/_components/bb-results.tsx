@@ -1,28 +1,45 @@
 "use client";
 
 import type {
-  BorrowingBaseDefinition,
-  BorrowingBaseFormat,
+  BorrowingBaseCycle,
   BorrowingBaseIssues,
   BorrowingBaseMonth,
   BorrowingBaseRun,
+  CycleFigure,
   CycleSummary,
   LineageRef,
   ResultCell,
   ResultValue,
-  Term,
+  TestResult,
   WaterfallRow,
 } from "@finance/domain";
-import { monthNumber, termIn } from "@finance/domain/terms";
+import {
+  TOTALS,
+  type BorrowingBaseDefinition,
+  type BorrowingBaseFormat,
+} from "@finance/domain/borrowing-bases";
+import { monthNumber, termIn, type Term } from "@finance/domain/terms";
 import { ChevronDown, ChevronRight, ClipboardList } from "lucide-react";
 import Link from "next/link";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { IssueList, IssuesSummary } from "@/components/issue-list";
-import { Card, EmptyState, Stat, plural } from "@/components/page";
+import { Badge, Card, EmptyState, Stat, plural } from "@/components/page";
 import { badge, button } from "@/components/styles";
 import { Modal } from "@/components/ui";
-import { describeMonth, QUALITY, showFigure } from "@/lib/borrowing-bases";
-import { describeMonths, describeTerm } from "@/lib/credit-lines";
+import {
+  describeMonth,
+  fiscalMonths,
+  QUALITY,
+  showFigure,
+  type Figure,
+} from "@/lib/borrowing-bases";
+import { describeMonths, describeTerm, MONTHS } from "@/lib/credit-lines";
 import { formatDate, formatFigure } from "@/lib/format";
 
 const SOURCES: Partial<Record<LineageRef["source"], string>> = {
@@ -31,14 +48,6 @@ const SOURCES: Partial<Record<LineageRef["source"], string>> = {
   entered: "Entered",
   term: "Terms",
   blank: "Blank",
-};
-
-type Totals = { code: string; label: string; format: BorrowingBaseFormat }[];
-
-// The built-in tests, as the latest month's cards name them.
-const TEST_LABELS: Record<string, string> = {
-  margin: "Margin test",
-  overline: "Overline test",
 };
 
 // A term of the line or its borrowing base, by the code the engine reads:
@@ -70,19 +79,22 @@ function applied(term: Term, month: string) {
   ].join(" · ");
 }
 
-// The borrowing base's history: the latest month and the last twelve at a
-// glance, then the waterfall month by month. Columns group by fiscal year,
-// each folding away; a line's detail rows (aging, ineligibles, eligible,
-// rate, cap) fold under it. Every figure opens its lineage.
+// The borrowing base's history: the latest month at a glance, its tests,
+// the business cycle by fiscal year and over the last twelve months, the
+// seasonal profile, then the waterfall month by month. Columns group by
+// fiscal year, each folding away; a line's detail rows (aging,
+// ineligibles, eligible, rate, cap) fold under it. Every figure opens its
+// lineage.
 export function BorrowingBaseResults({
   run,
   issues,
   years,
   definition,
   limit,
-  totals,
   months,
-  last12,
+  cycle,
+  yearEndMonth,
+  figures,
 }: {
   run: BorrowingBaseRun;
   issues: BorrowingBaseIssues;
@@ -90,9 +102,11 @@ export function BorrowingBaseResults({
   years: string[];
   definition: BorrowingBaseDefinition;
   limit: Term;
-  totals: Totals;
   months: BorrowingBaseMonth[];
-  last12: CycleSummary | null;
+  cycle: BorrowingBaseCycle;
+  // The borrower's fiscal year end, 1 to 12.
+  yearEndMonth: number;
+  figures: Figure[];
 }) {
   const [trail, setTrail] = useState<{ code: string; period: number }[]>([]);
   const terms = useMemo(() => termsOf(definition, limit), [definition, limit]);
@@ -132,7 +146,7 @@ export function BorrowingBaseResults({
             : "The latest certificate."
         }
       >
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 xl:grid-cols-5">
           <Stat
             label="Borrowing base"
             value={amount(value("BB_TOTAL", latest))}
@@ -164,42 +178,8 @@ export function BorrowingBaseResults({
             }
             detail="Usage over the limit"
           />
-          {run.tests
-            .filter((t) => t.builtIn)
-            .map((test) => {
-              const result = test.months[latest];
-              return (
-                <Stat
-                  key={test.id}
-                  label={TEST_LABELS[test.id] ?? test.name}
-                  value={
-                    result?.pass === null || result === undefined
-                      ? "–"
-                      : result.pass
-                        ? "Pass"
-                        : "Fail"
-                  }
-                  tone={
-                    result?.pass === true
-                      ? "success"
-                      : result?.pass === false
-                        ? "danger"
-                        : undefined
-                  }
-                  detail={
-                    result?.margin
-                      ? Number(result.margin) < 0
-                        ? `Short by ${amount(String(-Number(result.margin)))}`
-                        : `Room of ${amount(result.margin)}`
-                      : undefined
-                  }
-                />
-              );
-            })}
         </div>
       </Card>
-
-      {last12 && last12.months > 1 && <LastTwelve summary={last12} />}
 
       {(issues.general.length > 0 || flagged.length > 0) && (
         <IssuesSummary
@@ -223,69 +203,373 @@ export function BorrowingBaseResults({
         </IssuesSummary>
       )}
 
+      <TestsCard
+        tests={run.tests}
+        latest={latest}
+        month={month.month}
+        last12={cycle.last12}
+        figures={figures}
+      />
+
+      <CycleCard cycle={cycle} tests={run.tests} yearEndMonth={yearEndMonth} />
+
+      <SeasonalCard cycle={cycle} yearEndMonth={yearEndMonth} />
+
       <MonthlyTable
         run={run}
         issues={issues}
         years={years}
+        failed={cycle.last12?.failed ?? {}}
         onOpen={(code, period) => setTrail([{ code, period }])}
       />
 
-      <Lineage
-        trail={trail}
-        onTrail={setTrail}
-        run={run}
-        terms={terms}
-        totals={totals}
-      />
+      <Lineage trail={trail} onTrail={setTrail} run={run} terms={terms} />
     </div>
   );
 }
 
-function LastTwelve({ summary }: { summary: CycleSummary }) {
-  const amount = (raw: string | null | undefined) =>
-    raw === null || raw === undefined ? "–" : formatFigure(raw, "amount");
-  const when = (figure: { month: string } | null) =>
-    figure ? describeMonth(figure.month) : undefined;
-  const lowest = summary.lowestSurplus;
+const amountOf = (raw: string | null | undefined) =>
+  raw === null || raw === undefined ? "–" : formatFigure(raw, "amount");
+
+// Each test at the latest month: the figure, the threshold that applied,
+// the room left and whether it passed; and how many months it failed over
+// the last twelve.
+function TestsCard({
+  tests,
+  latest,
+  month,
+  last12,
+  figures,
+}: {
+  tests: TestResult[];
+  latest: number;
+  month: string;
+  last12: CycleSummary | null;
+  figures: Figure[];
+}) {
+  const figure = (code: string) => figures.find((f) => f.code === code);
   return (
     <Card
-      title="Last 12 months"
-      description={`${describeMonth(summary.from)} to ${describeMonth(summary.to)} · ${plural(summary.months, "certificate")}`}
+      flush
+      title="Tests"
+      description={`${describeMonth(month)}, and months failed over the last 12 with a certificate. Custom tests are set in Terms.`}
     >
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
-        <Stat
-          label="Peak usage"
-          value={amount(summary.peakUsage?.value)}
-          detail={when(summary.peakUsage)}
-        />
-        <Stat label="Average usage" value={amount(summary.averageUsage)} />
-        <Stat
-          label="Lowest usage"
-          value={amount(summary.lowestUsage?.value)}
-          detail={
-            summary.lowestUsage && `${when(summary.lowestUsage)} · never repaid`
-          }
-        />
-        <Stat
-          label="Lowest surplus"
-          value={amount(lowest?.value)}
-          detail={when(lowest)}
-          tone={lowest && Number(lowest.value) < 0 ? "danger" : undefined}
-        />
-        <Stat
-          label="Months in deficit"
-          value={summary.deficitMonths}
-          tone={summary.deficitMonths ? "danger" : "success"}
-        />
-        <Stat
-          label="Highest utilization"
-          value={
-            summary.highestUtilization
-              ? formatFigure(summary.highestUtilization.value, "percent")
-              : "–"
-          }
-          detail={when(summary.highestUtilization)}
-        />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line bg-surface-2/50 text-left text-xs text-muted">
+              <th className="px-4 py-2 font-medium">Test</th>
+              <th className="px-3 py-2 font-medium">Figure</th>
+              <th className="px-3 py-2 text-right font-medium">Actual</th>
+              <th className="px-3 py-2 text-right font-medium">Threshold</th>
+              <th className="px-3 py-2 text-right font-medium">Room</th>
+              <th className="px-3 py-2 font-medium">Result</th>
+              <th className="px-4 py-2 text-right font-medium">
+                Failed, 12 mo
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {tests.map((test) => {
+              const result = test.months[latest];
+              const f = figure(test.metric);
+              const format = f?.format ?? "amount";
+              const failed = last12?.failed[test.id] ?? 0;
+              const show = (raw: string | null | undefined) =>
+                raw === null || raw === undefined
+                  ? "–"
+                  : showFigure(raw, format, test.metric);
+              return (
+                <tr
+                  key={test.id}
+                  className="border-b border-line/70 last:border-b-0"
+                >
+                  <td className="px-4 py-2 font-medium whitespace-nowrap">
+                    {test.name}
+                    {test.builtIn && (
+                      <span className="ml-2 text-xs font-normal text-muted">
+                        Built in
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted">
+                    {f?.label ?? test.metric}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {show(result?.value)}
+                  </td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+                    <span className="text-xs text-muted">
+                      {test.test === "min" ? "at least " : "at most "}
+                    </span>
+                    {show(result?.threshold)}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-right tabular-nums ${result?.margin && Number(result.margin) < 0 ? "text-danger" : ""}`}
+                  >
+                    {show(result?.margin)}
+                  </td>
+                  <td className="px-3 py-2">
+                    {result?.pass === true && (
+                      <Badge tone="success">Pass</Badge>
+                    )}
+                    {result?.pass === false && (
+                      <Badge tone="danger">Fail</Badge>
+                    )}
+                  </td>
+                  <td
+                    className={`px-4 py-2 text-right tabular-nums ${failed ? "font-medium text-danger" : "text-muted"}`}
+                  >
+                    {failed}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// Months from one to another: "Jan–Dec 2024", "Apr 2024–Mar 2025".
+const span = (from: string, to: string) =>
+  from.slice(0, 4) === to.slice(0, 4)
+    ? `${MONTHS[Number(from.slice(5, 7)) - 1]}–${describeMonth(to)}`
+    : `${describeMonth(from)}–${describeMonth(to)}`;
+
+// Fiscal years as "FY2024", or "2024" when the year ends in December.
+const yearLabel = (label: string, yearEndMonth: number) =>
+  yearEndMonth === 12 ? label.replace(/^FY/, "") : label;
+
+// The business cycle (borrowing-base-plan.md §6.2): by fiscal year and over
+// the last twelve months, how high usage peaked, how low it fell, how thin
+// the margin got. The lowest usage over a year is the part of the line
+// never repaid.
+function CycleCard({
+  cycle,
+  tests,
+  yearEndMonth,
+}: {
+  cycle: BorrowingBaseCycle;
+  tests: TestResult[];
+  yearEndMonth: number;
+}) {
+  const columns = [
+    ...cycle.years.map((y) => ({
+      summary: y,
+      label: yearLabel(y.label, yearEndMonth),
+      last: false,
+    })),
+    ...(cycle.last12
+      ? [{ summary: cycle.last12, label: "Last 12 months", last: true }]
+      : []),
+  ];
+  const when = (figure: CycleFigure | null) =>
+    figure && (
+      <span className="block text-[11px] text-muted">
+        {describeMonth(figure.month)}
+      </span>
+    );
+  const rows: {
+    label: string;
+    help?: string;
+    cell: (s: CycleSummary) => ReactNode;
+    tone?: (s: CycleSummary) => string;
+  }[] = [
+    {
+      label: "Peak usage",
+      cell: (s) => (
+        <>
+          {amountOf(s.peakUsage?.value)}
+          {when(s.peakUsage)}
+        </>
+      ),
+    },
+    { label: "Average usage", cell: (s) => amountOf(s.averageUsage) },
+    {
+      label: "Lowest usage",
+      help: "The part of the line never repaid over the period. When it stays high, the line funds permanent working capital.",
+      cell: (s) => (
+        <>
+          {amountOf(s.lowestUsage?.value)}
+          {when(s.lowestUsage)}
+        </>
+      ),
+    },
+    {
+      label: "Highest utilization",
+      cell: (s) => (
+        <>
+          {s.highestUtilization
+            ? formatFigure(s.highestUtilization.value, "percent")
+            : "–"}
+          {when(s.highestUtilization)}
+        </>
+      ),
+    },
+    {
+      label: "Average borrowing base",
+      cell: (s) => amountOf(s.averageBorrowingBase),
+    },
+    {
+      label: "Lowest borrowing base",
+      cell: (s) => (
+        <>
+          {amountOf(s.lowestBorrowingBase?.value)}
+          {when(s.lowestBorrowingBase)}
+        </>
+      ),
+    },
+    {
+      label: "Lowest surplus",
+      cell: (s) => (
+        <>
+          {amountOf(s.lowestSurplus?.value)}
+          {when(s.lowestSurplus)}
+        </>
+      ),
+      tone: (s) =>
+        s.lowestSurplus && Number(s.lowestSurplus.value) < 0
+          ? "text-danger"
+          : "",
+    },
+    ...tests.map((test) => ({
+      label:
+        test.id === "margin"
+          ? "Months in deficit"
+          : `Months failed: ${test.name}`,
+      cell: (s: CycleSummary) => s.failed[test.id] ?? 0,
+      tone: (s: CycleSummary) =>
+        s.failed[test.id] ? "font-medium text-danger" : "text-muted",
+    })),
+  ];
+  if (!columns.length) return null;
+  return (
+    <Card
+      flush
+      title="Business cycle"
+      description="By fiscal year, and over the last 12 months. Months without a certificate aren't counted."
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line bg-surface-2/50 text-xs text-muted">
+              <th className="min-w-56 px-4 py-2 text-left font-medium" />
+              {columns.map((c) => (
+                <th
+                  key={c.label}
+                  className={`min-w-36 px-3 py-2 text-right align-top font-normal whitespace-nowrap ${c.last ? "bg-accent-soft/40" : ""}`}
+                >
+                  <span className="block font-medium text-foreground">
+                    {c.label}
+                  </span>
+                  {span(c.summary.from, c.summary.to)}
+                  <span className="block">
+                    {plural(c.summary.months, "certificate")}
+                  </span>
+                </th>
+              ))}
+              <th className="w-full" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={row.label}
+                className="border-b border-line/70 last:border-b-0"
+              >
+                <td className="px-4 py-1.5 whitespace-nowrap" title={row.help}>
+                  {row.label}
+                </td>
+                {columns.map((c) => (
+                  <td
+                    key={c.label}
+                    className={`px-3 py-1.5 text-right align-top tabular-nums ${c.last ? "bg-accent-soft/40" : ""} ${row.tone?.(c.summary) ?? ""}`}
+                  >
+                    {row.cell(c.summary)}
+                  </td>
+                ))}
+                <td />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+// Each calendar month's average over the years with a certificate that
+// month, in fiscal year order: where the line peaks in the year.
+function SeasonalCard({
+  cycle,
+  yearEndMonth,
+}: {
+  cycle: BorrowingBaseCycle;
+  yearEndMonth: number;
+}) {
+  const order = fiscalMonths(yearEndMonth);
+  const byMonth = new Map(cycle.seasonal.map((m) => [m.month, m]));
+  const rows = [
+    { label: "Usage", pick: (m: (typeof cycle.seasonal)[number]) => m.usage },
+    {
+      label: "Borrowing base",
+      pick: (m: (typeof cycle.seasonal)[number]) => m.borrowingBase,
+    },
+    {
+      label: "Surplus",
+      pick: (m: (typeof cycle.seasonal)[number]) => m.surplus,
+    },
+  ];
+  if (!cycle.seasonal.some((m) => m.years > 0)) return null;
+  return (
+    <Card
+      flush
+      title="Seasonal profile"
+      description="Each calendar month's average over the years with a certificate that month."
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-line bg-surface-2/50 text-muted">
+              <th className="px-4 py-2 text-left font-medium" />
+              {order.map((m) => (
+                <th key={m} className="px-2 py-2 text-right font-medium">
+                  {MONTHS[m - 1]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="tabular-nums">
+            {rows.map((row) => (
+              <tr key={row.label} className="border-b border-line/70">
+                <td className="px-4 py-1.5 text-sm whitespace-nowrap">
+                  {row.label}
+                </td>
+                {order.map((m) => {
+                  const raw = byMonth.get(m) && row.pick(byMonth.get(m)!);
+                  return (
+                    <td
+                      key={m}
+                      className={`px-2 py-1.5 text-right ${raw && Number(raw) < 0 ? "text-danger" : ""}`}
+                    >
+                      {amountOf(raw)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr className="text-muted">
+              <td className="px-4 py-1.5 whitespace-nowrap">Years</td>
+              {order.map((m) => (
+                <td key={m} className="px-2 py-1.5 text-right">
+                  {byMonth.get(m)?.years ?? 0}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
       </div>
     </Card>
   );
@@ -316,11 +600,14 @@ function MonthlyTable({
   run,
   issues,
   years,
+  failed,
   onOpen,
 }: {
   run: BorrowingBaseRun;
   issues: BorrowingBaseIssues;
   years: string[];
+  // Months each test failed over the last twelve, by test id.
+  failed: Record<string, number>;
   onOpen: (code: string, period: number) => void;
 }) {
   const parents = useMemo(() => parentsOf(run.rows), [run.rows]);
@@ -571,9 +858,19 @@ function MonthlyTable({
               <tr key={test.id}>
                 <td
                   title={test.metric}
-                  className="sticky left-0 z-20 border-b border-line/60 bg-surface py-1 pr-3 pl-[30px]"
+                  className="sticky left-0 z-20 max-w-48 border-b border-line/60 bg-surface py-1 pr-3 pl-[30px] sm:max-w-80"
                 >
-                  {test.name}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">{test.name}</span>
+                    {(failed[test.id] ?? 0) > 0 && (
+                      <span
+                        className={badge("danger")}
+                        title="Months failed over the last 12"
+                      >
+                        {failed[test.id]} in 12 mo
+                      </span>
+                    )}
+                  </span>
                 </td>
                 {columns.map((column) => {
                   if ("fold" in column) return foldCell(`fold:${column.fold}`);
@@ -649,24 +946,19 @@ function Lineage({
   onTrail,
   run,
   terms,
-  totals,
 }: {
   trail: { code: string; period: number }[];
   onTrail: (trail: { code: string; period: number }[]) => void;
   run: BorrowingBaseRun;
   terms: Map<string, { term: Term; format: "amount" | "percent" }>;
-  totals: Totals;
 }) {
   const current = trail.at(-1);
   const rows = new Map(run.rows.map((r) => [r.code, r]));
   const labelOf = (code: string, fallback?: string) =>
-    rows.get(code)?.label ??
-    totals.find((t) => t.code === code)?.label ??
-    fallback ??
-    code;
+    rows.get(code)?.label ?? fallback ?? code;
   const formatOf = (code: string): BorrowingBaseFormat =>
     rows.get(code)?.format ??
-    totals.find((t) => t.code === code)?.format ??
+    TOTALS.find((t) => t.code === code)?.format ??
     (code.endsWith(".RATE") ? "percent" : "amount");
   const cell: ResultCell | undefined = current
     ? run.cells[current.code]?.[current.period]

@@ -1,17 +1,12 @@
 import {
   BUILT_IN_BORROWING_BASES,
-  COLLATERAL_TYPES,
-  DEFAULT_BUCKETS,
   DomainError,
   fiscalYearOf,
   getCreditLine,
   getSpread,
-  LINE_KINDS,
-  listBorrowingBases,
   listBorrowingBaseTemplates,
+  listMarginedLines,
   runBorrowingBaseOf,
-  TOTALS,
-  type Spread,
 } from "@finance/domain";
 import { Building2, Gauge } from "lucide-react";
 import type { Metadata } from "next";
@@ -20,10 +15,12 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { Badge, EmptyState, Page, PageHeader } from "@/components/page";
 import { Tabs } from "@/components/tabs";
+import { figuresOf } from "@/lib/borrowing-bases";
 import { describeTerm } from "@/lib/credit-lines";
 import { formatFigure } from "@/lib/format";
 import { getContext, getDb } from "@/lib/server";
 import { BorrowingBaseActions } from "../_components/bb-actions";
+import { BorrowingBaseCharts } from "../_components/bb-charts";
 import { BorrowingBaseData } from "../_components/bb-data";
 import { BorrowingBaseResults } from "../_components/bb-results";
 import { BorrowingBaseTerms } from "../_components/bb-terms";
@@ -49,15 +46,6 @@ type Props = Pick<
   "params" | "searchParams"
 >;
 
-// The borrower's fiscal year end month, from its latest year spread;
-// December when it has none, as the domain reads it.
-const yearEndOf = (spread: Spread) => {
-  const year = spread.periods.findLast(
-    (p) => p.months === 12 && p.quality !== "projected",
-  );
-  return year ? Number(year.periodEnd.slice(5, 7)) : 12;
-};
-
 // A margined line's history: its results month by month, the figures from
 // its certificates, and its terms. What's projected lives in analyses.
 async function LineView({ params, searchParams }: Props) {
@@ -70,7 +58,7 @@ async function LineView({ params, searchParams }: Props) {
   });
   const [spread, margined, templates, results] = await Promise.all([
     getSpread(db, ctx, line.entityId),
-    listBorrowingBases(db, ctx),
+    listMarginedLines(db, ctx),
     listBorrowingBaseTemplates(db, ctx),
     line.borrowingBase ? runBorrowingBaseOf(db, ctx, line.id) : null,
   ]);
@@ -88,7 +76,7 @@ async function LineView({ params, searchParams }: Props) {
       .filter((l) => l.lineId !== line.id)
       .map((l) => ({
         lineId: l.lineId,
-        name: l.lineName,
+        name: l.name,
         entityName: l.entity.name,
       })),
   };
@@ -152,23 +140,18 @@ async function LineView({ params, searchParams }: Props) {
       </div>
     );
 
-  const { detail, run, issues, cycle } = results;
-  const yearEnd = yearEndOf(spread);
-  // Columns group by fiscal year, or by calendar year for a December year
+  const { detail, run, issues, cycle, yearEndMonth } = results;
+  // Months group by fiscal year, or by calendar year for a December year
   // end.
   const years = run.months.map((m) =>
-    yearEnd === 12
+    yearEndMonth === 12
       ? m.month.slice(0, 4)
-      : (cycle.years.find((y) => y.from <= m.month && m.month <= y.to)?.label ??
-        `FY${fiscalYearOf(m.month, yearEnd)}`),
+      : `FY${fiscalYearOf(m.month, yearEndMonth)}`,
   );
   const flagged = [...issues.general, ...Object.values(issues.byMonth).flat()];
   const errors = flagged.some((i) => i.severity === "error");
-  const totals = TOTALS.map(({ code, label, format }) => ({
-    code,
-    label,
-    format,
-  }));
+  // What tests and charts can read: every figure but headings.
+  const figures = figuresOf(run.rows, detail.definition);
   const items = (spread.layout?.items ?? [])
     .filter((i) => i.kind !== "header" && i.statement === "balance_sheet")
     .map((i) => ({ code: i.code, label: i.label }));
@@ -190,9 +173,10 @@ async function LineView({ params, searchParams }: Props) {
                 years={years}
                 definition={detail.definition}
                 limit={line.limit}
-                totals={totals}
                 months={detail.months}
-                last12={cycle.last12}
+                cycle={cycle}
+                yearEndMonth={yearEndMonth}
+                figures={figures}
               />
             ),
           },
@@ -226,18 +210,24 @@ async function LineView({ params, searchParams }: Props) {
                   entityId: entity.id,
                 }}
                 definition={detail.definition}
-                kinds={LINE_KINDS}
-                collateralTypes={COLLATERAL_TYPES}
-                totals={totals}
-                buckets={DEFAULT_BUCKETS}
                 items={items}
-                tests={run.tests.map(({ id, name, metric, test, builtIn }) => ({
-                  id,
-                  name,
-                  metric,
-                  test,
-                  builtIn,
-                }))}
+                figures={figures}
+              />
+            ),
+          },
+          {
+            value: "charts",
+            label: "Charts",
+            count: results.charts.length,
+            content: (
+              <BorrowingBaseCharts
+                lineId={line.id}
+                run={run}
+                definition={detail.definition}
+                charts={results.charts}
+                years={years}
+                yearEndMonth={yearEndMonth}
+                figures={figures}
               />
             ),
           },

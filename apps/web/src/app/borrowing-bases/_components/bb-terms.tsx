@@ -1,13 +1,20 @@
 "use client";
 
-import type {
-  BorrowingBaseDefinition,
-  BorrowingBaseFormat,
-  BorrowingBaseLineKind,
-  CollateralType,
-  Issue,
-  Term,
-} from "@finance/domain";
+import type { Issue } from "@finance/domain";
+import {
+  COLLATERAL_CODES,
+  COLLATERAL_TYPES,
+  DEFAULT_BUCKETS,
+  DEFAULT_INELIGIBLE_FROM,
+  LINE_CODE,
+  LINE_KINDS,
+  TOTALS,
+  type BorrowingBaseDefinition,
+  type BorrowingBaseFormat,
+  type BorrowingBaseLineKind,
+  type CollateralType,
+} from "@finance/domain/borrowing-bases";
+import type { Term } from "@finance/domain/terms";
 import { checkFormula, referenceText, renameReferences } from "@finance/engine";
 import {
   ArrowDown,
@@ -37,11 +44,16 @@ import {
   addMonths,
   blankLine,
   computedCodes,
-  currenciesOf,
   describeMonth,
   lineDraft,
   lineInput,
+  newTest,
+  ratesOf,
+  testDraft,
+  testInput,
+  type Figure,
   type LineDraft,
+  type TestDraft,
 } from "@/lib/borrowing-bases";
 import {
   BLANK_TERM,
@@ -58,9 +70,6 @@ import {
   setBorrowingBaseTermAction,
   updateMarginedLineAction,
 } from "../actions";
-
-type Kinds = Record<BorrowingBaseLineKind, { label: string; help: string }>;
-type Totals = { code: string; label: string; format: BorrowingBaseFormat }[];
 
 interface LineFacts {
   name: string;
@@ -79,17 +88,10 @@ const FORMATS: Record<BorrowingBaseFormat, string> = {
   flag: "Pass or fail",
 };
 
-// A code the user names: a letter, then letters, digits or underscores.
-const CODE = /^[A-Z][A-Z0-9_]{0,39}$/;
-
 // What a collateral line computes, renamed with it in formulas.
 const SUFFIXES = [
   "",
-  ".INELIGIBLE",
-  ".ELIGIBLE",
-  ".RATE",
-  ".CAP",
-  ".MARGINED",
+  ...COLLATERAL_CODES.map((c) => `.${c.suffix}`),
   ".AGED_OUT",
   ...Array.from({ length: 12 }, (_, i) => `.AGE${i + 1}`),
 ];
@@ -108,40 +110,28 @@ function typedTerm(draft: TermDraft) {
   ].join(" · ");
 }
 
-// The line's own terms, its borrowing base's definition, and its tests.
-// The definition is edited as a whole, then saved; a common amendment, a
-// term changing from a month, saves on its own.
+// The line's own terms, then its borrowing base's definition: its lines
+// and tests, edited as a whole, then saved. A common amendment, a term
+// changing from a month, saves on its own.
 export function BorrowingBaseTerms({
   lineId,
   line,
   definition,
-  kinds,
-  collateralTypes,
-  totals,
-  buckets,
   items,
-  tests,
+  figures,
 }: {
   lineId: string;
   line: LineFacts;
   definition: BorrowingBaseDefinition;
-  kinds: Kinds;
-  collateralTypes: Record<CollateralType, string>;
-  totals: Totals;
-  // The aging buckets a line starts with.
-  buckets: string[];
   // The borrower's balance sheet items, which lines reconcile with.
   items: { code: string; label: string }[];
-  tests: {
-    id: string;
-    name: string;
-    metric: string;
-    test: "min" | "max";
-    builtIn: boolean;
-  }[];
+  // What tests can read.
+  figures: Figure[];
 }) {
   // Warnings from the last save, which outlive the editor it remounts.
   const [warnings, setWarnings] = useState<Issue[]>([]);
+  // Charts are saved from their tab: they don't reset unsaved changes here.
+  const edited = JSON.stringify({ ...definition, charts: undefined });
   return (
     <div className="flex flex-col gap-4">
       <LineCard lineId={lineId} line={line} />
@@ -152,44 +142,14 @@ export function BorrowingBaseTerms({
         </div>
       )}
       <DefinitionEditor
-        key={JSON.stringify(definition)}
+        key={edited}
         lineId={lineId}
         currency={line.currency}
         definition={definition}
-        kinds={kinds}
-        collateralTypes={collateralTypes}
-        totals={totals}
-        buckets={buckets}
         items={items}
+        figures={figures}
         onWarnings={setWarnings}
       />
-      <Card
-        title="Tests"
-        description="Each month with a certificate is tested; the results are in the Results tab."
-      >
-        <ul className="flex flex-col gap-1.5 text-sm">
-          {tests.map((t) => (
-            <li key={t.id} className="flex flex-wrap items-baseline gap-x-2">
-              <span className="font-medium">{t.name}</span>
-              <span className="text-muted">
-                {t.id === "margin" && t.builtIn
-                  ? "Margin surplus at least zero: usage within the borrowing base."
-                  : t.id === "overline" && t.builtIn
-                    ? "Usage at most the authorized limit in force that month."
-                    : `${t.metric} ${t.test === "min" ? "at least" : "at most"} its threshold.`}
-              </span>
-              {t.builtIn && (
-                <span className="text-xs text-muted">Built in</span>
-              )}
-            </li>
-          ))}
-        </ul>
-        <p className="mt-3 text-xs text-muted">
-          Custom tests, such as a minimum excess availability or receivables
-          over 90 days at most a share of the total, and charts will be set
-          here.
-        </p>
-      </Card>
     </div>
   );
 }
@@ -344,7 +304,8 @@ interface Outstanding {
 type Editing =
   | { mode: "edit"; key: string }
   | { mode: "new"; draft: LineDraft }
-  | { mode: "outstanding" };
+  | { mode: "outstanding" }
+  | { mode: "test"; draft: TestDraft; isNew: boolean };
 
 // The sections lines are listed in, in waterfall order.
 const SECTIONS: { title: string; kinds: BorrowingBaseLineKind[] }[] = [
@@ -378,47 +339,62 @@ function DefinitionEditor({
   lineId,
   currency,
   definition,
-  kinds,
-  collateralTypes,
-  totals,
-  buckets,
   items,
+  figures,
   onWarnings,
 }: {
   lineId: string;
   currency: string;
   definition: BorrowingBaseDefinition;
-  kinds: Kinds;
-  collateralTypes: Record<CollateralType, string>;
-  totals: Totals;
-  buckets: string[];
   items: { code: string; label: string }[];
+  figures: Figure[];
   onWarnings: (issues: Issue[]) => void;
 }) {
-  const saved = () => ({
+  const formatOf = (code: string) =>
+    figures.find((f) => f.code === code)?.format ?? "amount";
+  // As saved, to start from and to go back to.
+  const [initial] = useState(() => ({
     drafts: definition.lines.map(lineDraft),
     outstanding: {
       reconcilesWith: definition.outstandingReconcilesWith ?? "",
       projection: definition.outstandingProjection ?? "",
     },
-  });
-  const [drafts, setDrafts] = useState<LineDraft[]>(() => saved().drafts);
+    tests: (definition.tests ?? []).map((t) =>
+      testDraft(t, formatOf(t.metric)),
+    ),
+  }));
+  const [drafts, setDrafts] = useState<LineDraft[]>(initial.drafts);
   const [outstanding, setOutstanding] = useState<Outstanding>(
-    () => saved().outstanding,
+    initial.outstanding,
   );
-  const payload = (list: LineDraft[], out: Outstanding) => ({
+  const [tests, setTests] = useState<TestDraft[]>(initial.tests);
+  // Charts are left out: they're saved from their tab, as they are when
+  // this is.
+  const payload = (
+    list: LineDraft[],
+    out: Outstanding,
+    checks: TestDraft[],
+  ) => ({
     ...(definition.basedOn ? { basedOn: definition.basedOn } : {}),
-    ...(definition.tests ? { tests: definition.tests } : {}),
-    ...(definition.charts ? { charts: definition.charts } : {}),
     outstandingReconcilesWith: out.reconcilesWith,
     outstandingProjection: out.projection,
     lines: list.map(lineInput),
+    tests: checks.map(testInput),
   });
-  const [baseline] = useState(() => {
-    const { drafts, outstanding } = saved();
-    return JSON.stringify(payload(drafts, outstanding));
-  });
-  const dirty = JSON.stringify(payload(drafts, outstanding)) !== baseline;
+  const [baseline] = useState(() =>
+    JSON.stringify(payload(initial.drafts, initial.outstanding, initial.tests)),
+  );
+  const dirty =
+    JSON.stringify(payload(drafts, outstanding, tests)) !== baseline;
+  // Lines whose code changed since saved, old → new: their figures follow.
+  const renames = Object.fromEntries(
+    initial.drafts.flatMap((was) => {
+      const now = drafts.find((d) => d.key === was.key);
+      return now && was.code && now.code !== was.code
+        ? [[was.code, now.code]]
+        : [];
+    }),
+  );
   const [editing, setEditing] = useState<Editing | null>(null);
   const [changing, setChanging] = useState(false);
   const [saving, startSave] = useTransition();
@@ -513,8 +489,25 @@ function DefinitionEditor({
         formula: rename(d.formula),
         projection: rename(d.projection),
       }));
+      setTests(
+        tests.map((t) => {
+          const suffix = SUFFIXES.find((x) => t.metric === `${old.code}${x}`);
+          return suffix === undefined
+            ? t
+            : { ...t, metric: `${next.code}${suffix}` };
+        }),
+      );
     }
     setDrafts(list);
+    setEditing(null);
+  }
+
+  function applyTest(next: TestDraft) {
+    setTests(
+      tests.some((t) => t.key === next.key)
+        ? tests.map((t) => (t.key === next.key ? next : t))
+        : [...tests, next],
+    );
     setEditing(null);
   }
 
@@ -542,9 +535,9 @@ function DefinitionEditor({
   }
 
   function discard() {
-    const { drafts, outstanding } = saved();
-    setDrafts(drafts);
-    setOutstanding(outstanding);
+    setDrafts(initial.drafts);
+    setOutstanding(initial.outstanding);
+    setTests(initial.tests);
     setFailure(null);
   }
 
@@ -553,7 +546,11 @@ function DefinitionEditor({
     startSave(async () => {
       const result = await setBorrowingBaseDefinitionAction(
         lineId,
-        payload(drafts, outstanding),
+        {
+          ...payload(drafts, outstanding, tests),
+          ...(definition.charts ? { charts: definition.charts } : {}),
+        },
+        renames,
       );
       if (!result.ok) return setFailure(result);
       onWarnings(result.value);
@@ -583,7 +580,7 @@ function DefinitionEditor({
             d.reconcilesWith && `part of ${itemLabel(d.reconcilesWith)}`,
           ]
         : d.kind === "group"
-          ? [collateralTypes[d.collateral], d.cap && `cap ${typedTerm(d.cap)}`]
+          ? [COLLATERAL_TYPES[d.collateral], d.cap && `cap ${typedTerm(d.cap)}`]
           : d.kind === "reserve"
             ? [
                 d.amount
@@ -643,7 +640,7 @@ function DefinitionEditor({
           {d.code}
         </td>
         <td className="border-b border-line/60 px-3 py-1.5 text-xs whitespace-nowrap text-muted">
-          {kinds[d.kind].label}
+          {LINE_KINDS[d.kind].label}
         </td>
         <td className="max-w-md truncate border-b border-line/60 px-3 py-1.5 text-xs tabular-nums">
           {summary(d)}
@@ -706,22 +703,25 @@ function DefinitionEditor({
               </button>
             }
           >
-            {(Object.keys(kinds) as BorrowingBaseLineKind[]).map((kind) => (
-              <MenuItem
-                key={kind}
-                onSelect={() =>
-                  setEditing({
-                    mode: "new",
-                    draft: blankLine(kind, {
-                      of:
-                        drafts.find((d) => d.kind === "collateral")?.code ?? "",
-                    }),
-                  })
-                }
-              >
-                {kinds[kind].label}
-              </MenuItem>
-            ))}
+            {(Object.keys(LINE_KINDS) as BorrowingBaseLineKind[]).map(
+              (kind) => (
+                <MenuItem
+                  key={kind}
+                  onSelect={() =>
+                    setEditing({
+                      mode: "new",
+                      draft: blankLine(kind, {
+                        of:
+                          drafts.find((d) => d.kind === "collateral")?.code ??
+                          "",
+                      }),
+                    })
+                  }
+                >
+                  {LINE_KINDS[kind].label}
+                </MenuItem>
+              ),
+            )}
           </Menu>
           {dirty && (
             <button type="button" className={button.ghost} onClick={discard}>
@@ -827,6 +827,84 @@ function DefinitionEditor({
                 ),
               ];
             })}
+            <tr>
+              <td
+                colSpan={5}
+                className="border-b border-line/60 px-4 pt-4 pb-1 text-xs font-semibold tracking-wide text-muted uppercase"
+              >
+                <span className="flex items-center justify-between gap-2">
+                  Tests
+                  <button
+                    type="button"
+                    className={`${button.ghost} px-2 py-0.5 text-xs font-normal tracking-normal normal-case`}
+                    onClick={() =>
+                      setEditing({
+                        mode: "test",
+                        draft: newTest(),
+                        isNew: true,
+                      })
+                    }
+                  >
+                    <Icon name="plus" />
+                    Test
+                  </button>
+                </span>
+              </td>
+            </tr>
+            {BUILT_IN_TESTS.map((t) => (
+              <tr key={t.name}>
+                <td className="border-b border-line/60 py-1.5 pr-3 pl-4 font-medium whitespace-nowrap">
+                  {t.name}
+                </td>
+                <td className="border-b border-line/60 px-3 py-1.5 font-mono text-xs text-muted">
+                  {t.metric}
+                </td>
+                <td className="border-b border-line/60 px-3 py-1.5 text-xs text-muted">
+                  Built in
+                </td>
+                <td className="border-b border-line/60 px-3 py-1.5 text-xs">
+                  {t.rule}
+                </td>
+                <td className="border-b border-line/60" />
+              </tr>
+            ))}
+            {tests.map((t) => (
+              <tr key={t.key} className="hover:bg-surface-2/60">
+                <td className="border-b border-line/60 py-1.5 pr-3 pl-4">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditing({ mode: "test", draft: t, isNew: false })
+                    }
+                    className="flex items-center gap-2 text-left font-medium whitespace-nowrap hover:text-accent"
+                  >
+                    {failure?.issues.some((i) =>
+                      i.message.startsWith(`${t.name}:`),
+                    ) && (
+                      <span
+                        className="size-1.5 shrink-0 rounded-full bg-danger"
+                        aria-label="has issues"
+                      />
+                    )}
+                    {t.name || (
+                      <span className="text-muted italic">No name</span>
+                    )}
+                  </button>
+                </td>
+                <td className="border-b border-line/60 px-3 py-1.5 font-mono text-xs text-muted">
+                  {t.metric}
+                </td>
+                <td className="border-b border-line/60 px-3 py-1.5 text-xs text-muted">
+                  Test
+                </td>
+                <td className="max-w-md truncate border-b border-line/60 px-3 py-1.5 text-xs tabular-nums">
+                  {figures.find((f) => f.code === t.metric)?.label ?? t.metric}{" "}
+                  {t.test === "min" ? "at least" : "at most"}{" "}
+                  {typedTerm(t.threshold)}
+                </td>
+                <td className="border-b border-line/60" />
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -838,16 +916,34 @@ function DefinitionEditor({
         title={
           editing?.mode === "outstanding"
             ? "Line outstanding"
-            : editing?.mode === "new"
-              ? `New line: ${kinds[editing.draft.kind].label.toLowerCase()}`
-              : "Edit line"
+            : editing?.mode === "test"
+              ? editing.isNew
+                ? "New test"
+                : "Edit test"
+              : editing?.mode === "new"
+                ? `New line: ${LINE_KINDS[editing.draft.kind].label.toLowerCase()}`
+                : "Edit line"
         }
       >
-        {editing?.mode === "outstanding" ? (
+        {editing?.mode === "test" ? (
+          <TestForm
+            key={editing.draft.key}
+            initial={editing.draft}
+            isNew={editing.isNew}
+            figures={figures}
+            others={tests.filter((t) => t.key !== editing.draft.key)}
+            onApply={applyTest}
+            onRemove={() => {
+              setTests(tests.filter((t) => t.key !== editing.draft.key));
+              setEditing(null);
+            }}
+            onClose={() => setEditing(null)}
+          />
+        ) : editing?.mode === "outstanding" ? (
           <OutstandingForm
             value={outstanding}
             items={items}
-            known={knownCodes(drafts, totals, currency)}
+            known={knownCodes(drafts, currency)}
             onApply={(next) => {
               setOutstanding(next);
               setEditing(null);
@@ -861,10 +957,6 @@ function DefinitionEditor({
               initial={current}
               isNew={editing?.mode === "new"}
               drafts={drafts}
-              kinds={kinds}
-              collateralTypes={collateralTypes}
-              totals={totals}
-              buckets={buckets}
               items={items}
               currency={currency}
               issues={flagged.get(current.code) ?? []}
@@ -896,9 +988,152 @@ function DefinitionEditor({
   );
 }
 
+// The tests every borrowing base has (§6.3).
+const BUILT_IN_TESTS = [
+  {
+    name: "Usage within the borrowing base",
+    metric: "BB_SURPLUS",
+    rule: "Margin surplus at least zero, each month with a certificate.",
+  },
+  {
+    name: "Usage within the limit",
+    metric: "BB_USAGE",
+    rule: "Usage at most the authorized limit in force that month.",
+  },
+];
+
+const THRESHOLD_HINTS: Record<BorrowingBaseFormat, string> = {
+  amount: "An amount, such as 250,000.",
+  percent: "A percent, such as 15%.",
+  ratio: "A ratio, such as 1.25x.",
+  count: "A number, such as 3.",
+  flag: "",
+};
+
+const PLACEHOLDERS: Record<BorrowingBaseFormat, string> = {
+  amount: "250,000",
+  percent: "15%",
+  ratio: "1.25x",
+  count: "3",
+  flag: "",
+};
+
+// A custom test: a figure at least or at most a threshold, which steps
+// from a month or differs by season as other terms do.
+function TestForm({
+  initial,
+  isNew,
+  figures,
+  others,
+  onApply,
+  onRemove,
+  onClose,
+}: {
+  initial: TestDraft;
+  isNew: boolean;
+  figures: Figure[];
+  others: TestDraft[];
+  onApply: (draft: TestDraft) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const [t, setT] = useState(initial);
+  const [problem, setProblem] = useState<string | null>(null);
+  const figure = figures.find((f) => f.code === t.metric);
+  const format = figure?.format ?? "amount";
+  const sections = [...new Set(figures.map((f) => f.section))];
+
+  function apply() {
+    const name = t.name.trim();
+    const problem = !name
+      ? "Give the test a name."
+      : others.some((o) => o.name.trim() === name)
+        ? `Another test is named ${name}.`
+        : !figure
+          ? "Choose the figure it tests."
+          : !t.threshold.value.trim()
+            ? "Enter the threshold."
+            : null;
+    setProblem(problem);
+    if (!problem) onApply({ ...t, name });
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+        <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
+          Tested each month with a certificate, as the margin test is: the
+          threshold, the actual figure, the room left and pass or fail.
+          Examples: excess availability at least 250,000; receivables over 90
+          days at most 15%.
+        </p>
+        <Field label="Name">
+          <input
+            value={t.name}
+            onChange={(e) => setT({ ...t, name: e.target.value })}
+            placeholder="Minimum excess availability"
+            autoFocus={isNew}
+            className={input}
+          />
+        </Field>
+        <Field label="Figure">
+          <select
+            value={t.metric}
+            onChange={(e) => setT({ ...t, metric: e.target.value })}
+            className={input}
+          >
+            {!figure && (
+              <option value={t.metric}>{t.metric || "Choose"}</option>
+            )}
+            {sections.map((section) => (
+              <optgroup key={section} label={section}>
+                {figures
+                  .filter((f) => f.section === section && f.format !== "flag")
+                  .map((f) => (
+                    <option key={f.code} value={f.code}>
+                      {f.label} ({f.code})
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </select>
+        </Field>
+        <Field label="Passes when it's" group>
+          <Segmented
+            name="test"
+            options={{ min: "At least", max: "At most" }}
+            value={t.test}
+            onChange={(test) => setT({ ...t, test })}
+          />
+        </Field>
+        <TermField
+          label="Threshold"
+          hint={`${THRESHOLD_HINTS[format]} A step changes it from a month on; a season, in some months every year.`}
+          draft={t.threshold}
+          name={`${t.name || "The test"}, threshold`}
+          placeholder={PLACEHOLDERS[format]}
+          onChange={(threshold) => setT({ ...t, threshold })}
+        />
+        {problem && <p className="text-sm text-danger">{problem}</p>}
+      </div>
+      <DrawerFooter
+        onClose={onClose}
+        onApply={apply}
+        onRemove={
+          isNew
+            ? undefined
+            : () => {
+                if (confirm(`Remove the test "${initial.name}"?`)) onRemove();
+              }
+        }
+      />
+    </div>
+  );
+}
+
 // Every name a formula can read: the lines, what the app computes for
 // them, the totals and the exchange rates; by any case.
-function knownCodes(drafts: LineDraft[], totals: Totals, currency: string) {
+function knownCodes(drafts: LineDraft[], currency: string) {
   const options = [
     {
       label: "Lines",
@@ -909,13 +1144,13 @@ function knownCodes(drafts: LineDraft[], totals: Totals, currency: string) {
     { label: "Computed for lines", codes: computedCodes(drafts) },
     {
       label: "Totals",
-      codes: totals.map((t) => ({ code: t.code, label: t.label })),
+      codes: TOTALS.map((t) => ({ code: t.code, label: t.label })),
     },
     {
       label: "Exchange rates",
-      codes: currenciesOf(drafts, currency).map((c) => ({
-        code: `FX.${c}`,
-        label: `${c} rate`,
+      codes: ratesOf(drafts, currency).map((code) => ({
+        code,
+        label: `${code.slice(3)} rate`,
       })),
     },
   ].filter((g) => g.codes.length);
@@ -1150,10 +1385,6 @@ function LineDrawerForm({
   initial,
   isNew,
   drafts,
-  kinds,
-  collateralTypes,
-  totals,
-  buckets,
   items,
   currency,
   issues,
@@ -1164,10 +1395,6 @@ function LineDrawerForm({
   initial: LineDraft;
   isNew: boolean;
   drafts: LineDraft[];
-  kinds: Kinds;
-  collateralTypes: Record<CollateralType, string>;
-  totals: Totals;
-  buckets: string[];
   items: { code: string; label: string }[];
   currency: string;
   issues: Issue[];
@@ -1182,7 +1409,7 @@ function LineDrawerForm({
   );
   const set = (patch: Partial<LineDraft>) => setD({ ...d, ...patch });
   const others = drafts.filter((x) => x.key !== d.key);
-  const known = knownCodes([...others, d], totals, currency);
+  const known = knownCodes([...others, d], currency);
   const name = d.label || d.code || "The line";
   const ineligibles = drafts.filter(
     (x) => x.kind === "ineligible" && x.of === initial.code,
@@ -1192,7 +1419,7 @@ function LineDrawerForm({
     const code = d.code.trim().toUpperCase();
     const problem = !d.label.trim()
       ? "Give it a label."
-      : !CODE.test(code)
+      : !LINE_CODE.test(code)
         ? "Its code is a letter, then letters, digits or underscores, up to 40 (e.g. AR_CAD)."
         : code.startsWith("BB_") || code === "FX"
           ? "Codes starting with BB_, and FX, are the app's."
@@ -1280,7 +1507,7 @@ function LineDrawerForm({
         onChange={(e) => set({ collateral: e.target.value as CollateralType })}
         className={input}
       >
-        {Object.entries(collateralTypes).map(([value, label]) => (
+        {Object.entries(COLLATERAL_TYPES).map(([value, label]) => (
           <option key={value} value={value}>
             {label}
           </option>
@@ -1316,7 +1543,7 @@ function LineDrawerForm({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
         <p className="rounded-md bg-surface-2 px-3 py-2 text-xs text-muted">
-          {kinds[d.kind].help}
+          {LINE_KINDS[d.kind].help}
         </p>
         {issues.length > 0 && (
           <div className="rounded-lg border border-danger/30 bg-danger-soft/40 p-3">
@@ -1344,8 +1571,8 @@ function LineDrawerForm({
         </div>
         {!isNew && initial.code && d.code !== initial.code && (
           <p className="-mt-2 text-xs text-muted">
-            Lines and formulas that use {initial.code} follow the new code.
-            Figures entered under the old code stay under it.
+            Lines, formulas and tests that use {initial.code} follow the new
+            code, and so do the figures entered under it.
           </p>
         )}
 
@@ -1386,7 +1613,10 @@ function LineDrawerForm({
                   onChange={(e) =>
                     set({
                       aging: e.target.checked
-                        ? { buckets, ineligibleFrom: 3 }
+                        ? {
+                            buckets: DEFAULT_BUCKETS,
+                            ineligibleFrom: DEFAULT_INELIGIBLE_FROM,
+                          }
                         : null,
                     })
                   }

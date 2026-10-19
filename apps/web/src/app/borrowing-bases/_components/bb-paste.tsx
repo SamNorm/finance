@@ -4,6 +4,7 @@ import type { BorrowingBasePaste } from "@finance/domain";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { startTransition, useState, useTransition } from "react";
 import { IssueList } from "@/components/issue-list";
+import { plural } from "@/components/page";
 import { button, input } from "@/components/styles";
 import { Modal } from "@/components/ui";
 import type { ActionFailure } from "@/lib/action-result";
@@ -15,7 +16,8 @@ import {
 
 // Paste a certificate, or a history of them, out of Excel or a CSV: check
 // how its rows match the lines entered each month, confirm or give the
-// month of each column, then import (borrowing-base-plan.md §7.2).
+// month of each column, or leave it out, then import
+// (borrowing-base-plan.md §7.2).
 export function PasteCertificates({
   open,
   onClose,
@@ -33,8 +35,9 @@ export function PasteCertificates({
     source: string;
     result: BorrowingBasePaste;
   } | null>(null);
-  // Each column's month, by column index.
+  // Each column's month, and the columns left out, by column index.
   const [months, setMonths] = useState<Record<number, string>>({});
+  const [skipped, setSkipped] = useState<number[]>([]);
   const [failure, setFailure] = useState<ActionFailure | null>(null);
   const [checking, startCheck] = useTransition();
   const [importing, startImport] = useTransition();
@@ -51,6 +54,7 @@ export function PasteCertificates({
           result.value.columns.map((c) => [c.index, c.month ?? ""]),
         ),
       );
+      setSkipped([]);
     });
   }
 
@@ -62,6 +66,7 @@ export function PasteCertificates({
         lineId,
         source,
         months,
+        skipped,
       );
       if (!result.ok) return setFailure(result);
       startTransition(() => {
@@ -72,18 +77,26 @@ export function PasteCertificates({
     });
   }
 
+  const kept = (checked?.columns ?? []).filter(
+    (c) => !skipped.includes(c.index),
+  );
   const figures =
     checked?.matched.reduce(
-      (n, row) => n + row.cells.filter((c) => c.trim()).length,
+      (n, row) =>
+        n +
+        row.cells.filter(
+          (cell, i) =>
+            cell.trim() && !skipped.includes(checked.columns[i]!.index),
+        ).length,
       0,
     ) ?? 0;
   const errors = checked?.issues.some((i) => i.severity === "error");
   const ready =
     checked &&
     !errors &&
-    checked.columns.length > 0 &&
+    kept.length > 0 &&
     checked.matched.length > 0 &&
-    checked.columns.every((c) => /^\d{4}-\d{2}$/.test(months[c.index] ?? ""));
+    kept.every((c) => /^\d{4}-\d{2}$/.test(months[c.index] ?? ""));
 
   return (
     <Modal open={open} onClose={onClose} title="Paste certificates" wide>
@@ -130,12 +143,12 @@ export function PasteCertificates({
                 <TriangleAlert className="size-4 text-warning" aria-hidden />
               )}
               <span className="font-medium">
-                {checked.matched.length} lines matched
+                {plural(checked.matched.length, "line")} matched
               </span>
               <span className="text-muted">
-                · {figures} figures · {checked.columns.length}{" "}
-                {checked.columns.length === 1 ? "month" : "months"} ·{" "}
-                {checked.unmatched.length} skipped
+                · {plural(figures, "figure")} · {plural(kept.length, "month")}
+                {skipped.length > 0 && ` (${skipped.length} left out)`} ·{" "}
+                {plural(checked.unmatched.length, "row")} skipped
               </span>
             </p>
 
@@ -149,17 +162,37 @@ export function PasteCertificates({
                       </th>
                       {checked.columns.map((column) => {
                         const month = months[column.index] ?? "";
+                        const out = skipped.includes(column.index);
+                        const name =
+                          column.header || `column ${column.index + 1}`;
                         return (
                           <th
                             key={column.index}
-                            className="min-w-36 px-1 pb-1 text-right align-bottom font-normal"
+                            className={`min-w-36 px-1 pb-1 text-right align-bottom font-normal ${out ? "opacity-50" : ""}`}
                           >
-                            <span className="block truncate">
-                              {column.header || `Column ${column.index + 1}`}
-                            </span>
+                            <label className="flex items-center justify-end gap-1.5">
+                              <input
+                                type="checkbox"
+                                checked={!out}
+                                onChange={(e) =>
+                                  setSkipped(
+                                    e.target.checked
+                                      ? skipped.filter(
+                                          (i) => i !== column.index,
+                                        )
+                                      : [...skipped, column.index],
+                                  )
+                                }
+                                aria-label={`Import ${name}`}
+                              />
+                              <span className="truncate">
+                                {column.header || `Column ${column.index + 1}`}
+                              </span>
+                            </label>
                             <input
                               type="month"
                               value={month}
+                              disabled={out}
                               aria-label={`Month of ${column.header || `column ${column.index + 1}`}`}
                               onChange={(e) =>
                                 setMonths({
@@ -172,9 +205,9 @@ export function PasteCertificates({
                                   ? "Day and month order assumed: check it."
                                   : undefined
                               }
-                              className={`${input} mt-1 w-36 py-1 text-xs ${column.guessed || !month ? "border-warning" : ""}`}
+                              className={`${input} mt-1 w-36 py-1 text-xs ${!out && (column.guessed || !month) ? "border-warning" : ""}`}
                             />
-                            {existing.includes(month) && (
+                            {!out && existing.includes(month) && (
                               <span className="mt-1 block text-[11px] text-accent">
                                 Replaces {describeMonth(month)}
                               </span>
@@ -196,7 +229,7 @@ export function PasteCertificates({
                         {row.cells.map((cell, i) => (
                           <td
                             key={i}
-                            className="px-1 py-1 text-right tabular-nums"
+                            className={`px-1 py-1 text-right tabular-nums ${skipped.includes(checked.columns[i]!.index) ? "text-muted line-through" : ""}`}
                           >
                             {cell}
                           </td>
@@ -211,9 +244,10 @@ export function PasteCertificates({
                     months shown are assumed. Check them.
                   </p>
                 )}
-                {checked.columns.some((c) => !months[c.index]) && (
+                {kept.some((c) => !months[c.index]) && (
                   <p className="mt-2 text-xs text-warning">
-                    Give the month of each column whose header isn&apos;t one.
+                    Give the month of each column whose header isn&apos;t one,
+                    or leave the column out.
                   </p>
                 )}
               </div>

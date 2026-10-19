@@ -1,6 +1,8 @@
 "use server";
 
 import {
+  definitionAsTyped,
+  getBorrowingBase,
   importBorrowingBasePaste,
   previewBorrowingBasePaste,
   removeBorrowingBaseMonth,
@@ -86,14 +88,16 @@ export async function previewBorrowingBasePasteAction(
 }
 
 // Saves a paste's figures; `months` gives a month to columns whose header
-// didn't, by column index.
+// didn't, and `skip` leaves columns out, by column index.
 export async function importBorrowingBasePasteAction(
   lineId: string,
   text: string,
   months: Record<number, string>,
+  skip: number[] = [],
 ): Promise<ActionResult<{ figures: number; months: string[] }>> {
   const result = await attempt(async (db, ctx) => {
     if (!isObject(months)) throw invalid("Give columns' months by column.");
+    if (!Array.isArray(skip)) throw invalid("Columns left out are a list.");
     const { figures, months: saved } = await importBorrowingBasePaste(
       db,
       ctx,
@@ -105,6 +109,7 @@ export async function importBorrowingBasePasteAction(
           String(month ?? ""),
         ]),
       ),
+      skip.map(Number),
     );
     return { figures, months: saved };
   });
@@ -112,12 +117,14 @@ export async function importBorrowingBasePasteAction(
   return result;
 }
 
-// A definition as the editor sends it: its lines' fields as typed, terms
-// as an amount or with seasons and steps. Tests and charts go through as
-// they are; the domain reads them strictly.
+// A definition as the editor sends it: its lines' fields and its tests as
+// typed, terms and thresholds as an amount or with seasons and steps.
+// Charts go through as they are; the domain reads them strictly.
 function definitionFields(raw: unknown) {
   if (!isObject(raw)) throw invalid("A borrowing base is a set of fields.");
   if (!Array.isArray(raw.lines)) throw invalid("Its lines must be a list.");
+  if (raw.tests !== undefined && !Array.isArray(raw.tests))
+    throw invalid("Its tests must be a list.");
   return {
     ...raw,
     lines: raw.lines.map((line) => {
@@ -129,7 +136,23 @@ function definitionFields(raw: unknown) {
       );
       return { ...line, ...terms };
     }),
+    ...(raw.tests
+      ? {
+          tests: raw.tests.map((test: unknown) => {
+            if (!isObject(test)) throw invalid("Each test is a set of fields.");
+            return { ...test, threshold: termFields(test.threshold) };
+          }),
+        }
+      : {}),
   };
+}
+
+// Lines renamed in the editor, old code → new, so their figures follow.
+function renameFields(raw: unknown): Record<string, string> {
+  if (!isObject(raw)) throw invalid("Renamed lines are given by code.");
+  return Object.fromEntries(
+    Object.entries(raw).map(([from, to]) => [from, String(to ?? "")]),
+  );
 }
 
 // Saves the whole definition, or none to stop margining the line (its
@@ -137,6 +160,7 @@ function definitionFields(raw: unknown) {
 export async function setBorrowingBaseDefinitionAction(
   lineId: string,
   definition: unknown,
+  renames: Record<string, string> = {},
 ): Promise<ActionResult<Issue[]>> {
   const result = await attempt(async (db, ctx) => {
     const { issues } = await setBorrowingBaseDefinition(
@@ -144,11 +168,28 @@ export async function setBorrowingBaseDefinitionAction(
       ctx,
       String(lineId),
       definition === null ? null : definitionFields(definition),
+      renameFields(renames),
     );
     return issues;
   });
   if (result.ok) refresh();
   return result;
+}
+
+// Replaces the borrowing base's charts, the rest of its definition as
+// saved. With none, it shows the default charts.
+export async function saveBorrowingBaseChartsAction(
+  lineId: string,
+  charts: unknown,
+): Promise<ActionResult> {
+  return run(async (db, ctx) => {
+    if (!Array.isArray(charts)) throw invalid("Charts must be a list.");
+    const { definition } = await getBorrowingBase(db, ctx, String(lineId));
+    return setBorrowingBaseDefinition(db, ctx, String(lineId), {
+      ...definitionAsTyped(definition),
+      charts,
+    });
+  });
 }
 
 // Changes an advance rate, a cap or a reserve's amount from a month on, or

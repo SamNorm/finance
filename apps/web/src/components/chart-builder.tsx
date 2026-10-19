@@ -28,6 +28,7 @@ export function ChartBuilder({
   open,
   onClose,
   lines,
+  thresholds,
   initial,
   onSave,
   preview,
@@ -35,6 +36,9 @@ export function ChartBuilder({
   open: boolean;
   onClose: () => void;
   lines: ModelLine[];
+  // What a threshold can be, of the chart's format; by default the model's
+  // assumptions.
+  thresholds?: { lines: ModelLine[]; hint: string };
   initial: ChartDefinition | null;
   onSave: (chart: ChartDraft) => Promise<ActionResult>;
   // A live rendering of the chart being built, when there is data.
@@ -50,6 +54,8 @@ export function ChartBuilder({
         <BuilderForm
           key={initial?.id ?? "new"}
           lines={lines}
+          thresholdLines={thresholds?.lines}
+          thresholdHint={thresholds?.hint}
           initial={initial}
           onSave={onSave}
           onClose={onClose}
@@ -62,12 +68,16 @@ export function ChartBuilder({
 
 function BuilderForm({
   lines,
+  thresholdLines,
+  thresholdHint = "An assumption drawn across the chart, such as a covenant minimum.",
   initial,
   onSave,
   onClose,
   preview,
 }: {
   lines: ModelLine[];
+  thresholdLines?: ModelLine[];
+  thresholdHint?: string;
   initial: ChartDefinition | null;
   onSave: (chart: ChartDraft) => Promise<ActionResult>;
   onClose: () => void;
@@ -88,9 +98,9 @@ function BuilderForm({
     .map((l) => ({ code: l.code, mark: marks[l.code]! }));
   const format = options.find((l) => marks[l.code])?.format as
     Format | undefined;
-  const thresholds = lines.filter(
-    (l) => l.kind === "assumption" && l.format === format,
-  );
+  const thresholds = (
+    thresholdLines ?? lines.filter((l) => l.kind === "assumption")
+  ).filter((l) => l.format === format);
   const draft: ChartDraft = {
     id: initial?.id,
     title:
@@ -210,10 +220,7 @@ function BuilderForm({
           })}
         </div>
 
-        <Field
-          label="Threshold (optional)"
-          hint="An assumption drawn across the chart, such as a covenant minimum."
-        >
+        <Field label="Threshold (optional)" hint={thresholdHint}>
           <select
             value={draft.threshold ?? ""}
             onChange={(e) => setThreshold(e.target.value)}
