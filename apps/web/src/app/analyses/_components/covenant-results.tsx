@@ -6,13 +6,14 @@ import type {
 } from "@finance/domain";
 import Link from "next/link";
 import { Badge, Card } from "@/components/page";
-import { formatFigure } from "@/lib/format";
+import { formatDate, formatFigure } from "@/lib/format";
 
-// The covenants tested in the analysis, year by year: the scenario's
-// proposed for its deal, or the borrower's in force. Each fiscal year shows
-// the figure against its threshold and the room left; post-project columns
-// sit where the results table puts them. The last column says how much the
-// latest year (post-project, with a project) can give before a breach.
+// The covenants tested in the analysis, period by period: the scenario's
+// proposed for its deal, or the borrower's in force. Each fiscal year and
+// interim period shows the figure against its threshold and the room left;
+// post-project columns sit where the results table puts them. The last
+// column says how much the latest actual period (post-project, with a
+// project) can give before a breach.
 
 type Format = "amount" | "percent" | "ratio" | "count";
 
@@ -49,16 +50,19 @@ export function CovenantResults({
         <Link href={edit} className="text-accent hover:underline">
           Add them on its page
         </Link>
-        : every analysis tests them, year by year.
+        : every analysis tests them, period by period.
       </p>
     );
 
-  // Fiscal years, each followed by its post-project column when shown.
+  // Fiscal years by their year and interim periods by their date, each
+  // followed by its post-project column when shown.
   const columns = run.periods.flatMap((period, p) => {
-    if (period.months !== 12) return [];
     const own = {
       key: period.key,
-      label: period.end.slice(0, 4),
+      label:
+        period.months === 12
+          ? period.end.slice(0, 4)
+          : `${formatDate(period.end)} · ${period.months} mo`,
       p,
       post: false,
     };
@@ -96,7 +100,8 @@ export function CovenantResults({
             <Link href={edit} className="text-accent hover:underline">
               set on its page
             </Link>
-            . Each year shows the figure, its threshold and the room left.
+            . Each period shows the figure, its threshold and the room left; an
+            interim period takes its fiscal year&apos;s threshold.
           </>
         )
       }

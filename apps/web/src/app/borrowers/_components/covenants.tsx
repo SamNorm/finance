@@ -81,7 +81,7 @@ export function BorrowerCovenants({
   return (
     <Card
       title="Covenants in force"
-      description="Each tests a line of the borrower's financial models by its code, year by year; a threshold can step from a fiscal year. A deal's scenario can propose others."
+      description="Each tests a line of the borrower's financial models by its code, in each fiscal year and interim period; a threshold can step from a fiscal year, and an interim period takes its fiscal year's. A deal's scenario can propose others."
     >
       <div className="flex flex-col gap-4">
         <CovenantEditor

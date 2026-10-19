@@ -329,9 +329,22 @@ const asChartFormat = (format: string): ChartInput["format"] =>
 function covenantsBlock(data: AnalysisDocumentData, l: Locale): string {
   const { covenants } = data;
   if (!covenants.run.length) return "";
-  const cols = columns(data, false).filter(
-    (c) => data.run.periods[c.p]!.months === 12,
-  );
+  // Fiscal years by their year, interim periods by their date.
+  const cols = columns(data, false);
+  const label = (p: number) => {
+    const period = data.run.periods[p]!;
+    return period.months === 12 ? period.end.slice(0, 4) : l.date(period.end);
+  };
+  const note = (c: (typeof cols)[number]) => {
+    const period = data.run.periods[c.p]!;
+    return c.post
+      ? l.w.postProjectNote
+      : period.projection
+        ? l.w.projectedNote
+        : period.months === 12
+          ? l.w.actual
+          : l.w.periodMonths(period.months, l.w.qualities[period.quality]);
+  };
   const reference =
     cols.findLast((c) => c.post) ??
     cols.findLast((c) => !data.run.periods[c.p]!.projection);
@@ -391,11 +404,11 @@ function covenantsBlock(data: AnalysisDocumentData, l: Locale): string {
   return `<h2>${l.w.covenants} <span class="tag">${covenants.source === "scenario" ? l.w.proposedFor(data.scenario ? escape(data.scenario.name) : null) : l.w.inForce}</span></h2><table class="figures covenants"><thead><tr><th>${l.w.covenant}</th>${cols
     .map(
       (c) =>
-        `<th class="num${c.post ? " post" : ""}">${escape(data.run.periods[c.p]!.end.slice(0, 4))}<small>${c.post ? l.w.postProjectNote : data.run.periods[c.p]!.projection ? l.w.projectedNote : l.w.actual}</small></th>`,
+        `<th class="num${c.post ? " post" : ""}">${escape(label(c.p))}<small>${escape(note(c))}</small></th>`,
     )
     .join(
       "",
-    )}<th>${l.w.room}${reference ? `<small>${escape(data.run.periods[reference.p]!.end.slice(0, 4))}${reference.post ? ` ${l.w.postProjectNote}` : ""}</small>` : ""}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    )}<th>${l.w.room}${reference ? `<small>${escape(label(reference.p))}${reference.post ? ` ${l.w.postProjectNote}` : ""}</small>` : ""}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function chartsBlock(

@@ -91,7 +91,7 @@ export function AnalysisCharts({
     // An assumption's value in each period, which a scenario can set year
     // by year.
     const assumed = chart.threshold ? valuesOf(run, chart.threshold) : [];
-    // On one line a covenant tests, the covenant's threshold in each year
+    // On one line a covenant tests, the covenant's threshold in each period
     // it's tested: the deal's term, before any assumption the chart names.
     const covenant =
       single &&
