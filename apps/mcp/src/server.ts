@@ -1,22 +1,7 @@
 import type { Db } from "@finance/db";
 import type { Context } from "@finance/domain";
 import { McpServer } from "@modelcontextprotocol/server";
-import { analysisTools } from "./tools/analyses";
-import { capexTools } from "./tools/capex";
-import { commentTools } from "./tools/comments";
-import { borrowerTools } from "./tools/borrowers";
-import { borrowingBaseTemplateTools } from "./tools/borrowing-base-templates";
-import { borrowingBaseTools } from "./tools/borrowing-bases";
-import { consolidationTools } from "./tools/consolidation";
-import { covenantTools } from "./tools/covenants";
-import { creditLineTools } from "./tools/credit-lines";
-import { documentTools } from "./tools/documents";
-import { groupBorrowingBaseTools } from "./tools/group-borrowing-bases";
-import { loanTools } from "./tools/loans";
-import { projectedBorrowingBaseTools } from "./tools/projected-borrowing-bases";
-import { projectTools } from "./tools/projects";
-import { scenarioTools } from "./tools/scenarios";
-import { spreadTools } from "./tools/spreads";
+import { registerTools } from "./tools";
 
 // The app's MCP server, acting for `ctx`. Its tools are business tasks over
 // the domain package, as the web app's server actions are: inputs are
@@ -46,21 +31,6 @@ export function createServer(db: Db, ctx: Context): McpServer {
     { name: "finance", title: "Credit analysis", version: "0.1.0" },
     { instructions: INSTRUCTIONS },
   );
-  borrowerTools(server, db, ctx);
-  spreadTools(server, db, ctx);
-  consolidationTools(server, db, ctx);
-  analysisTools(server, db, ctx);
-  scenarioTools(server, db, ctx);
-  covenantTools(server, db, ctx);
-  commentTools(server, db, ctx);
-  projectTools(server, db, ctx);
-  capexTools(server, db, ctx);
-  loanTools(server, db, ctx);
-  creditLineTools(server, db, ctx);
-  borrowingBaseTools(server, db, ctx);
-  projectedBorrowingBaseTools(server, db, ctx);
-  groupBorrowingBaseTools(server, db, ctx);
-  borrowingBaseTemplateTools(server, db, ctx);
-  documentTools(server, db, ctx);
+  registerTools(server, db, ctx);
   return server;
 }
