@@ -106,11 +106,21 @@ export interface Breakdown {
   reconciles: boolean;
 }
 
+// A built-in input's value in a period, with each loan's, line's or entry's
+// share; null where it doesn't apply.
+export interface BuiltInValue {
+  value: string;
+  parts: FinancingPart[];
+}
+
 export interface AnalysisRun {
   // With the scenario's project: the post-project columns.
   postProject: boolean;
   periods: RunPeriod[];
   cells: Record<string, ResultCell[]>;
+  // The built-in inputs (financing, debt schedule, capex plan, lines of
+  // credit) in each period, whether or not the model reads them.
+  financing: Record<string, (BuiltInValue | null)[]>;
   assumptions: Record<string, AssumptionValue>;
   breakdowns: Breakdown[];
 }
@@ -366,6 +376,16 @@ export function runModel(input: RunInput): AnalysisRun {
     postProject: project !== null,
     periods,
     cells,
+    financing: Object.fromEntries(
+      FINANCING_CODES.map((code) => [
+        code,
+        financing[code as FinancingCode].map((v) =>
+          v.value === null
+            ? null
+            : { value: v.value.toFixed(), parts: v.parts },
+        ),
+      ]),
+    ),
     assumptions,
     breakdowns: reconcile(input, inputLines),
   };

@@ -8,6 +8,7 @@ import {
   addScenario,
   createAnalysis,
   duplicateScenario,
+  getAnalysis,
   runAnalysis,
   updateAnalysis,
   updateScenario,
@@ -588,6 +589,17 @@ describe("lines of credit service", () => {
     results = await runAnalysis(db, ctx, analysis.id, stress.id);
     // 11 months at 1,500,000 and December at 3,000,000, at 6%.
     expect(value(results.scenario!, "LINES")).toEqual([null, null, "97500"]);
+    // The base case keeps the analysis's usage; runs give the built-in
+    // inputs whether or not the model reads them.
+    expect(value(results.base, "LINES")).toEqual([null, null, "60000"]);
+    expect(results.scenario!.financing.LINE_AVERAGE_USAGE).toEqual([
+      null,
+      null,
+      {
+        value: "1625000",
+        parts: [{ id: line.id, name: "Operating line", value: "1625000" }],
+      },
+    ]);
     expect(results.project).toBeNull();
 
     // A deal: a new line from closing, post-project.
@@ -622,5 +634,19 @@ describe("lines of credit service", () => {
     // Dropping the new line drops its usage.
     const kept = await updateScenario(db, ctx, deal.id, { lines: null });
     expect(kept.lineUsage).toEqual({});
+
+    // Deleting a line forgets what analyses and scenarios said of it.
+    await updateScenario(db, ctx, stress.id, {
+      lines: [
+        { id: line.id, name: "Operating line", limit: "3000000", rate: "6%" },
+        { id: usd, name: "USD line", limit: "500000", rate: "8%" },
+      ],
+    });
+    await removeCreditLine(db, ctx, line.id);
+    const after = await getAnalysis(db, ctx, analysis.id);
+    expect(after.analysis.lineUsage).toEqual({});
+    const stressed = after.scenarios.find((s) => s.id === stress.id)!;
+    expect(stressed.lines!.map((l) => l.id)).toEqual([usd]);
+    expect(stressed.lineUsage).toEqual({});
   });
 });

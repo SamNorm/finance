@@ -16,7 +16,13 @@ import {
 // existing loans are. A consolidated client has none of its own: it reads
 // its members'.
 
-const { creditLines, entities } = schema;
+const {
+  analyses,
+  analysisScenarios,
+  consolidationMembers,
+  creditLines,
+  entities,
+} = schema;
 
 const noLine = () => new DomainError("not_found", "No such line of credit.");
 
@@ -165,12 +171,50 @@ export async function updateCreditLine(
 }
 
 // Deletes a line. A line repaid and cancelled is better closed, so analyses
-// of past years still count it.
+// of past years still count it. Analyses forget the usage they assumed for
+// it, and scenarios their proposed changes to it, which would otherwise
+// read as a new line; a consolidated client's know it as "member/line".
 export async function removeCreditLine(
   db: Db,
   ctx: Context,
   lineId: string,
 ): Promise<void> {
-  await getCreditLine(db, ctx, lineId);
-  await db.delete(creditLines).where(eq(creditLines.id, lineId));
+  const line = await getCreditLine(db, ctx, lineId);
+  const groups = await db
+    .select({ id: consolidationMembers.entityId })
+    .from(consolidationMembers)
+    .where(eq(consolidationMembers.memberId, line.entityId));
+  const keys = new Map([
+    [line.entityId, line.id],
+    ...groups.map((g) => [g.id, `${line.entityId}/${line.id}`] as const),
+  ]);
+  await db.transaction(async (tx) => {
+    const affected = await tx
+      .select()
+      .from(analyses)
+      .where(inArray(analyses.entityId, [...keys.keys()]));
+    for (const analysis of affected) {
+      const key = keys.get(analysis.entityId)!;
+      const { [key]: _, ...lineUsage } = analysis.lineUsage;
+      await tx
+        .update(analyses)
+        .set({ lineUsage })
+        .where(eq(analyses.id, analysis.id));
+      const scenarios = await tx
+        .select()
+        .from(analysisScenarios)
+        .where(eq(analysisScenarios.analysisId, analysis.id));
+      for (const scenario of scenarios) {
+        const { [key]: __, ...usage } = scenario.lineUsage;
+        await tx
+          .update(analysisScenarios)
+          .set({
+            lineUsage: usage,
+            lines: scenario.lines?.filter((l) => l.id !== key) ?? null,
+          })
+          .where(eq(analysisScenarios.id, scenario.id));
+      }
+    }
+    await tx.delete(creditLines).where(eq(creditLines.id, lineId));
+  });
 }

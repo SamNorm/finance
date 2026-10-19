@@ -937,7 +937,13 @@ export async function runAnalysis(
       periodOverrides: scenario?.periodOverrides,
       project,
       capex,
-      creditLines: { inForce, proposed, usage },
+      // The base case assumes the analysis's usage; a scenario, its own
+      // over it.
+      creditLines: {
+        inForce,
+        proposed,
+        usage: scenario ? usage : detail.analysis.lineUsage,
+      },
       debtSchedules: debt.map((d) => d.schedule),
       items: items
         .filter((item) => item.kind !== "header")
