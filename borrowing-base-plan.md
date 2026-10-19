@@ -1,6 +1,6 @@
 # Monthly Borrowing Base: Draft Plan
 
-_Status: plan, nothing built; revised with the user's answers (§14) · Last updated: 2026-10-18_
+_Status: plan, being built in phases (§13); every question settled (§14) · Last updated: 2026-10-18_
 
 ## 1. Goal
 
@@ -545,12 +545,7 @@ Decided by the user on 2026-10-18:
 6. **Consolidated clients sum their members' borrowing bases instantly,** with adjustments and a full override per month, like eliminations.
 7. **No policy limits in templates.** Terms are case by case.
 8. **Line interest comes from a fixed assumed usage per line,** overridable by month; it doesn't read the borrowing base's results.
-
-## 15. Open questions
-
-Raised by the decisions. The plan assumes the recommended answer.
-
-1. **One forecast per analysis, or per scenario?** Does a scenario ever need its own client forecast, such as the client's numbers with and without an expansion? Recommended: one per analysis, with scenarios adjusting it through overrides.
-2. **Usage as a share or an amount.** A usage set as a share of the limit rises when a deal raises the limit, as today's increases count interest. An amount wouldn't move. Is the share right (recommended), with months overridden in dollars?
-3. **Filling usage.** Should the usage grid offer a one-time fill, from the same months last year in the certificates or from the projected borrowing base, as values the analyst then owns? Nothing would be read automatically.
-4. **A group's own certificate.** Is entering its totals enough to override a month (recommended), or is the full waterfall needed, with a definition on the consolidated client?
+9. **One client forecast per analysis.** Scenarios adjust it through overrides by month.
+10. **Usage is a share of the limit,** so it rises when a deal raises the limit; any month can be overridden in dollars.
+11. **The usage grid can be filled once** from the same months last year in the certificates, or from the projected borrowing base, as values the analyst then owns. Nothing is read automatically.
+12. **A group's own certificate overrides a month by its totals.** No waterfall on the consolidated client.
