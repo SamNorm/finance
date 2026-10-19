@@ -1,4 +1,5 @@
 export * from "./analyses";
+export * from "./borrowing-bases";
 export * from "./context";
 export * from "./covenants";
 export * from "./credit-lines";

@@ -23,7 +23,14 @@ import {
   isNumeric,
   previousPeriod,
 } from "../spreads/checks";
+import { BUILT_IN_BORROWING_BASES } from "../borrowing-bases/builtins";
+import { borrowingBaseIssues } from "../borrowing-bases/checks";
+import { compileBorrowingBase } from "../borrowing-bases/compile";
+import { normalizeDefinition } from "../borrowing-bases/definition";
+import { runBorrowingBase } from "../borrowing-bases/run";
+import { parseTerm } from "../credit-lines/terms";
 import { BORROWING_BASE_MODEL, inventoryByType } from "./borrowing-base";
+import { demoCertificates } from "./certificates";
 import {
   demoCompanies,
   demoReconciliation,
@@ -538,6 +545,54 @@ describe("demo data", () => {
     values(after, "FCF_COVERAGE")
       .slice(2)
       .forEach((v, i) => expect(v, String(i)).toBeGreaterThan(before[i + 2]!));
+  });
+
+  it("Northwind's certificates match its spread, and its summer limit binds", () => {
+    const northwind = companies[0]!;
+    const certificates = demoCertificates(northwind, {
+      2023: 1_300_000,
+      2024: 1_050_000,
+    });
+    expect(certificates.map((c) => c.month)).toHaveLength(24);
+    const definition = normalizeDefinition(
+      BUILT_IN_BORROWING_BASES[0]!.definition,
+      "CAD",
+    ).definition;
+    const line = {
+      currency: "CAD",
+      limit: parseTerm(northwind.creditLines[0]!.limit, "Limit", "amount"),
+    };
+    const run = runBorrowingBase({ definition, line, months: certificates });
+    const spread = northwind.periods.map((p) => ({
+      end: p.end,
+      figure: (code: string) => p.values[code],
+    }));
+    const issues = borrowingBaseIssues({
+      definition,
+      compiled: compileBorrowingBase(definition, line),
+      months: certificates,
+      run,
+      spread,
+    });
+    // At each December, receivables, inventory and the line are the spread's.
+    expect(issues).toEqual({ general: [], byMonth: {} });
+    for (const end of ["2023-12", "2024-12"]) {
+      const p = run.months.findIndex((m) => m.month === end);
+      const year = northwind.periods.find((y) => y.end.startsWith(end))!;
+      expect(run.cells.AR![p]!.value).toBe(year.values.AR_TRADE);
+      expect(run.cells.BB_OUTSTANDING![p]!.value).toBe(
+        year.values.BANK_INDEBTEDNESS,
+      );
+    }
+    // Always within the borrowing base; the line comes closest to its
+    // $2,000,000 summer limit in September 2024.
+    const margin = run.tests.find((t) => t.id === "margin")!;
+    expect(margin.months.every((m) => m.pass)).toBe(true);
+    const excess = run.cells.BB_EXCESS!.map((c) => Number(c.value));
+    expect(run.months[excess.indexOf(Math.min(...excess))]!.month).toBe(
+      "2024-09",
+    );
+    expect(Math.min(...excess)).toBeLessThan(100_000);
   });
 
   it("the borrowing base margins inventory by type", () => {

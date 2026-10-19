@@ -62,7 +62,8 @@ export interface LineageRef extends ResultValue {
   // Where the value came from: a model line, an assumption, a figure entered
   // in the spread or for the model, a subtotal summed from its lines, the
   // scenario's financing, the borrower's debt schedule, the scenario's capex
-  // plan, the lines of credit, or nothing.
+  // plan, the lines of credit, a borrowing base's terms (a rate, a cap, the
+  // limit), or nothing.
   source:
     | "calculation"
     | "assumption"
@@ -72,6 +73,7 @@ export interface LineageRef extends ResultValue {
     | "schedule"
     | "capex"
     | "line"
+    | "term"
     | "blank";
   // For financing and items the project adjusted: each entry's share.
   parts?: FinancingPart[];

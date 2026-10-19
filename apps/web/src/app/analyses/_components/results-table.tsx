@@ -33,6 +33,7 @@ const SOURCES: Record<LineageRef["source"], string> = {
   schedule: "Debt schedule",
   capex: "Capex plan",
   line: "Lines of credit",
+  term: "Terms",
   blank: "Blank",
 };
 

@@ -2,6 +2,7 @@ import type { schema } from "@finance/db";
 import { DomainError } from "../errors";
 import { monthIndex } from "../financing/amortization";
 import { parseAmount, parseRate } from "../financing/common";
+import { parseValue } from "../spreads/values";
 
 // Terms of a line of credit and its borrowing base (borrowing-base-plan.md
 // §5.3): a limit, an advance rate or a cap that can differ in some calendar
@@ -24,7 +25,9 @@ export type TermInput =
       steps?: unknown;
     };
 
-export type TermKind = "amount" | "rate";
+// An amount; a rate, 0% to 100%; or a number, such as a test's threshold:
+// "1.25x", "250,000" or "15%".
+export type TermKind = "amount" | "rate" | "number";
 
 const MAX_SEASONS = 6;
 const MAX_STEPS = 24;
@@ -74,7 +77,18 @@ function parseMonths(raw: unknown, what: string): number[] {
   return months;
 }
 
+function parseNumber(raw: unknown, what: string): string {
+  const text = String(raw ?? "")
+    .trim()
+    .replace(/\s*[xX×]$/, "");
+  const parsed = parseValue(text, text.endsWith("%") ? "percent" : "amount");
+  if ("error" in parsed) throw invalid(`${what}: ${parsed.error}`);
+  if (parsed.value === null) throw invalid(`${what}: enter it.`);
+  return parsed.value;
+}
+
 function parseValueOf(raw: unknown, what: string, kind: TermKind): string {
+  if (kind === "number") return parseNumber(raw, what);
   return kind === "rate"
     ? parseRate(raw, what, "rate")
     : parseAmount(raw, what, "amount", true);

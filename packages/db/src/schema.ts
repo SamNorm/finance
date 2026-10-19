@@ -357,6 +357,110 @@ export interface Term {
   steps?: { from: string; value: string; seasons?: Season[] }[];
 }
 
+// A margined line's borrowing base (borrowing-base-plan.md §5): typed lines
+// the app compiles into the waterfall, with the client's terms. Amounts are
+// in the line's currency unless a line says otherwise; its figures are then
+// converted at the month's rate, entered as FX.<currency>. Codes are the
+// user's; the app generates the rest (X.MARGINED, BB_TOTAL…).
+export type CollateralType = "receivables" | "inventory" | "other";
+export type BorrowingBaseFormat =
+  "amount" | "percent" | "ratio" | "count" | "flag";
+
+interface BorrowingBaseLineBase {
+  code: string;
+  label: string;
+  description?: string;
+}
+
+export type BorrowingBaseLine = BorrowingBaseLineBase &
+  (
+    | {
+        kind: "collateral";
+        collateral: CollateralType;
+        // The group it's part of, by code.
+        group?: string;
+        currency?: string;
+        // The advance rate, and an optional cap in the line's currency.
+        rate: Term;
+        cap?: Term;
+        // Aged: its amount is the buckets added up, and those from
+        // `ineligibleFrom` (0-based) on are ineligible.
+        aging?: { buckets: string[]; ineligibleFrom: number };
+        // The spread item it's part of, e.g. AR_TRADE.
+        reconcilesWith?: string;
+        // Its amount, instead of entering it.
+        formula?: string;
+        // How it's projected (§8.4).
+        projection?: string;
+      }
+    | { kind: "group"; collateral: CollateralType; cap?: Term }
+    | {
+        kind: "ineligible";
+        // The collateral line it reduces, by code.
+        of: string;
+        formula?: string;
+        projection?: string;
+      }
+    | {
+        kind: "prior_claim";
+        currency?: string;
+        formula?: string;
+        projection?: string;
+      }
+    | {
+        kind: "reserve";
+        // A set amount, as a term; or entered, or a formula.
+        amount?: Term;
+        formula?: string;
+        projection?: string;
+      }
+    | {
+        kind: "usage";
+        currency?: string;
+        reconcilesWith?: string;
+        projection?: string;
+      }
+    | {
+        kind: "driver";
+        format: BorrowingBaseFormat;
+        projection?: string;
+      }
+    | {
+        kind: "assumption";
+        format: BorrowingBaseFormat;
+        value: string | null;
+        // One per calendar month, January first, for a seasonal profile.
+        byMonth?: (string | null)[];
+      }
+    | {
+        kind: "calculation";
+        format: BorrowingBaseFormat;
+        formula: string;
+        projection?: string;
+      }
+  );
+
+// A test each month: a line at least or at most a threshold, which can step
+// and be seasonal as a term (§6.3).
+export interface BorrowingBaseTest {
+  id: string;
+  name: string;
+  metric: string;
+  test: "min" | "max";
+  threshold: Term;
+}
+
+export interface BorrowingBaseDefinition {
+  // What it was copied from, for reference.
+  basedOn?: { kind: "builtin" | "template" | "line"; id: string; name: string };
+  lines: BorrowingBaseLine[];
+  // The spread item the line's outstanding balance is part of, e.g.
+  // BANK_INDEBTEDNESS.
+  outstandingReconcilesWith?: string;
+  tests?: BorrowingBaseTest[];
+  charts?: ChartDefinition[];
+}
+
 // A borrower's lines of credit (borrowing-base-plan.md §4): what's real, with
 // their terms in force. A consolidated client's are its members'. The balance
 // isn't kept: the spread holds it at each period end.
@@ -377,10 +481,58 @@ export const creditLines = pgTable(
     position: integer().notNull().default(0),
     // The day it was closed; analyses no longer count it after.
     closedOn: date({ mode: "string" }),
+    // When it's margined, its borrowing base.
+    borrowingBase: jsonb().$type<BorrowingBaseDefinition>(),
+    // Days after a month end the client's certificate is due.
+    certificateDueDays: integer(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [index("credit_lines_entity").on(t.entityId, t.position)],
+).enableRLS();
+
+export const borrowingBaseQuality = pgEnum("borrowing_base_quality", [
+  "reported",
+  "verified",
+]);
+
+// A margined line's monthly history: each month's certificate, reported by
+// the client or verified by a field exam or an audit (§7).
+export const borrowingBaseMonths = pgTable(
+  "borrowing_base_months",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    lineId: uuid()
+      .notNull()
+      .references(() => creditLines.id, { onDelete: "cascade" }),
+    // "YYYY-MM".
+    month: text().notNull(),
+    quality: borrowingBaseQuality().notNull().default("reported"),
+    receivedOn: date({ mode: "string" }),
+    note: text(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("borrowing_base_months_line_month").on(t.lineId, t.month),
+    check(
+      "borrowing_base_months_month",
+      sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`,
+    ),
+  ],
+).enableRLS();
+
+// A month's figures, by line code.
+export const borrowingBaseValues = pgTable(
+  "borrowing_base_values",
+  {
+    monthId: uuid()
+      .notNull()
+      .references(() => borrowingBaseMonths.id, { onDelete: "cascade" }),
+    code: text().notNull(),
+    amount: numeric().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.monthId, t.code] })],
 ).enableRLS();
 
 // The usage an analysis or a scenario assumes for each line of credit, by

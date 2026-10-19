@@ -5,9 +5,11 @@
 //   client's projections, and an apartment building on the real estate sheet.
 // - A property company that leases its warehouse to one of them, with March
 //   year ends, and the two consolidated less the rent between them.
-// - Three financial models with charts: debt service, a borrowing base on
-//   inventory by type, and income property value.
-// - Analyses with stress and post-project scenarios.
+// - Two financial models with charts: debt service and income property value.
+// - Lines of credit on the commercial borrowers; Northwind's operating line
+//   margined monthly, with two years of certificates.
+// - Analyses with stress and post-project scenarios; Laurentian Foods'
+//   annual review completed.
 // - Covenants in force on each borrower; the equipment deal proposes its own.
 // Leaves existing data alone; --reset deletes the dev organization's data
 // first.
@@ -42,7 +44,9 @@ import {
   setFinancialModelCharts,
   setFinancingItems,
   setPeriodControls,
-  setModelInput,
+  setBorrowingBaseMonth,
+  setBorrowingBaseValues,
+  startBorrowingBase,
   updateAnalysis,
   type LineUsage,
   type ChartDefinition,
@@ -54,10 +58,7 @@ import {
   type ScenarioInput,
   type StatementQuality,
 } from "../src";
-import {
-  BORROWING_BASE_MODEL,
-  inventoryByType,
-} from "../src/demo/borrowing-base";
+import { demoCertificates } from "../src/demo/certificates";
 import { demoCompanies, demoReconciliation } from "../src/demo/companies";
 import { demoPropertyCompany, GROUP_ELIMINATIONS } from "../src/demo/group";
 import {
@@ -273,10 +274,6 @@ async function seed() {
   }
 
   const debtService = await financialModel(commercial.id, DEMO_MODEL);
-  const borrowingBase = await financialModel(
-    commercial.id,
-    BORROWING_BASE_MODEL,
-  );
 
   for (const [i, company] of companies.entries()) {
     const { entity } = borrowers[i]!;
@@ -291,7 +288,7 @@ async function seed() {
       // Northwind plans a second line.
       ...(i === 0 ? [DEMO_CAPEX_SCENARIO] : []),
     ];
-    await analysis(
+    const review = await analysis(
       {
         entityId: entity.id,
         financialModelVersionId: debtService.id,
@@ -301,6 +298,9 @@ async function seed() {
       scenarios,
       usage,
     );
+    // Laurentian Foods' review is done, so the overview shows one.
+    if (i === 1)
+      await updateAnalysis(db, ctx, review.id, { status: "completed" });
     // The client's own projections, against the bank's in the analysis above.
     if (actual.length < company.periods.length) {
       await analysis(
@@ -375,31 +375,37 @@ async function seed() {
     "Consolidated: Laurentian Foods and its landlord, with a group review.",
   );
 
-  // Northwind's operating line, margined on its inventory listing.
+  // Northwind's operating line, margined monthly on its receivables and
+  // inventory: two years of certificates, its year ends matching its spread.
   const northwind = borrowers[0]!;
-  const margined = await analysis(
-    {
-      entityId: northwind.entity.id,
-      financialModelVersionId: borrowingBase.id,
-      name: "Operating line margining 2024",
-    },
-    [{ name: "Finished goods at 50%", overrides: { FG_ADVANCE: "0.5" } }],
+  const [operating] = await getCreditLines(db, ctx, northwind.entity.id);
+  await startBorrowingBase(db, ctx, operating!.id, {
+    builtIn: "receivables-inventory",
+  });
+  const certificates = demoCertificates(companies[0]!, {
+    2023: 1_300_000,
+    2024: 1_050_000,
+  });
+  await setBorrowingBaseValues(
+    db,
+    ctx,
+    operating!.id,
+    certificates.flatMap((c) =>
+      Object.entries(c.figures).map(([code, value]) => ({
+        month: c.month,
+        code,
+        value,
+      })),
+    ),
   );
-  const shares = [
-    { raw: 0.44, wip: 0.17 },
-    { raw: 0.41, wip: 0.19 },
-    { raw: 0.39, wip: 0.18 },
-  ];
-  for (const [p, period] of northwind.periods.entries()) {
-    const inventory = Number(companies[0]!.periods[p]!.values.INVENTORY);
-    for (const [code, value] of Object.entries(
-      inventoryByType(inventory, shares[p]!),
-    ))
-      await setModelInput(db, ctx, margined.id, period.id, code, value);
-  }
-  // Margined and done, so the overview shows a completed analysis.
-  await updateAnalysis(db, ctx, margined.id, { status: "completed" });
-  console.log("Borrowing base: inventory by type for Northwind, completed.");
+  for (const c of certificates)
+    await setBorrowingBaseMonth(db, ctx, operating!.id, c.month, {
+      quality: c.quality,
+      receivedOn: c.receivedOn,
+    });
+  console.log(
+    `Borrowing base: ${certificates.length} months of certificates for Northwind's operating line.`,
+  );
 
   const realEstate = await scoringModel(
     "real-estate.csv",
