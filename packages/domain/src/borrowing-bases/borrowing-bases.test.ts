@@ -3,7 +3,7 @@ import { schema, type Db } from "@finance/db";
 import { createTestDb } from "@finance/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Context } from "../context";
-import { addCreditLine } from "../credit-lines/service";
+import { addCreditLine, updateCreditLine } from "../credit-lines/service";
 import { parseTerm } from "../credit-lines/terms";
 import { parseItemTable } from "../scoring-models/parse";
 import {
@@ -19,6 +19,7 @@ import {
   normalizeDefinition,
   type BorrowingBaseDefinitionInput,
 } from "./definition";
+import { fiscalYearOf, overdueMonths } from "./cycle";
 import { contiguousMonths, runBorrowingBase } from "./run";
 import {
   getBorrowingBase,
@@ -427,6 +428,21 @@ describe("runBorrowingBase", () => {
   });
 });
 
+describe("the business cycle", () => {
+  it("dates certificates due, and fiscal years by their end month", () => {
+    expect(overdueMonths("2025-11", 20, "2026-01-25")).toEqual(["2025-12"]);
+    expect(overdueMonths("2025-11", 20, "2026-01-20")).toEqual([]);
+    expect(overdueMonths("2025-11", 15, "2026-03-01")).toEqual([
+      "2025-12",
+      "2026-01",
+    ]);
+    expect(overdueMonths("2025-11", null, "2026-03-01")).toEqual([]);
+    expect(fiscalYearOf("2025-04", 3)).toBe(2026);
+    expect(fiscalYearOf("2025-03", 3)).toBe(2025);
+    expect(fiscalYearOf("2025-12", 12)).toBe(2025);
+  });
+});
+
 describe("borrowing base service", () => {
   let db: Db;
   let ctx: Context;
@@ -663,7 +679,8 @@ describe("borrowing base service", () => {
           "The lines that are part of Accounts receivable - trade add up to 3,222,000 at 2025-11-30, but the spread's is 2,900,000, 11.1% apart.",
       },
     ]);
-    const list = await listBorrowingBases(db, ctx);
+    await updateCreditLine(db, ctx, line.id, { certificateDueDays: "20" });
+    const list = await listBorrowingBases(db, ctx, "2026-02-01");
     expect(list.find((l) => l.lineId === line.id)).toMatchObject({
       lineName: "Operating line",
       entity: { id: entity.id, name: "Northwind" },
@@ -675,6 +692,8 @@ describe("borrowing base service", () => {
         surplus: "299000",
       },
       deficitMonths: 0,
+      // December's came due on January 20.
+      overdue: ["2025-12"],
     });
     expect(
       compileBorrowingBase(definition, {

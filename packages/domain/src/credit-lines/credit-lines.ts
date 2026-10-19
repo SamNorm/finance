@@ -45,6 +45,9 @@ export interface CreditLineInput {
   rate?: unknown;
   // Blank or null keeps it open.
   closedOn?: unknown;
+  // Days after a month end its borrowing base certificate is due; blank or
+  // null for none.
+  certificateDueDays?: unknown;
 }
 
 export interface ProposedLineInput extends CreditLineInput {
@@ -76,15 +79,25 @@ function parseName(raw: unknown, fallback: string): string {
 export function normalizeCreditLine(
   input: CreditLineInput,
   fallback = "Line of credit",
-): Pick<CreditLine, "name" | "currency" | "limit" | "rate" | "closedOn"> {
+): Pick<
+  CreditLine,
+  "name" | "currency" | "limit" | "rate" | "closedOn" | "certificateDueDays"
+> {
   const name = parseName(input.name, fallback);
   const closed = String(input.closedOn ?? "").trim();
+  const due = String(input.certificateDueDays ?? "").trim();
+  const days = due ? Number(due) : null;
+  if (days !== null && (!Number.isInteger(days) || days < 0 || days > 120))
+    throw invalid(
+      `${name}: a certificate is due 0 to 120 days after the month's end.`,
+    );
   return {
     name,
     currency: parseCurrency(input.currency, name),
     limit: parseTerm(input.limit, `${name}, limit`, "amount"),
     rate: parseRate(input.rate, name),
     closedOn: closed ? parseDate(closed, name, "date it was closed") : null,
+    certificateDueDays: days,
   };
 }
 

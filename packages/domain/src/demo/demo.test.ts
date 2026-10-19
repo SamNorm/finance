@@ -26,6 +26,7 @@ import {
 import { BUILT_IN_BORROWING_BASES } from "../borrowing-bases/builtins";
 import { borrowingBaseIssues } from "../borrowing-bases/checks";
 import { compileBorrowingBase } from "../borrowing-bases/compile";
+import { borrowingBaseCycle } from "../borrowing-bases/cycle";
 import { normalizeDefinition } from "../borrowing-bases/definition";
 import { runBorrowingBase } from "../borrowing-bases/run";
 import { parseTerm } from "../credit-lines/terms";
@@ -593,6 +594,37 @@ describe("demo data", () => {
       "2024-09",
     );
     expect(Math.min(...excess)).toBeLessThan(100_000);
+    // Over its cycle: the line peaks in September, and never comes down
+    // below its December balance, the part it funds all year.
+    const cycle = borrowingBaseCycle(run);
+    expect(
+      cycle.years.map((y) => [y.label, y.peakUsage, y.lowestUsage]),
+    ).toEqual([
+      [
+        "FY2023",
+        { value: "1497468", month: "2023-09" },
+        { value: "197468", month: "2023-12" },
+      ],
+      [
+        "FY2024",
+        { value: "1958930", month: "2024-09" },
+        { value: "908930", month: "2024-12" },
+      ],
+    ]);
+    expect(cycle.last12).toMatchObject({
+      from: "2024-01",
+      to: "2024-12",
+      months: 12,
+      deficitMonths: 0,
+      failed: { margin: 0, overline: 0 },
+    });
+    expect(cycle.seasonal[8]).toEqual({
+      month: 9,
+      years: 2,
+      usage: "1728199",
+      borrowingBase: expect.any(String),
+      surplus: expect.any(String),
+    });
   });
 
   it("the borrowing base margins inventory by type", () => {

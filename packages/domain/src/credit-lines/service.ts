@@ -158,6 +158,7 @@ export async function updateCreditLine(
     limit: current.limit,
     rate: current.rate,
     closedOn: current.closedOn,
+    certificateDueDays: current.certificateDueDays,
     ...Object.fromEntries(
       Object.entries(patch).filter(([, v]) => v !== undefined),
     ),

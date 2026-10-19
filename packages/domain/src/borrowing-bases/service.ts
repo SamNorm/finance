@@ -8,7 +8,13 @@ import type { CreditLine } from "../credit-lines/credit-lines";
 import { getSpread } from "../spreads/service";
 import { parseDate } from "../financing/common";
 import { parseValue } from "../spreads/values";
-import { BUILT_IN_BORROWING_BASES } from "./builtins";
+import type { ChartDefinition } from "../financial-models/charts";
+import { BUILT_IN_BORROWING_BASES, chartsOf } from "./builtins";
+import {
+  borrowingBaseCycle,
+  overdueMonths,
+  type BorrowingBaseCycle,
+} from "./cycle";
 import { borrowingBaseIssues, type BorrowingBaseIssues } from "./checks";
 import {
   checkDefinition,
@@ -160,7 +166,12 @@ export async function getBorrowingBase(
 // The spread's periods a month can be compared with, and its items' labels.
 async function spreadFor(db: Db, ctx: Context, entityId: string) {
   const spread = await getSpread(db, ctx, entityId);
+  const year = spread.periods.findLast(
+    (p) => p.months === 12 && p.quality !== "projected",
+  );
   return {
+    // The borrower's fiscal year end month; December when it has no year.
+    yearEndMonth: year ? Number(year.periodEnd.slice(5, 7)) : 12,
     periods: spread.periods
       .filter((p) => p.quality !== "projected")
       .map((p) => ({
@@ -178,13 +189,23 @@ export interface BorrowingBaseResults {
   detail: BorrowingBaseDetail;
   run: BorrowingBaseRun;
   issues: BorrowingBaseIssues;
+  // By fiscal year, over the last twelve months, and by calendar month.
+  cycle: BorrowingBaseCycle;
+  // The definition's charts, or the defaults.
+  charts: ChartDefinition[];
+  // Months whose certificate is late.
+  overdue: string[];
 }
 
-// The history run month by month, with its tests and checks.
+const today = () => new Date().toISOString().slice(0, 10);
+
+// The history run month by month, with its tests, checks and business
+// cycle; certificates are late as of `asOf`, today by default.
 export async function runBorrowingBaseOf(
   db: Db,
   ctx: Context,
   lineId: string,
+  asOf: string = today(),
 ): Promise<BorrowingBaseResults> {
   const { line, entity } = await lineAndEntity(db, ctx, lineId);
   const months = (await monthsOf(db, [line.id])).get(line.id) ?? [];
@@ -196,17 +217,32 @@ export async function runBorrowingBaseOf(
     compiled,
   });
   const spread = await spreadFor(db, ctx, entity.id);
+  const issues = borrowingBaseIssues({
+    definition: detail.definition,
+    compiled,
+    months,
+    run,
+    spread: spread.periods,
+    labels: spread.labels,
+  });
+  const overdue = overdueMonths(
+    months.at(-1)?.month ?? null,
+    line.certificateDueDays,
+    asOf,
+  );
+  if (overdue.length)
+    issues.general.push({
+      severity: "warning",
+      code: "overdue",
+      message: `Certificates overdue for ${overdue.join(", ")}: due ${line.certificateDueDays} days after each month's end.`,
+    });
   return {
     detail,
     run,
-    issues: borrowingBaseIssues({
-      definition: detail.definition,
-      compiled,
-      months,
-      run,
-      spread: spread.periods,
-      labels: spread.labels,
-    }),
+    issues,
+    cycle: borrowingBaseCycle(run, spread.yearEndMonth),
+    charts: chartsOf(detail.definition),
+    overdue,
   };
 }
 
@@ -593,14 +629,16 @@ export interface BorrowingBaseSummary {
   } | null;
   // Months in deficit over the last twelve.
   deficitMonths: number;
-  errors: number;
+  // Months whose certificate is late.
+  overdue: string[];
 }
 
 // Every margined line of the organization, for monitoring, with its latest
-// month.
+// month and any certificates late as of `asOf`, today by default.
 export async function listBorrowingBases(
   db: Db,
   ctx: Context,
+  asOf: string = today(),
 ): Promise<BorrowingBaseSummary[]> {
   const rows = await db
     .select({
@@ -655,7 +693,11 @@ export async function listBorrowingBases(
             },
       deficitMonths: recent.filter(({ p }) => margin.months[p]?.pass === false)
         .length,
-      errors: 0,
+      overdue: overdueMonths(
+        history.at(-1)?.month ?? null,
+        line.certificateDueDays,
+        asOf,
+      ),
     };
   });
 }

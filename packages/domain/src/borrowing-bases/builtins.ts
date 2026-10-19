@@ -1,4 +1,8 @@
-import type { BorrowingBaseDefinitionInput } from "./definition";
+import type { ChartDefinition } from "../financial-models/charts";
+import type {
+  BorrowingBaseDefinition,
+  BorrowingBaseDefinitionInput,
+} from "./definition";
 
 // The built-in borrowing bases a line starts from (borrowing-base-plan.md
 // §5.6), with Canadian defaults as lines. Nothing about them is fixed: a
@@ -38,6 +42,30 @@ const LETTERS_OF_CREDIT = {
   code: "LCS",
   label: "Letters of credit",
 };
+
+// The charts a borrowing base shows when its definition names none: the
+// borrowing base and usage against the limit, which steps with its
+// seasons, and the margin surplus.
+export const DEFAULT_BB_CHARTS: ChartDefinition[] = [
+  {
+    id: "base-usage",
+    title: "Borrowing base and usage",
+    series: [
+      { code: "BB_TOTAL", mark: "bar" },
+      { code: "BB_USAGE", mark: "bar" },
+    ],
+    threshold: "BB_LIMIT",
+  },
+  {
+    id: "surplus",
+    title: "Margin surplus (deficit)",
+    series: [{ code: "BB_SURPLUS", mark: "line" }],
+    threshold: null,
+  },
+];
+
+export const chartsOf = (definition: BorrowingBaseDefinition) =>
+  definition.charts?.length ? definition.charts : DEFAULT_BB_CHARTS;
 
 export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
   {
@@ -174,6 +202,30 @@ export const BUILT_IN_BORROWING_BASES: BuiltInBorrowingBase[] = [
           code: "SALES",
           label: "Sales for the month",
           format: "amount",
+        },
+        {
+          kind: "calculation",
+          code: "AR_AGED_SHARE",
+          label: "Receivables over 90 days",
+          format: "percent",
+          formula: "IFERROR(AR.AGED_OUT / AR, 0)",
+          description: "The share of receivables past the cutoff.",
+        },
+        {
+          kind: "calculation",
+          code: "DSO",
+          label: "Days sales outstanding",
+          format: "ratio",
+          formula: "IFERROR(AR / SALES * 30, 0)",
+        },
+      ],
+      charts: [
+        ...DEFAULT_BB_CHARTS,
+        {
+          id: "aged",
+          title: "Receivables over 90 days",
+          series: [{ code: "AR_AGED_SHARE", mark: "line" }],
+          threshold: null,
         },
       ],
     },
