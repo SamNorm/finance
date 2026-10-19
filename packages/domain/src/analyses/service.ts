@@ -974,9 +974,13 @@ export async function runAnalysis(
     ? run(scenario, scenario.project, scenario.capex, scenario.lines)
     : null;
   const covenants = scenario?.covenants ?? spread.entity.covenants;
+  // Lines open after the latest actual period, when interest is counted.
+  const lastActual = base.periods.findLast((p) => !p.projection)?.end ?? "";
   const counted = [
     ...inForce.filter(
-      (l) => !l.closedOn && !scenario?.lines?.some((p) => p.id === l.id),
+      (l) =>
+        (!l.closedOn || l.closedOn > lastActual) &&
+        !scenario?.lines?.some((p) => p.id === l.id),
     ),
     ...(scenario?.lines ?? []),
   ];
