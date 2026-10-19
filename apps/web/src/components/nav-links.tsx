@@ -6,6 +6,7 @@ import {
   FileText,
   Gauge,
   LayoutDashboard,
+  LayoutTemplate,
   ListTree,
   Sigma,
 } from "lucide-react";
@@ -20,6 +21,7 @@ const ICONS: Record<NavIcon, typeof Sigma> = {
   borrowing: Gauge,
   scoring: ListTree,
   financial: Sigma,
+  templates: LayoutTemplate,
   documents: FileText,
 };
 
