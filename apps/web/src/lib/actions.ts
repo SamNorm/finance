@@ -82,8 +82,8 @@ export function termFields(raw: unknown): TermInput {
   };
 }
 
-// A line of credit's fields as the client sends them. A closing date left
-// out stays as it is.
+// A line of credit's fields as the client sends them. A closing date or
+// certificate due days left out stay as they are.
 export function creditLineFields(raw: unknown): CreditLineInput {
   if (!isObject(raw)) throw invalid("A line of credit is a set of fields.");
   return {
@@ -93,6 +93,10 @@ export function creditLineFields(raw: unknown): CreditLineInput {
     rate: String(raw.rate ?? ""),
     closedOn:
       raw.closedOn === undefined ? undefined : String(raw.closedOn ?? ""),
+    certificateDueDays:
+      raw.certificateDueDays === undefined
+        ? undefined
+        : String(raw.certificateDueDays ?? ""),
   };
 }
 

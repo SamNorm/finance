@@ -1,5 +1,4 @@
 import type { LineUsage, ProposedLine, Term } from "@finance/domain";
-import { monthIndex } from "@finance/domain/amortization";
 import { termIn as termValue } from "@finance/domain/terms";
 import { Dec } from "@finance/engine";
 import { formatFigure } from "./format";
@@ -63,13 +62,16 @@ export function describeMonths(months: readonly number[]): string {
 }
 
 // A limit in words: "2,000,000 · 2,500,000 Oct–Mar · from Jun 2026:
-// 3,000,000".
-export function describeTerm(term: Term): string {
+// 3,000,000"; an advance rate in percent: "75.0% · from Jun 2026: 70.0%".
+export function describeTerm(
+  term: Term,
+  format: "amount" | "percent" = "amount",
+): string {
   const part = (value: string, seasons: Term["seasons"]) =>
     [
-      formatFigure(value, "amount"),
+      formatFigure(value, format),
       ...(seasons ?? []).map(
-        (s) => `${formatFigure(s.value, "amount")} ${describeMonths(s.months)}`,
+        (s) => `${formatFigure(s.value, format)} ${describeMonths(s.months)}`,
       ),
     ].join(" · ");
   return [
@@ -108,21 +110,28 @@ export interface TermDraft {
 let counter = 0;
 export const newKey = () => `line-${++counter}`;
 
-const seasonDrafts = (seasons: Term["seasons"]): SeasonDraft[] =>
+const seasonDrafts = (
+  seasons: Term["seasons"],
+  typed: (raw: string) => string,
+): SeasonDraft[] =>
   (seasons ?? []).map((s) => ({
     key: newKey(),
     months: s.months,
-    value: typedAmount(s.value),
+    value: typed(s.value),
   }));
 
-export const termDraft = (term: Term): TermDraft => ({
-  value: typedAmount(term.value),
-  seasons: seasonDrafts(term.seasons),
+// A term as typed back: amounts by default, or rates with `typedRate`.
+export const termDraft = (
+  term: Term,
+  typed: (raw: string) => string = typedAmount,
+): TermDraft => ({
+  value: typed(term.value),
+  seasons: seasonDrafts(term.seasons, typed),
   steps: (term.steps ?? []).map((s) => ({
     key: newKey(),
     from: s.from,
-    value: typedAmount(s.value),
-    seasons: seasonDrafts(s.seasons),
+    value: typed(s.value),
+    seasons: seasonDrafts(s.seasons, typed),
   })),
 });
 

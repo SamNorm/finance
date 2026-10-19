@@ -1,16 +1,20 @@
 import {
   balanceSheetSides,
+  BUILT_IN_BORROWING_BASES,
   describeTerms,
   DomainError,
   eliminable,
   getSpread,
   listAnalyses,
+  listBorrowingBases,
+  listBorrowingBaseTemplates,
   listCovenantMetrics,
   listCreditLines,
   listEntities,
   listScoringModels,
   nextYearDebtService,
   type AnalysisSummary,
+  type BorrowingBaseSummary,
   type Consolidation,
   type CreditLine,
   type Issue,
@@ -45,6 +49,7 @@ import { Tabs, type Tab } from "@/components/tabs";
 import { formatDate, formatFigure } from "@/lib/format";
 import { QUALITIES, STATEMENTS } from "@/lib/labels";
 import { getContext, getDb } from "@/lib/server";
+import type { MarginSources } from "../../borrowing-bases/_components/margin-line";
 import { PrintedDocuments } from "../../documents/_components/printed-documents";
 import { documentRows } from "../../documents/rows";
 import { BorrowerActions } from "../_components/borrower-actions";
@@ -85,13 +90,14 @@ async function SpreadView({ params, searchParams }: Props) {
     throw error;
   });
   // A consolidated client has no lines of its own: it lists its members'.
-  const [analyses, scoringModels, metrics, documents, lines] =
+  const [analyses, scoringModels, metrics, documents, lines, margins] =
     await Promise.all([
       listAnalyses(db, ctx, { entityId: id }),
       listScoringModels(db, ctx),
       listCovenantMetrics(db, ctx, id),
       listDocuments(db, ctx, { entityId: id }),
       listCreditLines(db, ctx, id),
+      marginsOf(),
     ]);
   const covenants = {
     value: "covenants",
@@ -145,6 +151,7 @@ async function SpreadView({ params, searchParams }: Props) {
         analyses={analyses}
         covenantsTab={covenants}
         documentsTab={documentsTab}
+        margins={margins}
         scoringModel={scoringModel}
         scoringModels={scoringModels.map((m) => ({
           id: m.id,
@@ -291,7 +298,11 @@ async function SpreadView({ params, searchParams }: Props) {
                     nextYear.map(({ id, ...year }) => [id, year]),
                   )}
                 />
-                <CreditLines entityId={entity.id} lines={lines.map(lineRow)} />
+                <CreditLines
+                  entityId={entity.id}
+                  lines={lines.map((line) => lineRow(line, margins))}
+                  sources={margins.sources}
+                />
               </div>
             ),
           },
@@ -326,6 +337,7 @@ async function ConsolidatedView({
   analyses,
   covenantsTab,
   documentsTab,
+  margins,
   scoringModel,
   scoringModels,
 }: {
@@ -339,6 +351,7 @@ async function ConsolidatedView({
   covenantsTab: Tab;
   // Printed from its analyses.
   documentsTab: Tab;
+  margins: Margins;
   scoringModel: { id: string; name: string };
   scoringModels: { id: string; name: string; published: boolean }[];
 }) {
@@ -351,7 +364,7 @@ async function ConsolidatedView({
     Promise.all(
       members.map(async (member) =>
         (await listCreditLines(db, ctx, member.id)).map((line) => ({
-          ...lineRow(line),
+          ...lineRow(line, margins),
           member: { id: member.id, name: member.name },
         })),
       ),
@@ -569,15 +582,58 @@ async function ConsolidatedView({
   );
 }
 
-// A line of credit as the Existing debt tab lists it.
-const lineRow = (line: CreditLine): LineRow => ({
-  id: line.id,
-  name: line.name,
-  currency: line.currency,
-  limit: line.limit,
-  rate: line.rate,
-  closedOn: line.closedOn,
-});
+// The organization's margined lines, by line, and what a line's borrowing
+// base can start from.
+async function marginsOf() {
+  const db = getDb();
+  const ctx = await getContext();
+  const [summaries, templates] = await Promise.all([
+    listBorrowingBases(db, ctx),
+    listBorrowingBaseTemplates(db, ctx),
+  ]);
+  const sources: MarginSources = {
+    builtIns: BUILT_IN_BORROWING_BASES.map(({ id, name, description }) => ({
+      id,
+      name,
+      description,
+    })),
+    templates: templates
+      .filter((t) => t.published && !t.archivedAt)
+      .map(({ id, name, description }) => ({ id, name, description })),
+    lines: summaries.map((l) => ({
+      lineId: l.lineId,
+      name: l.lineName,
+      entityName: l.entity.name,
+    })),
+  };
+  return {
+    byLine: new Map<string, BorrowingBaseSummary>(
+      summaries.map((s) => [s.lineId, s]),
+    ),
+    sources,
+  };
+}
+
+type Margins = Awaited<ReturnType<typeof marginsOf>>;
+
+// A line of credit as the Existing debt tab lists it, with its latest
+// surplus when it's margined.
+const lineRow = (line: CreditLine, margins: Margins): LineRow => {
+  const summary = margins.byLine.get(line.id);
+  return {
+    id: line.id,
+    name: line.name,
+    currency: line.currency,
+    limit: line.limit,
+    rate: line.rate,
+    closedOn: line.closedOn,
+    borrowingBase: !summary
+      ? null
+      : summary.latest
+        ? { month: summary.latest.month, surplus: summary.latest.surplus }
+        : "none",
+  };
+};
 
 // Each member's existing loans, as of its own date, entered on its page.
 function MembersDebt({ members }: { members: Consolidation["members"] }) {

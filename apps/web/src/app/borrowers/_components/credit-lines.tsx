@@ -1,7 +1,7 @@
 "use client";
 
 import type { Term } from "@finance/domain";
-import { Pencil, Trash2 } from "lucide-react";
+import { Gauge, Pencil, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState, useTransition, type FormEvent } from "react";
 import { Menu, MenuItem, MenuSeparator } from "@/components/menu";
@@ -17,7 +17,12 @@ import {
   typedRate,
   type TermDraft,
 } from "@/lib/credit-lines";
+import { describeMonth } from "@/lib/borrowing-bases";
 import { formatDate, formatFigure } from "@/lib/format";
+import {
+  MarginDialog,
+  type MarginSources,
+} from "../../borrowing-bases/_components/margin-line";
 import {
   addCreditLineAction,
   removeCreditLineAction,
@@ -38,19 +43,26 @@ export interface LineRow {
   closedOn: string | null;
   // A consolidated client's member, which borrows it.
   member?: { id: string; name: string } | null;
+  // When it's margined: its latest month with a certificate and the
+  // surplus then, or none yet.
+  borrowingBase?: { month: string; surplus: string | null } | "none" | null;
 }
 
 export function CreditLines({
   entityId,
   lines,
   consolidated = false,
+  sources,
 }: {
   entityId: string;
   lines: LineRow[];
   consolidated?: boolean;
+  // What a line's borrowing base can start from, to margin it.
+  sources?: MarginSources;
 }) {
   // The line being edited, or "new" for one being added.
   const [editing, setEditing] = useState<LineRow | "new" | null>(null);
+  const [margining, setMargining] = useState<LineRow | null>(null);
   const [removing, startRemove] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -112,6 +124,7 @@ export function CreditLines({
                 <th className={table.th}>Currency</th>
                 <th className={`${table.th} w-full`}>Authorized limit</th>
                 <th className={`${table.th} text-right`}>Rate</th>
+                <th className={table.th}>Borrowing base</th>
                 {!consolidated && (
                   <th className={table.th}>
                     <span className="sr-only">Actions</span>
@@ -152,6 +165,16 @@ export function CreditLines({
                   <td className={`${table.td} text-right tabular-nums`}>
                     {formatFigure(line.rate, "percent")}
                   </td>
+                  <td className={`${table.td} py-1.5 whitespace-nowrap`}>
+                    <Margin
+                      line={line}
+                      onMargin={
+                        !consolidated && sources && !line.closedOn
+                          ? () => setMargining(line)
+                          : undefined
+                      }
+                    />
+                  </td>
                   {!consolidated && (
                     <td className="px-2 py-1.5 text-right">
                       <Menu label={`${line.name} actions`}>
@@ -161,6 +184,14 @@ export function CreditLines({
                         >
                           Edit line
                         </MenuItem>
+                        {!line.borrowingBase && sources && (
+                          <MenuItem
+                            icon={<Gauge />}
+                            onSelect={() => setMargining(line)}
+                          >
+                            Margin this line
+                          </MenuItem>
+                        )}
                         <MenuSeparator />
                         <MenuItem
                           icon={<Trash2 />}
@@ -199,7 +230,66 @@ export function CreditLines({
           onDone={() => setEditing(null)}
         />
       </Modal>
+      {sources && (
+        <MarginDialog
+          open={margining !== null}
+          onClose={() => setMargining(null)}
+          lineId={margining?.id ?? ""}
+          lineName={margining?.name ?? ""}
+          sources={sources}
+        />
+      )}
     </Card>
+  );
+}
+
+// A margined line's latest surplus, linking to its borrowing base; or the
+// way to margin one that isn't.
+function Margin({ line, onMargin }: { line: LineRow; onMargin?: () => void }) {
+  const margin = line.borrowingBase;
+  if (!margin)
+    return onMargin ? (
+      <button
+        type="button"
+        className={`${button.ghost} -ml-2 px-2 py-1 text-xs text-accent`}
+        onClick={onMargin}
+      >
+        <Gauge />
+        Margin this line
+      </button>
+    ) : (
+      <span className="text-muted">Not margined</span>
+    );
+  const short = margin !== "none" && Number(margin.surplus) < 0;
+  return (
+    <Link
+      href={`/borrowing-bases/${line.id}`}
+      className="group/margin flex flex-col items-start"
+      title="Open its borrowing base"
+    >
+      {margin === "none" ? (
+        <span className="text-accent group-hover/margin:underline">
+          No certificate yet
+        </span>
+      ) : (
+        <>
+          <span
+            className={`font-medium tabular-nums group-hover/margin:underline ${short ? "text-danger" : "text-accent"}`}
+          >
+            {short ? "Deficit" : "Surplus"}{" "}
+            {margin.surplus === null
+              ? "–"
+              : formatFigure(
+                  String(Math.abs(Number(margin.surplus))),
+                  "amount",
+                )}
+          </span>
+          <span className="text-xs text-muted">
+            {describeMonth(margin.month)}
+          </span>
+        </>
+      )}
+    </Link>
   );
 }
 
