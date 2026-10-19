@@ -111,6 +111,7 @@ async function AnalysisView({ params, searchParams }: Props) {
     covenants: s.covenants,
     lines: s.lines,
     lineUsage: s.lineUsage,
+    exchangeRates: s.exchangeRates,
     imbalance: s.project && imbalance(s.project),
   }));
   // The lines of credit, and the months their usage counts in: each
@@ -139,6 +140,9 @@ async function AnalysisView({ params, searchParams }: Props) {
     ],
     lastActual: lastActual ? lastActual.end.slice(0, 7) : null,
     withoutUsage: results.creditLines.withoutUsage,
+    currency: results.creditLines.currency,
+    analysisRates: analysis.exchangeRates,
+    withoutRate: results.creditLines.withoutRate,
     borrowerHref: `/borrowers/${entity.id}?tab=existing-debt`,
     margined: Object.fromEntries(
       projected.flatMap((l) =>
@@ -312,6 +316,7 @@ async function AnalysisView({ params, searchParams }: Props) {
                 ? "error"
                 : run.breakdowns.some((b) => !b.reconciles) ||
                     results.creditLines.withoutUsage.length > 0 ||
+                    results.creditLines.withoutRate.length > 0 ||
                     [
                       ...results.covenants.run,
                       ...(results.covenants.project ?? []),
@@ -328,7 +333,11 @@ async function AnalysisView({ params, searchParams }: Props) {
                   )}
                   {offBalance && <ProjectImbalance message={offBalance} />}
                   <Breakdowns run={run} />
-                  <LinesWithoutUsage lines={results.creditLines.withoutUsage} />
+                  <LinesNotCounted
+                    withoutUsage={results.creditLines.withoutUsage}
+                    withoutRate={results.creditLines.withoutRate}
+                    currency={results.creditLines.currency}
+                  />
                   <CovenantResults
                     covenants={results.covenants}
                     run={run}
@@ -403,7 +412,8 @@ async function AnalysisView({ params, searchParams }: Props) {
             label: "Assumptions & project",
             alert: offBalance
               ? "error"
-              : results.creditLines.withoutUsage.length
+              : results.creditLines.withoutUsage.length ||
+                  results.creditLines.withoutRate.length
                 ? "warning"
                 : undefined,
             content: scenario ? (
@@ -574,14 +584,18 @@ function Breakdowns({ run }: { run: AnalysisRun }) {
   );
 }
 
-// Lines of credit the run counts with no usage assumed: their interest
-// counts as zero, which understates debt service.
-function LinesWithoutUsage({
-  lines,
+// Lines of credit the run counts as zero: with no usage assumed, or in
+// another currency with no rate. That understates debt service.
+function LinesNotCounted({
+  withoutUsage,
+  withoutRate,
+  currency,
 }: {
-  lines: { id: string; name: string }[];
+  withoutUsage: { id: string; name: string }[];
+  withoutRate: { id: string; name: string; currency: string }[];
+  currency: string;
 }) {
-  if (!lines.length) return null;
+  if (!withoutUsage.length && !withoutRate.length) return null;
   return (
     <div className="flex gap-3 rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm">
       <TriangleAlert
@@ -590,16 +604,24 @@ function LinesWithoutUsage({
       />
       <div className="flex flex-col gap-1">
         <p className="font-medium text-warning">
-          Lines of credit with no usage assumed
+          Lines of credit counted as zero
         </p>
         <ul className="flex flex-col gap-0.5 text-muted">
-          {lines.map((line) => (
-            <li key={line.id}>{line.name}: its interest counts as zero.</li>
+          {withoutUsage.map((line) => (
+            <li key={line.id}>
+              {line.name}: no usage assumed, so its interest counts as zero.
+            </li>
+          ))}
+          {withoutRate.map((line) => (
+            <li key={line.id}>
+              {line.name}: no {line.currency} rate, so it counts nothing in{" "}
+              {currency}.
+            </li>
           ))}
         </ul>
         <p className="text-muted">
-          Assume an average usage under Assumptions &amp; project, Lines of
-          credit.
+          Assume an average usage, or give the exchange rate, under
+          Assumptions &amp; project, Lines of credit.
         </p>
       </div>
     </div>

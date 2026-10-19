@@ -82,6 +82,8 @@ export async function updateAnalysisAction(
     status?: string;
     // The usage assumed for each line of credit, by line id.
     lineUsage?: unknown;
+    // Rates converting lines in other currencies, by currency.
+    exchangeRates?: unknown;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
@@ -110,8 +112,17 @@ export async function updateAnalysisAction(
         patch.lineUsage === undefined
           ? undefined
           : lineUsageFields(patch.lineUsage),
+      exchangeRates: rateFields(patch.exchangeRates),
     });
   });
+}
+
+// Exchange rates from the client, by currency, as text.
+function rateFields(raw: unknown) {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null)
+    throw invalid("Exchange rates are given by currency.");
+  return textFields(raw);
 }
 
 export async function deleteAnalysisAction(
@@ -181,6 +192,7 @@ export async function updateScenarioAction(
     // The lines of credit proposed for its deal; null keeps those in force.
     lines?: unknown[] | null;
     lineUsage?: unknown;
+    exchangeRates?: unknown;
   },
 ): Promise<ActionResult> {
   return run((db, ctx) => {
@@ -235,6 +247,7 @@ export async function updateScenarioAction(
         patch.lineUsage === undefined
           ? undefined
           : lineUsageFields(patch.lineUsage),
+      exchangeRates: rateFields(patch.exchangeRates),
     });
   });
 }

@@ -1,6 +1,11 @@
 "use client";
 
-import type { LineUsage, ProposedLine, Term } from "@finance/domain";
+import type {
+  ExchangeRates,
+  LineUsage,
+  ProposedLine,
+  Term,
+} from "@finance/domain";
 import type { BorrowingBaseDefinition } from "@finance/domain/borrowing-bases";
 import { monthIndex, monthOf } from "@finance/domain/amortization";
 import { Dec } from "@finance/engine";
@@ -43,7 +48,8 @@ import {
 // overridden by an amount drawn, which its interest comes from; and a
 // scenario's proposed lines for its deal. Months count only inside the
 // windows the run reads: projected periods, and the twelve months after a
-// project's closing.
+// project's closing. Lines in another currency than the analysis's count at
+// its exchange rates, which a scenario can change.
 
 // A line in force, as the analysis reads it: the borrower's, or a
 // consolidated client's member's.
@@ -69,6 +75,12 @@ export interface LinesSetup {
   lastActual: string | null;
   // Lines the shown run counts with no usage assumed, as saved.
   withoutUsage: { id: string; name: string }[];
+  // The analysis's currency, its statements', which lines in another
+  // convert into; the base case's rates; and the lines the shown run counts
+  // with no rate, as saved.
+  currency: string;
+  analysisRates: ExchangeRates;
+  withoutRate: { id: string; name: string; currency: string }[];
   // Where lines are entered: the borrower's Existing debt tab.
   borrowerHref: string;
   // The borrowing bases of margined lines in force, by line id, whose terms
@@ -105,6 +117,108 @@ function WithoutUsage({ lines }: { lines: { name: string }[] }) {
       No usage assumed for {listed(lines.map((l) => l.name))}:{" "}
       {lines.length === 1 ? "its" : "their"} interest counts as zero.
     </p>
+  );
+}
+
+function WithoutRate({
+  lines,
+  currency,
+}: {
+  lines: { name: string; currency: string }[];
+  currency: string;
+}) {
+  if (!lines.length) return null;
+  const currencies = [...new Set(lines.map((l) => l.currency))];
+  return (
+    <p className="flex items-start gap-2 text-sm text-warning">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+      No exchange rate for {listed(currencies)}:{" "}
+      {listed(lines.map((l) => l.name))}{" "}
+      {lines.length === 1 ? "counts" : "count"} nothing in {currency}.
+    </p>
+  );
+}
+
+// A rate as typed, "1.37" or "1,37"; null when blank or not above zero.
+function typedNumber(raw: string): number | null {
+  const text = raw.replace(/\s/g, "").replace(",", ".");
+  if (!text) return null;
+  const n = Number(text);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Exchange rates as the domain reads them: those entered.
+export const ratesInput = (drafts: Record<string, string>) =>
+  Object.fromEntries(
+    Object.entries(drafts)
+      .map(([code, rate]) => [code, rate.trim()] as const)
+      .filter(([, rate]) => rate),
+  );
+
+// The other currencies lines count in, which need a rate.
+const foreign = (rows: readonly { currency: string }[], currency: string) =>
+  [...new Set(rows.map((r) => r.currency))]
+    .filter((c) => c !== currency && /^[A-Z]{3}$/.test(c))
+    .sort();
+
+// A rate per currency other than the analysis's. In a scenario,
+// `inherited` is the analysis's, which applies where the scenario's is
+// blank.
+function ExchangeRateFields({
+  currencies,
+  currency,
+  drafts,
+  inherited,
+  onChange,
+}: {
+  currencies: string[];
+  currency: string;
+  drafts: Record<string, string>;
+  inherited?: ExchangeRates;
+  onChange: (drafts: Record<string, string>) => void;
+}) {
+  if (!currencies.length) return null;
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-line/70 bg-surface-2/30 px-3 py-2.5">
+      <div className="flex flex-col gap-0.5">
+        <p className="text-sm font-medium">Exchange rates</p>
+        <p className="text-xs text-muted">
+          Lines in another currency count in {currency} at{" "}
+          {inherited ? "the scenario's rate, or else the analysis's" : "these"}
+          : their interest, limit and average usage. Their usage below stays in
+          their own currency.
+        </p>
+      </div>
+      {currencies.map((code) => {
+        const value = drafts[code] ?? "";
+        const applied =
+          typedNumber(value) ??
+          (inherited?.[code] ? Number(inherited[code]) : null);
+        return (
+          <label
+            key={code}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+          >
+            <span className="text-muted">
+              {currency} for one {code}
+            </span>
+            <input
+              aria-label={`${code} rate`}
+              value={value}
+              placeholder={inherited?.[code] ?? "None"}
+              inputMode="decimal"
+              onChange={(e) => onChange({ ...drafts, [code]: e.target.value })}
+              className={`${box.replace("border-line bg-surface", tone(value))} w-24 text-right tabular-nums`}
+            />
+            <span className="text-xs text-muted tabular-nums">
+              {applied
+                ? `${code} 100,000 = ${currency} ${formatFigure((100000 * applied).toFixed(0), "amount")}`
+                : `No rate: lines in ${code} count nothing`}
+            </span>
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
@@ -292,13 +406,15 @@ export function BaseCaseLines({
 }) {
   const saved = () => usageDrafts(setup.analysisUsage);
   const [drafts, setDrafts] = useState(saved);
-  // Once saved, or changed elsewhere such as from MCP, show the usage as
-  // the server keeps it.
-  const serialized = JSON.stringify(setup.analysisUsage);
+  const [rates, setRates] = useState(() => ({ ...setup.analysisRates }));
+  // Once saved, or changed elsewhere such as from MCP, show the usage and
+  // rates as the server keeps them.
+  const serialized = JSON.stringify([setup.analysisUsage, setup.analysisRates]);
   const [synced, setSynced] = useState(serialized);
   if (synced !== serialized) {
     setSynced(serialized);
     setDrafts(saved());
+    setRates({ ...setup.analysisRates });
   }
   const [pending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<{
@@ -308,7 +424,9 @@ export function BaseCaseLines({
   const ids = new Set(setup.inForce.map((l) => l.id));
   const dirty =
     JSON.stringify(usageInput(drafts, ids)) !==
-    JSON.stringify(usageInput(saved(), ids));
+      JSON.stringify(usageInput(saved(), ids)) ||
+    JSON.stringify(ratesInput(rates)) !==
+      JSON.stringify(ratesInput(setup.analysisRates));
   const months = countedMonths(setup.projectedMonths, null);
   const rows: UsageRow[] = setup.inForce
     .filter((line) => months.some((m) => openIn(line, m)))
@@ -323,6 +441,7 @@ export function BaseCaseLines({
     startTransition(async () => {
       const result = await updateAnalysisAction(analysisId, {
         lineUsage: usageInput(drafts, ids),
+        exchangeRates: ratesInput(rates),
       });
       startTransition(() =>
         setFeedback(
@@ -337,7 +456,7 @@ export function BaseCaseLines({
   return (
     <Card
       title="Lines of credit"
-      description="The usage assumed for each line, a share of its limit, which its interest in projected years comes from. A month's amount replaces the share that month. Scenarios can assume their own."
+      description={`The usage assumed for each line, a share of its limit, which its interest in projected years comes from. A month's amount replaces the share that month. Scenarios can assume their own. The analysis counts in ${setup.currency}, its statements' currency.`}
     >
       {!setup.inForce.length ? (
         <NoLines href={setup.borrowerHref} />
@@ -349,6 +468,13 @@ export function BaseCaseLines({
       ) : (
         <div className="flex flex-col gap-4">
           <WithoutUsage lines={setup.withoutUsage} />
+          <WithoutRate lines={setup.withoutRate} currency={setup.currency} />
+          <ExchangeRateFields
+            currencies={foreign(rows, setup.currency)}
+            currency={setup.currency}
+            drafts={rates}
+            onChange={setRates}
+          />
           <UsageGrid
             rows={rows}
             months={months}
@@ -362,7 +488,7 @@ export function BaseCaseLines({
               onClick={save}
               disabled={pending || !dirty}
             >
-              {pending ? "Saving…" : "Save usage"}
+              {pending ? "Saving…" : "Save"}
             </button>
             {feedback ? (
               <span
@@ -407,14 +533,18 @@ export interface ScenarioLinesDraft {
   terms: Record<string, DealTermsDraft>;
   // New margined lines' borrowing bases, by line id, kept as saved.
   definitions: Record<string, BorrowingBaseDefinition>;
+  // Exchange rates over the analysis's, by currency.
+  rates: Record<string, string>;
 }
 
 export const scenarioLinesDraft = (
   lines: ProposedLine[] | null,
   usage: LineUsage,
+  rates: ExchangeRates,
 ): ScenarioLinesDraft => ({
   proposed: lines && lines.map(lineDraft),
   usage: usageDrafts(usage),
+  rates: { ...rates },
   terms: Object.fromEntries(
     (lines ?? []).map((l) => [l.id, dealTermsDraft(l.terms)]),
   ),
@@ -637,6 +767,14 @@ export function ScenarioLines({
             </p>
           </div>
           <WithoutUsage lines={setup.withoutUsage} />
+          <WithoutRate lines={setup.withoutRate} currency={setup.currency} />
+          <ExchangeRateFields
+            currencies={foreign(rows, setup.currency)}
+            currency={setup.currency}
+            drafts={draft.rates}
+            inherited={setup.analysisRates}
+            onChange={(rates) => onChange({ ...draft, rates })}
+          />
           {rows.length ? (
             <UsageGrid
               rows={rows}

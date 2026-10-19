@@ -5,6 +5,7 @@ import type {
   CapexYear,
   Covenant,
   DebtSchedule,
+  ExchangeRates,
   LineUsage,
   ModelLine,
   Project,
@@ -49,6 +50,7 @@ import {
   BaseCaseLines,
   lineChanges,
   proposedLinesInput,
+  ratesInput,
   ScenarioLines,
   scenarioLineIds,
   scenarioLinesDraft,
@@ -69,6 +71,8 @@ export interface ScenarioOption {
   lines: ProposedLine[] | null;
   // Usage assumed for lines, over the analysis's.
   lineUsage: LineUsage;
+  // Exchange rates over the analysis's, by currency.
+  exchangeRates: ExchangeRates;
   // How the project is out of balance, e.g. "Sources exceed uses by 500".
   imbalance?: string | null;
 }
@@ -361,7 +365,11 @@ export function ScenarioEditor({
   const [covenants, setCovenants] = useState(savedCovenants);
   // The deal's proposed lines of credit and the usage assumed.
   const savedLines = () =>
-    scenarioLinesDraft(scenario.lines, scenario.lineUsage);
+    scenarioLinesDraft(
+      scenario.lines,
+      scenario.lineUsage,
+      scenario.exchangeRates,
+    );
   const [lines, setLines] = useState(savedLines);
   // The saved project shows as a sources and uses table until edited.
   const [editing, setEditing] = useState(!scenario.project);
@@ -376,6 +384,7 @@ export function ScenarioEditor({
     scenario.covenants,
     scenario.lines,
     scenario.lineUsage,
+    scenario.exchangeRates,
   ]);
   const [synced, setSynced] = useState(saved);
   if (synced !== saved) {
@@ -405,17 +414,17 @@ export function ScenarioEditor({
       lines.usage,
       scenarioLineIds(creditLines, lines.proposed),
     ),
+    exchangeRates: ratesInput(lines.rates),
   };
   const linesDirty =
     JSON.stringify(linesInput) !==
     JSON.stringify({
-      lines: proposedLinesInput(
-        scenarioLinesDraft(scenario.lines, scenario.lineUsage),
-      ),
+      lines: proposedLinesInput(savedLines()),
       lineUsage: usageInput(
         usageDrafts(scenario.lineUsage),
         scenarioLineIds(creditLines, scenario.lines),
       ),
+      exchangeRates: ratesInput(scenario.exchangeRates),
     });
   const dirty =
     covenantsDirty ||

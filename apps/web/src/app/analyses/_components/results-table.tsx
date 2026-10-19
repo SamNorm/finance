@@ -701,7 +701,20 @@ function Lineage({
                               key={part.id}
                               className="flex justify-between gap-3"
                             >
-                              <span className="truncate">{part.name}</span>
+                              <span className="truncate">
+                                {part.name}
+                                {part.converted && (
+                                  <span className="tabular-nums">
+                                    {" "}
+                                    · {part.converted.currency}{" "}
+                                    {formatFigure(
+                                      part.converted.amount,
+                                      "amount",
+                                    )}{" "}
+                                    × {part.converted.rate}
+                                  </span>
+                                )}
+                              </span>
                               <span className="tabular-nums">
                                 {formatFigure(part.value, "amount")}
                               </span>
