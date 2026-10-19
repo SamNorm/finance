@@ -210,6 +210,43 @@ async function connect(
   };
 }
 
+// A new borrower with a margined line and two months of certificates.
+async function marginedLine(
+  call: Awaited<ReturnType<typeof connect>>,
+  name: string,
+) {
+  const { value: borrower } = await call("create_borrower", { name });
+  const { value: added } = await call("add_line_of_credit", {
+    borrowerId: borrower.id,
+    name: "Operating line",
+    limit: "2,000,000",
+    rate: "7%",
+  });
+  const line: string = added.line.id;
+  await call("set_borrowing_base_definition", {
+    lineId: line,
+    definition: {
+      lines: [
+        {
+          kind: "collateral",
+          code: "AR",
+          label: "Receivables",
+          collateral: "receivables",
+          rate: "75%",
+        },
+      ],
+    },
+  });
+  await call("set_borrowing_base_values", {
+    lineId: line,
+    months: {
+      "2025-11": { AR: "2,000,000", BB_OUTSTANDING: "1,200,000" },
+      "2025-12": { AR: "1,800,000", BB_OUTSTANDING: "1,300,000" },
+    },
+  });
+  return { borrowerId: borrower.id as string, line };
+}
+
 describe("MCP server", () => {
   it("serves clients of both protocol eras", async () => {
     for (const mode of ["legacy", "auto"] as const) {
@@ -3456,6 +3493,150 @@ describe("MCP server", () => {
     });
     expect(copy.basedOn).toBe("Wholesale distributors");
   });
+
+  it("lists and writes a margined line's documents", async () => {
+    const call = await connect();
+    const { line } = await marginedLine(call, "Cedar Supply");
+    const { value: printable } = await call("list_document_templates", {
+      creditLineId: line,
+    });
+    expect(printable).toEqual([
+      expect.objectContaining({
+        template: "borrowing-base-certificate",
+        builtIn: true,
+      }),
+      expect.objectContaining({ template: "margin-history", builtIn: true }),
+    ]);
+    const { value: all } = await call("list_document_templates");
+    expect(
+      all.find(
+        (t: { template: string }) =>
+          t.template === "borrowing-base-certificate",
+      ),
+    ).toMatchObject({ source: "line" });
+
+    // A line prints a line's documents, in a month it has.
+    expect(
+      (
+        await call("generate_document", {
+          creditLineId: line,
+          template: "debt-summary",
+        })
+      ).error,
+    ).toBe("Debt summary prints from an analysis, not from a line of credit.");
+    expect(
+      (
+        await call("generate_document", {
+          creditLineId: line,
+          month: "2024-01",
+          template: "borrowing-base-certificate",
+        })
+      ).error,
+    ).toBe(
+      "Operating line has no certificate for 2024-01. Its months run from 2025-11 to 2025-12.",
+    );
+    expect(
+      (
+        await call("generate_document", {
+          analysisId: ids.analysis,
+          creditLineId: line,
+          template: "borrowing-base-certificate",
+        })
+      ).error,
+    ).toMatch(
+      /^Pass an analysisId to print from an analysis, or a creditLineId/,
+    );
+    expect(
+      (await call("list_documents", { creditLineId: line })).value,
+    ).toEqual([]);
+
+    // The organization's own certificate, from a line.
+    const { value: reference } = await call("describe_document_sections");
+    expect(reference.lineMergeFields).toHaveProperty("bb.month");
+    expect(
+      reference.sections.find((s: { type: string }) => s.type === "bbWaterfall")
+        .sources,
+    ).toEqual(["line"]);
+    const { value: created } = await call("create_document_template", {
+      name: "Cedar certificate",
+      source: "line",
+    });
+    expect(created).toMatchObject({
+      source: "line",
+      status: "draft",
+      draft: { source: "line" },
+      financialModel: null,
+    });
+    const { value: written } = await call("set_document_template", {
+      templateId: created.id,
+      title: "{{borrower.name}}: certificate, {{bb.month}}",
+      sections: [{ type: "facts" }, { type: "bbWaterfall" }],
+    });
+    expect(written.issues).toEqual([]);
+    const { value: moved } = await call("set_document_template", {
+      templateId: created.id,
+      source: "analysis",
+    });
+    // From an analysis, a line's section and merge fields don't fit.
+    expect(moved.issues).toEqual([
+      "error: The title: {{bb.month}} isn't a merge field.",
+      "error: Section 2 (Borrowing base): it prints from a margined line of credit, and this document prints from an analysis.",
+    ]);
+    await call("set_document_template", {
+      templateId: created.id,
+      source: "line",
+    });
+    await publishTemplate(db, ctx, created.id);
+    expect(
+      (await call("list_document_templates", { creditLineId: line })).value.map(
+        (t: { template: string }) => t.template,
+      ),
+    ).toEqual([created.id, "borrowing-base-certificate", "margin-history"]);
+    await deleteTemplate(db, ctx, created.id);
+  });
+
+  it.skipIf(!browserPath())(
+    "prints a line's borrowing base certificate for a month",
+    async () => {
+      const call = await connect();
+      const { line, borrowerId } = await marginedLine(call, "Cedar Printing");
+      const { value: latest } = await call("generate_document", {
+        creditLineId: line,
+        template: "borrowing-base-certificate",
+      });
+      expect(latest).toMatchObject({
+        title: "Cedar Printing: borrowing base certificate, December 2025",
+        month: "2025-12",
+        url: `http://localhost:3000/documents/${latest.id}/pdf`,
+      });
+      expect(latest.pages).toBeGreaterThan(0);
+      const { value: november } = await call("generate_document", {
+        creditLineId: line,
+        month: "2025-11",
+        template: "borrowing-base-certificate",
+      });
+      expect(november.month).toBe("2025-11");
+      const { value: listed } = await call("list_documents", {
+        creditLineId: line,
+      });
+      expect(listed).toMatchObject([
+        {
+          id: november.id,
+          document: "Borrowing base certificate",
+          creditLineId: line,
+          line: "Operating line",
+          month: "2025-11",
+        },
+        { id: latest.id, month: "2025-12" },
+      ]);
+      expect(listed[0]).not.toHaveProperty("scenario");
+      expect((await call("list_documents", { borrowerId })).value).toHaveLength(
+        2,
+      );
+      await closeBrowser();
+    },
+    60_000,
+  );
 
   it("acts within the caller's organization only", async () => {
     const call = await connect({ organizationId: randomUUID() });

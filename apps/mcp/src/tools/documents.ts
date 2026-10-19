@@ -1,5 +1,10 @@
 import type { Db } from "@finance/db";
-import { getAnalysis, getOrganization, type Context } from "@finance/domain";
+import {
+  getAnalysis,
+  getCreditLine,
+  getOrganization,
+  type Context,
+} from "@finance/domain";
 import {
   BUILT_IN_TEMPLATES,
   createTemplate,
@@ -9,6 +14,7 @@ import {
   listDocuments,
   listPrintableTemplates,
   listTemplates,
+  sourceOf,
   templateModel,
   updateTemplate,
   type Block,
@@ -20,11 +26,13 @@ import * as z from "zod";
 import { analysisId, borrowerId, scenarioId } from "../fields";
 import { ADD, CHANGE, invalid, READ, respond } from "../respond";
 
-// Documents for the credit file: PDFs printed from an analysis, from the
-// built-in documents or the organization's own, and kept as printed. The
-// client's AI asks for them; the app computes and prints every figure. It
-// can also write an organization's document as a draft, made of the app's
-// sections, for a person to review and publish in the app.
+// Documents for the credit file: PDFs printed from an analysis, or from a
+// margined line of credit in a month (its borrowing base certificate, its
+// margin history), from the built-in documents or the organization's own,
+// and kept as printed. The client's AI asks for them; the app computes and
+// prints every figure. It can also write an organization's document as a
+// draft, made of the app's sections, for a person to review and publish in
+// the app.
 
 const app = () =>
   (process.env.APP_URL || "http://localhost:3000").replace(/\/$/, "");
@@ -42,12 +50,31 @@ const outline = (blocks: Block[]) =>
     .filter((b) => b.type !== "pageBreak")
     .map((b) => (b.type === "heading" ? `heading: ${b.text}` : b.type));
 
-const definition = ({ title, orientation, language, blocks }: Definition) => ({
-  title,
-  orientation,
-  language: language ?? "en",
-  sections: blocks,
+const definition = (d: Definition) => ({
+  // What it prints from: an analysis, or a margined line and a month.
+  source: sourceOf(d),
+  title: d.title,
+  orientation: d.orientation,
+  language: d.language ?? "en",
+  sections: d.blocks,
 });
+
+const source = z
+  .enum(["analysis", "line"])
+  .optional()
+  .describe(
+    "What it prints from: analysis, or line, a margined line of credit in a month. Each section says which it fits (describe_document_sections).",
+  );
+
+const creditLineId = z
+  .string()
+  .describe(
+    "A margined line of credit's id, from get_borrower or list_borrowing_bases.",
+  );
+
+// A consolidated client reads its members' lines as "member/line"; a line's
+// documents are the member's line's own.
+const ownLine = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 
 // A document of the organization's as the AI edits it: its draft, what's
 // published, the draft's issues, and the model's lines and charts it can
@@ -60,6 +87,8 @@ async function detail(db: Db, ctx: Context, template: TemplateDetail) {
     id: template.id,
     name: template.name,
     description: template.description,
+    // What its draft prints from: an analysis, or a margined line.
+    source: template.source,
     status: template.status,
     unpublishedChanges: template.changed,
     financialModel: model && {
@@ -85,12 +114,32 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "List documents to print",
       description:
-        "With an analysisId, the documents that analysis can be printed as: the organization's own published ones that fit its financial model, then the built-ins it offers. Without, every document: the organization's, with their status, and the built-ins, with whether they're hidden.",
-      inputSchema: z.object({ analysisId: analysisId.optional() }),
+        "With an analysisId, the documents that analysis can be printed as: the organization's own published ones that fit its financial model, then the built-ins it offers. With a creditLineId, those a margined line prints as in a month, such as its borrowing base certificate and margin history. Without either, every document, each with what it prints from (analysis or line): the organization's, with their status, and the built-ins, with whether they're hidden.",
+      inputSchema: z.object({
+        analysisId: analysisId.optional(),
+        creditLineId: creditLineId.optional(),
+      }),
       annotations: READ,
     },
-    ({ analysisId }) =>
+    ({ analysisId, creditLineId }) =>
       respond(async () => {
+        if (analysisId && creditLineId)
+          throw invalid("Pass an analysisId or a creditLineId, not both.");
+        if (creditLineId) {
+          const line = await getCreditLine(db, ctx, ownLine(creditLineId));
+          if (!line.borrowingBase)
+            throw invalid(
+              `${line.name} isn't margined: only a margined line prints borrowing base documents.`,
+            );
+          return (await listPrintableTemplates(db, ctx, null, "line")).map(
+            (t) => ({
+              template: t.key,
+              name: t.name,
+              description: t.description,
+              builtIn: t.builtIn,
+            }),
+          );
+        }
         if (analysisId) {
           const { model } = await getAnalysis(db, ctx, analysisId);
           return (await listPrintableTemplates(db, ctx, model.id)).map((t) => ({
@@ -110,6 +159,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
             name: t.name,
             description: t.description,
             builtIn: false,
+            source: t.source,
             status: t.status,
             unpublishedChanges: t.changed,
             financialModel: t.financialModel?.name ?? null,
@@ -119,6 +169,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
             name: t.name,
             description: t.description,
             builtIn: true,
+            source: sourceOf(t),
             hidden: organization.hiddenBuiltIns.includes(t.key),
             sections: outline(t.blocks),
           })),
@@ -131,30 +182,56 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Print a document",
       description:
-        "Prints a PDF of an analysis, for the base case or a scenario, as one of the documents list_document_templates gives for it, and keeps it as printed for the credit file. Returns a link to it for the user. A deal summary needs a scenario with a project.",
+        "Prints a PDF and keeps it as printed for the credit file, as one of the documents list_document_templates gives: from an analysis (analysisId), for the base case or a scenario; or from a margined line of credit (creditLineId) in a month, such as its borrowing base certificate for the client to sign, or its margin history to that month. Returns a link to it for the user. A deal summary needs a scenario with a project. Each month's certificate is kept as printed; printing again makes a new one.",
       inputSchema: z.object({
-        analysisId,
+        analysisId: analysisId
+          .optional()
+          .describe("For a document printed from an analysis."),
         scenarioId: scenarioId
           .optional()
-          .describe("The scenario it shows; the base case when omitted."),
+          .describe(
+            "The scenario an analysis's document shows; the base case when omitted.",
+          ),
+        creditLineId: creditLineId
+          .optional()
+          .describe("For a document printed from a margined line of credit."),
+        month: z
+          .string()
+          .optional()
+          .describe(
+            'A line\'s month with a certificate, as YYYY-MM: "2025-11"; the latest when omitted.',
+          ),
         template: z
           .string()
           .describe(
-            "A built-in's key, e.g. \"deal-summary\", or an organization document's id, from list_document_templates.",
+            'A built-in\'s key, e.g. "deal-summary" or "borrowing-base-certificate", or an organization document\'s id, from list_document_templates.',
           ),
       }),
       annotations: ADD,
     },
-    ({ analysisId, scenarioId, template }) =>
+    ({ analysisId, scenarioId, creditLineId, month, template }) =>
       respond(async () => {
+        if (!analysisId === !creditLineId)
+          throw invalid(
+            "Pass an analysisId to print from an analysis, or a creditLineId (and a month) to print a margined line's documents.",
+          );
+        if (creditLineId && scenarioId)
+          throw invalid("A line's documents have no scenario.");
+        if (analysisId && month)
+          throw invalid(
+            "A month is for a line's documents; an analysis prints its periods.",
+          );
         const document = await generateDocument(db, ctx, {
-          analysisId,
+          analysisId: analysisId ?? null,
           scenarioId: scenarioId ?? null,
+          creditLineId: creditLineId ? ownLine(creditLineId) : null,
+          month: month ?? null,
           template,
         });
         return {
           id: document.id,
           title: document.title,
+          ...(document.month ? { month: document.month } : {}),
           pages: document.pages,
           url: pdfUrl(document.id),
         };
@@ -166,26 +243,35 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "List printed documents",
       description:
-        "The documents printed for an analysis or a borrower, newest first, each with a link to its PDF as printed.",
+        "The documents printed for an analysis, a line of credit or a borrower, newest first, each with a link to its PDF as printed: an analysis's with its scenario, a line's with its month.",
       inputSchema: z.object({
         analysisId: analysisId.optional(),
+        creditLineId: creditLineId.optional(),
         borrowerId: borrowerId.optional(),
       }),
       annotations: READ,
     },
-    ({ analysisId, borrowerId }) =>
+    ({ analysisId, creditLineId, borrowerId }) =>
       respond(async () => {
-        if (!analysisId === !borrowerId)
-          throw invalid("Pass an analysisId or a borrowerId.");
+        if ([analysisId, creditLineId, borrowerId].filter(Boolean).length !== 1)
+          throw invalid("Pass an analysisId, a creditLineId or a borrowerId.");
         return (
-          await listDocuments(db, ctx, { analysisId, entityId: borrowerId })
+          await listDocuments(db, ctx, {
+            analysisId,
+            creditLineId: creditLineId && ownLine(creditLineId),
+            entityId: borrowerId,
+          })
         ).map((d) => ({
           id: d.id,
           title: d.title,
           document: d.templateName,
-          analysisId: d.analysisId,
-          analysis: d.analysisName,
-          scenario: d.scenarioName ?? "Base case",
+          ...(d.creditLineId
+            ? { creditLineId: d.creditLineId, line: d.lineName, month: d.month }
+            : {
+                analysisId: d.analysisId,
+                analysis: d.analysisName,
+                scenario: d.scenarioName ?? "Base case",
+              }),
           pages: d.pages,
           printedAt: d.createdAt,
           url: pdfUrl(d.id),
@@ -198,7 +284,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Describe document sections",
       description:
-        "The sections an organization's document is made of, each with its settings; the conditions a section can show on (`when`); and the merge fields its title, headings and text take. Read it before writing a document's sections with set_document_template.",
+        "The sections an organization's document is made of, each with its settings and the sources it prints from (an analysis, or a margined line in a month); the conditions a section can show on (`when`, an analysis's only); and the merge fields its title, headings and text take: mergeFields for a document from an analysis, lineMergeFields for one from a line ({{bb.month}}, {{bb.BB_SURPLUS}}…). Read it before writing a document's sections with set_document_template.",
       inputSchema: z.object({}),
       annotations: READ,
     },
@@ -225,7 +311,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Create a document",
       description:
-        "Starts one of the organization's documents as a draft: blank, or a copy of a built-in or of one of its own. Give it a financial model to name that model's lines and charts; it then prints for analyses on that model. Analysts print it only once a person publishes it in the app: give the user the link to review it.",
+        "Starts one of the organization's documents as a draft: blank, or a copy of a built-in or of one of its own, which prints from what its original does. A document prints from an analysis (the default) or from a margined line of credit in a month (source line), such as a certificate in the organization's own layout. Give one from an analysis a financial model to name that model's lines and charts; it then prints for analyses on that model. Analysts print it only once a person publishes it in the app: give the user the link to review it.",
       inputSchema: z.object({
         name: z.string().describe('e.g. "Credit memo".'),
         description: z
@@ -244,6 +330,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
           .describe(
             "A built-in's key or a document's id to copy, from list_document_templates; blank when omitted.",
           ),
+        source,
       }),
       annotations: ADD,
     },
@@ -257,6 +344,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
             description: input.description,
             financialModelId: input.financialModelId,
             from: input.from,
+            source: input.source,
           }),
         ),
       ),
@@ -267,7 +355,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Write a document's draft",
       description:
-        "Changes one of the organization's documents: its name, description or model, and its draft's title, orientation, language or sections. Sections replace the whole list, in order; each is an object with a `type` and that section's settings from describe_document_sections, and optionally `when`. Returns the draft with its issues, which a person must clear before publishing it in the app. Figures belong in merge fields, never typed.",
+        "Changes one of the organization's documents: its name, description or model, and its draft's source (what it prints from), title, orientation, language or sections. Sections replace the whole list, in order; each is an object with a `type` and that section's settings from describe_document_sections, and optionally `when`. Returns the draft with its issues, which a person must clear before publishing it in the app. Figures belong in merge fields, never typed.",
       inputSchema: z.object({
         templateId,
         name: z.string().optional(),
@@ -279,6 +367,7 @@ export function documentTools(server: McpServer, db: Db, ctx: Context) {
           .describe(
             "The model it reads, or null for none. A published document stays on its model.",
           ),
+        source,
         title: z
           .string()
           .optional()
