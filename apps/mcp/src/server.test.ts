@@ -6,11 +6,13 @@ import {
   addPeriod,
   addScenario,
   createAnalysis,
+  createBorrowingBaseTemplate,
   createEntity,
   createFinancialModel,
   createScoringModel,
   hasErrors,
   parseItemTable,
+  publishBorrowingBaseTemplate,
   publishFinancialModelVersion,
   publishVersion,
   replaceItems,
@@ -306,6 +308,18 @@ describe("MCP server", () => {
       set_proposed_line: "changes",
       remove_proposed_line: "changes",
       use_lines_in_force: "changes",
+      list_borrowing_bases: "reads",
+      get_borrowing_base: "reads",
+      describe_borrowing_base_lines: "reads",
+      run_borrowing_base: "reads",
+      start_borrowing_base: "changes",
+      set_borrowing_base_definition: "changes",
+      set_borrowing_base_term: "changes",
+      set_borrowing_base_values: "changes",
+      set_borrowing_base_month: "changes",
+      preview_borrowing_base_paste: "reads",
+      import_borrowing_base_paste: "changes",
+      remove_borrowing_base_month: "changes",
     });
   });
 
@@ -1630,6 +1644,7 @@ describe("MCP server", () => {
         currency: "CAD",
         limit: "1,000,000",
         rate: "6%",
+        margined: false,
       },
     ]);
     expect(
@@ -1855,6 +1870,651 @@ describe("MCP server", () => {
     });
     expect(none.proposedLinesOfCredit).toBeNull();
     await call("remove_line_of_credit", { lineId: line });
+  });
+
+  it("margins a line of credit month by month on the client's figures", async () => {
+    const call = await connect();
+    const { value: borrower } = await call("create_borrower", {
+      name: "Northwind Supply",
+    });
+    // $3,000,000, raised to $4,000,000 from October to March; certificates
+    // are due 20 days after each month's end.
+    const { value: added } = await call("add_line_of_credit", {
+      borrowerId: borrower.id,
+      name: "Operating line",
+      limit: {
+        value: "3,000,000",
+        seasons: [{ months: "10-3", value: "4,000,000" }],
+      },
+      rate: "7%",
+      certificateDueDays: 20,
+    });
+    expect(added.line.certificateDueDays).toBe(20);
+    const line = added.line.id;
+
+    const { value: kinds } = await call("describe_borrowing_base_lines");
+    expect(kinds.builtIns.map((b: { id: string }) => b.id)).toEqual([
+      "receivables-inventory",
+      "receivables-currencies",
+      "construction",
+    ]);
+    expect(kinds.templates).toEqual([]);
+    expect(kinds.generated.totals).toContainEqual(
+      expect.objectContaining({ code: "BB_SURPLUS" }),
+    );
+    expect(kinds.functions).toContainEqual(
+      expect.objectContaining({ signature: "ROLLMIN(x, periods)" }),
+    );
+
+    // From a built-in, which names spread items this scoring model lacks.
+    const { value: started } = await call("start_borrowing_base", {
+      lineId: line,
+      builtIn: "receivables-inventory",
+    });
+    expect(started).toMatchObject({
+      line: "Operating line",
+      borrower: "Northwind Supply",
+      borrowingBase: { basedOn: "Receivables and inventory (built-in)" },
+      months: 0,
+    });
+    expect(started).not.toHaveProperty("replaced");
+    expect(started.borrowingBase.collateral[0]).toMatchObject({
+      code: "AR",
+      advanceRate: "75%",
+      aging: { ineligible: "91–120 days and over" },
+    });
+    expect(started.warnings).toContain(
+      `"AR_TRADE" isn't an item of Northwind Supply's spread, so it can't be compared with it.`,
+    );
+
+    // The client's own: CAD and USD receivables, capped inventory, and a
+    // minimum excess availability.
+    const { value: own } = await call("set_borrowing_base_definition", {
+      lineId: line,
+      definition: {
+        lines: [
+          {
+            kind: "collateral",
+            code: "AR",
+            label: "Receivables, CAD",
+            collateral: "receivables",
+            rate: "75%",
+          },
+          {
+            kind: "ineligible",
+            code: "AR_OVER_90",
+            label: "Over 90 days",
+            of: "AR",
+          },
+          {
+            kind: "collateral",
+            code: "AR_USD",
+            label: "Receivables, USD",
+            collateral: "receivables",
+            currency: "USD",
+            rate: "75%",
+          },
+          {
+            kind: "collateral",
+            code: "INV",
+            label: "Inventory",
+            collateral: "inventory",
+            rate: "50%",
+            cap: "1,000,000",
+          },
+          { kind: "prior_claim", code: "PRIORITY", label: "Source deductions" },
+          { kind: "usage", code: "LCS", label: "Letters of credit" },
+        ],
+        tests: [
+          {
+            name: "Minimum excess availability",
+            metric: "BB_EXCESS",
+            test: "min",
+            threshold: "250,000",
+          },
+        ],
+      },
+    });
+    expect(own.warnings).toEqual([]);
+    expect(own.borrowingBase).toEqual({
+      collateral: [
+        {
+          code: "AR",
+          label: "Receivables, CAD",
+          type: "Receivables",
+          advanceRate: "75%",
+        },
+        {
+          code: "AR_USD",
+          label: "Receivables, USD",
+          type: "Receivables",
+          currency: "USD",
+          advanceRate: "75%",
+        },
+        {
+          code: "INV",
+          label: "Inventory",
+          type: "Inventory",
+          advanceRate: "50%",
+          cap: "1,000,000",
+        },
+      ],
+      ineligibles: [{ code: "AR_OVER_90", label: "Over 90 days", of: "AR" }],
+      priorClaims: [{ code: "PRIORITY", label: "Source deductions" }],
+      usage: [{ code: "LCS", label: "Letters of credit" }],
+      tests: [
+        {
+          name: "Minimum excess availability",
+          line: "BB_EXCESS",
+          test: "at least",
+          threshold: "250,000",
+        },
+      ],
+    });
+    expect(own.entered).toContainEqual({
+      code: "AR_USD",
+      label: "Receivables, USD",
+      currency: "USD",
+    });
+    expect(own.entered.map((e: { code: string }) => e.code)).toEqual([
+      "AR",
+      "AR_OVER_90",
+      "AR_USD",
+      "INV",
+      "PRIORITY",
+      "BB_OUTSTANDING",
+      "LCS",
+      "FX.USD",
+    ]);
+
+    // A definition with errors isn't saved; they come back to fix.
+    expect(
+      await call("set_borrowing_base_definition", {
+        lineId: line,
+        definition: {
+          lines: [
+            {
+              kind: "collateral",
+              code: "BB_AR",
+              label: "Receivables",
+              rate: "75%",
+            },
+            { kind: "ineligible", code: "OLD", label: "Old", of: "NOPE" },
+          ],
+        },
+      }),
+    ).toEqual({
+      error:
+        "Receivables: codes starting with BB_, and FX, are the app's.\n- Old: say which collateral line it reduces, by its code.",
+    });
+    expect(
+      (
+        await call("set_borrowing_base_definition", {
+          lineId: line,
+          definition: {
+            lines: [
+              { kind: "collateral", code: "AR", label: "AR", rate: "175%" },
+            ],
+          },
+        })
+      ).error,
+    ).toBe("AR, advance rate: the rate must be between 0% and 100%.");
+
+    // Two months of certificates, US dollars at each month's rate.
+    const { value: entered } = await call("set_borrowing_base_values", {
+      lineId: line,
+      months: {
+        "2025-11": {
+          AR: "2,000,000",
+          AR_OVER_90: "200,000",
+          AR_USD: "600,000",
+          "FX.USD": "1.37",
+          INV: "2,400,000",
+          PRIORITY: "285,000",
+          BB_OUTSTANDING: "2,500,000",
+          LCS: "100,000",
+        },
+        "2025-12": {
+          AR: "1,800,000",
+          AR_OVER_90: "100,000",
+          AR_USD: 500000,
+          "fx.usd": "1.36",
+          INV: "2,000,000",
+          PRIORITY: "250,000",
+          BB_OUTSTANDING: "2,900,000",
+          LCS: "100,000",
+        },
+      },
+    });
+    expect(entered.months).toMatchObject([
+      {
+        month: "2025-11",
+        quality: "reported",
+        borrowingBase: "2,681,500",
+        usage: "2,600,000",
+        surplus: "81,500",
+        issues: [],
+      },
+      {
+        month: "2025-12",
+        figures: { AR_USD: "500,000", "FX.USD": "1.36" },
+        borrowingBase: "2,535,000",
+        usage: "3,000,000",
+        surplus: "-465,000",
+        issues: [],
+      },
+    ]);
+    // Without its rate, a month's USD can't be converted.
+    const { value: noRate } = await call("set_borrowing_base_values", {
+      lineId: line,
+      months: { "2025-12": { "FX.USD": null } },
+    });
+    expect(noRate.months).toMatchObject([
+      {
+        figures: { "FX.USD": null },
+        issues: [
+          "error: No USD rate for 2025-12: its USD figures can't be converted, so its borrowing base can't be relied on.",
+        ],
+      },
+    ]);
+    await call("set_borrowing_base_values", {
+      lineId: line,
+      months: { "2025-12": { "FX.USD": "1.36" } },
+    });
+
+    const { value: run } = await call("run_borrowing_base", { lineId: line });
+    expect(run.months).toEqual([
+      { month: "2025-11", quality: "reported" },
+      { month: "2025-12", quality: "reported" },
+    ]);
+    const row = (code: string) =>
+      run.rows.find((r: { code: string }) => r.code === code);
+    expect(row("AR_USD")).toEqual({
+      code: "AR_USD",
+      label: "Receivables, USD",
+      currency: "USD",
+      values: ["600,000", "500,000"],
+    });
+    expect(row("FX.USD").values).toEqual(["1.37", "1.36"]);
+    expect(row("AR_USD.MARGINED").values).toEqual(["616,500", "510,000"]);
+    // Capped at 1,000,000.
+    expect(row("INV.MARGINED").values).toEqual(["1,000,000", "1,000,000"]);
+    expect(row("BB_TOTAL").values).toEqual(["2,681,500", "2,535,000"]);
+    expect(row("BB_LIMIT").values).toEqual(["4,000,000", "4,000,000"]);
+    expect(row("BB_SURPLUS").values).toEqual(["81,500", "-465,000"]);
+    expect(row("BB_UTILIZATION").values).toEqual(["65.0%", "75.0%"]);
+    // Details only when asked for.
+    expect(row("AR.ELIGIBLE")).toBeUndefined();
+    expect(run.tests).toEqual([
+      {
+        name: "Usage within the borrowing base",
+        line: "BB_SURPLUS",
+        test: "at least",
+        builtIn: true,
+        failedMonths: ["2025-12"],
+        months: [
+          {
+            threshold: "0",
+            actual: "81,500",
+            margin: "81,500",
+            result: "Pass",
+          },
+          {
+            threshold: "0",
+            actual: "-465,000",
+            margin: "-465,000",
+            result: "Fail",
+          },
+        ],
+      },
+      {
+        name: "Usage within the limit",
+        line: "BB_USAGE",
+        test: "at most",
+        builtIn: true,
+        failedMonths: [],
+        months: [
+          {
+            threshold: "4,000,000",
+            actual: "2,600,000",
+            margin: "1,400,000",
+            result: "Pass",
+          },
+          {
+            threshold: "4,000,000",
+            actual: "3,000,000",
+            margin: "1,000,000",
+            result: "Pass",
+          },
+        ],
+      },
+      {
+        name: "Minimum excess availability",
+        line: "BB_EXCESS",
+        test: "at least",
+        failedMonths: ["2025-11", "2025-12"],
+        months: [
+          {
+            threshold: "250,000",
+            actual: "81,500",
+            margin: "-168,500",
+            result: "Fail",
+          },
+          {
+            threshold: "250,000",
+            actual: "-465,000",
+            margin: "-715,000",
+            result: "Fail",
+          },
+        ],
+      },
+    ]);
+    expect(run.cycle.last12).toMatchObject({
+      months: 2,
+      peakUsage: { value: "3,000,000", month: "2025-12" },
+      lowestSurplus: { value: "-465,000", month: "2025-12" },
+      deficitMonths: 1,
+      highestUtilization: { value: "75.0%", month: "2025-12" },
+    });
+    expect(run.cycle.seasonal.map((m: { month: string }) => m.month)).toEqual([
+      "November",
+      "December",
+    ]);
+    expect(run.issues[0]).toMatch(/^warning: Certificates overdue for 2026-01/);
+
+    // An amendment from December: November keeps 75%.
+    const { value: amended } = await call("set_borrowing_base_term", {
+      lineId: line,
+      code: "ar",
+      term: "rate",
+      value: "70%",
+      from: "2025-12",
+    });
+    expect(amended).toEqual({
+      line: "Operating line",
+      code: "AR",
+      label: "Receivables, CAD",
+      term: "advance rate",
+      value: "75%; from December 2025, 70%",
+      warnings: [],
+    });
+    const { value: rerun } = await call("run_borrowing_base", {
+      lineId: line,
+      lines: ["AR.RATE", "AR.MARGINED", "BB_TOTAL"],
+    });
+    expect(rerun.rows).toEqual([
+      { code: "AR.RATE", label: "Advance rate", values: ["75.0%", "70.0%"] },
+      {
+        code: "AR.MARGINED",
+        label: "Receivables, CAD, margined",
+        values: ["1,350,000", "1,190,000"],
+      },
+      {
+        code: "BB_TOTAL",
+        label: "Borrowing base",
+        values: ["2,681,500", "2,450,000"],
+      },
+    ]);
+
+    const { value: verified } = await call("set_borrowing_base_month", {
+      lineId: line,
+      month: "2025-11",
+      quality: "verified",
+      receivedOn: "2025-12-15",
+      note: "Field exam",
+    });
+    expect(verified).toEqual({
+      month: "2025-11",
+      quality: "verified",
+      receivedOn: "2025-12-15",
+      note: "Field exam",
+      figures: 8,
+    });
+
+    // January's certificate, pasted: previewed, then imported.
+    const text = [
+      "\tJan-26",
+      "Receivables, CAD\t1,900,000",
+      "Over 90 days\t150,000",
+      "Receivables, USD\t400,000",
+      "FX.USD\t1.35",
+      "Inventory\t2,100,000",
+      "Line outstanding\t2,700,000",
+      "Order backlog\t5",
+    ].join("\n");
+    const { value: preview } = await call("preview_borrowing_base_paste", {
+      lineId: line,
+      text,
+    });
+    expect(preview).toMatchObject({
+      canImport: true,
+      confirmation: expect.stringMatching(/^[0-9a-f]{12}$/),
+      figures: 6,
+      unmatchedRows: [{ row: 8, label: "Order backlog" }],
+      columns: [
+        {
+          column: 1,
+          header: "Jan-26",
+          month: "2026-01",
+          guessed: false,
+          alreadyHeld: false,
+          borrowingBase: "2,630,000",
+          usage: "2,700,000",
+          surplus: "-70,000",
+          checks: [],
+        },
+      ],
+    });
+    expect(preview.matchedRows.map((r: { code: string }) => r.code)).toEqual([
+      "AR",
+      "AR_OVER_90",
+      "AR_USD",
+      "FX.USD",
+      "INV",
+      "BB_OUTSTANDING",
+    ]);
+    expect(
+      await call("import_borrowing_base_paste", {
+        lineId: line,
+        text: text.replace("2,700,000", "2,000,000"),
+        confirmation: preview.confirmation,
+      }),
+    ).toEqual({
+      error:
+        "This isn't the text that was previewed. Preview it again, show the user, then import with the new confirmation.",
+    });
+    const { value: imported } = await call("import_borrowing_base_paste", {
+      lineId: line,
+      text,
+      confirmation: preview.confirmation,
+    });
+    expect(imported).toMatchObject({
+      figures: 6,
+      line: "Operating line",
+      months: [
+        {
+          month: "2026-01",
+          quality: "reported",
+          borrowingBase: "2,630,000",
+          usage: "2,700,000",
+          surplus: "-70,000",
+          issues: [],
+        },
+      ],
+    });
+
+    const { value: detail } = await call("get_borrowing_base", {
+      lineId: line,
+      asTyped: true,
+    });
+    expect(detail).toMatchObject({
+      line: "Operating line",
+      borrower: "Northwind Supply",
+      limit: "3,000,000 (4,000,000 October to March)",
+      certificateDueDays: 20,
+      months: [
+        {
+          month: "2025-11",
+          quality: "verified",
+          receivedOn: "2025-12-15",
+          note: "Field exam",
+          figures: 8,
+        },
+        { month: "2025-12", quality: "reported", receivedOn: null, figures: 8 },
+        { month: "2026-01", quality: "reported", figures: 6 },
+      ],
+    });
+    expect(detail.borrowingBase.collateral[0].advanceRate).toBe(
+      "75%; from December 2025, 70%",
+    );
+    expect(detail.definition.lines[0]).toEqual({
+      kind: "collateral",
+      code: "AR",
+      label: "Receivables, CAD",
+      collateral: "receivables",
+      rate: { value: "75%", steps: [{ from: "2025-12", value: "70%" }] },
+    });
+    // Sent back whole, it's the same definition.
+    const { value: resent } = await call("set_borrowing_base_definition", {
+      lineId: line,
+      definition: detail.definition,
+    });
+    expect(resent.borrowingBase).toEqual(detail.borrowingBase);
+
+    expect(
+      await call("remove_borrowing_base_month", {
+        lineId: line,
+        month: "2026-01",
+      }),
+    ).toEqual({
+      value: {
+        removed: "2026-01",
+        line: "Operating line",
+        months: ["2025-11", "2025-12"],
+      },
+    });
+    expect(
+      await call("remove_borrowing_base_month", {
+        lineId: line,
+        month: "2026-01",
+      }),
+    ).toEqual({
+      error: "Operating line has no month 2026-01; it has 2025-11, 2025-12.",
+    });
+
+    // Monitoring: the latest month, deficits and overdue certificates.
+    const { value: listed } = await call("list_borrowing_bases", {
+      search: "northwind",
+    });
+    expect(listed).toMatchObject([
+      {
+        lineId: line,
+        line: "Operating line",
+        borrower: "Northwind Supply",
+        currency: "CAD",
+        months: 2,
+        latest: {
+          month: "2025-12",
+          quality: "reported",
+          borrowingBase: "2,450,000",
+          limit: "4,000,000",
+          usage: "3,000,000",
+          surplus: "-550,000",
+          utilization: "75.0%",
+        },
+        deficitMonthsLast12: 1,
+      },
+    ]);
+    expect(listed[0].overdue[0]).toBe("2026-01");
+    const { value: northwind } = await call("get_borrower", {
+      borrowerId: borrower.id,
+    });
+    expect(northwind.linesOfCredit).toMatchObject([
+      {
+        id: line,
+        margined: true,
+        borrowingBase: { latest: { month: "2025-12", surplus: "-550,000" } },
+      },
+    ]);
+
+    // No longer margined, the months wait; margined again, they're there.
+    expect(
+      await call("set_borrowing_base_definition", {
+        lineId: line,
+        definition: null,
+      }),
+    ).toEqual({
+      value: {
+        line: "Operating line",
+        margined: false,
+        note: "Its months are kept, in case it's margined again.",
+      },
+    });
+    expect(await call("run_borrowing_base", { lineId: line })).toEqual({
+      error: "Operating line isn't margined: set up its borrowing base first.",
+    });
+    const { value: again } = await call("start_borrowing_base", {
+      lineId: line,
+      builtIn: "receivables-currencies",
+    });
+    expect(again).toMatchObject({ months: 2 });
+    expect(again).not.toHaveProperty("replaced");
+    expect(
+      await call("start_borrowing_base", { lineId: line, fromLineId: line }),
+    ).toEqual({ error: "That's the same line: copy another line's." });
+    expect(
+      (
+        await call("start_borrowing_base", {
+          lineId: line,
+          builtIn: "construction",
+        })
+      ).value.replaced,
+    ).toBe(true);
+
+    // From the organization's template, once it's published.
+    const template = await createBorrowingBaseTemplate(db, ctx, {
+      name: "Distributors",
+      from: "receivables-inventory",
+    });
+    expect(
+      await call("start_borrowing_base", {
+        lineId: line,
+        templateId: template.id,
+      }),
+    ).toEqual({
+      error:
+        "Distributors isn't published yet: publish it before lines start from it.",
+    });
+    await publishBorrowingBaseTemplate(db, ctx, template.id);
+    const { value: offered } = await call("describe_borrowing_base_lines");
+    expect(offered.templates).toEqual([
+      {
+        id: template.id,
+        name: "Distributors",
+        description: expect.stringMatching(/^Trade receivables aged/),
+      },
+    ]);
+    const { value: fromTemplate } = await call("start_borrowing_base", {
+      lineId: line,
+      templateId: template.id,
+    });
+    expect(fromTemplate).toMatchObject({
+      replaced: true,
+      borrowingBase: {
+        basedOn: "Distributors (the organization's template)",
+      },
+      months: 2,
+    });
+    expect(
+      await call("start_borrowing_base", {
+        lineId: line,
+        builtIn: "construction",
+        templateId: template.id,
+      }),
+    ).toEqual({
+      error:
+        "Pass one of builtIn, templateId or fromLineId: describe_borrowing_base_lines lists the built-ins and templates.",
+    });
   });
 
   it("acts within the caller's organization only", async () => {

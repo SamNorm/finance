@@ -6,6 +6,7 @@ import {
   getScoringModel,
   getSpread,
   listAnalyses,
+  listBorrowingBases,
   listEntities,
   type Context,
 } from "@finance/domain";
@@ -14,6 +15,7 @@ import * as z from "zod";
 import { borrowerId } from "../fields";
 import { figure } from "../format";
 import { describeDebtSchedule } from "../loans";
+import { describeLatest } from "./borrowing-bases";
 import { describeCovenants } from "./covenants";
 import { describeCreditLines } from "./credit-lines";
 import { describeControls } from "./spreads";
@@ -57,22 +59,26 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Get a borrower",
       description:
-        "A borrower's profile, its spread periods, its existing loans (the debt schedule, with each loan's payment and maturity), its lines of credit (each limit in words, and as a term when it changes by season or step, and the rate), its covenants in force and its analyses. For a consolidated client, its members and their loans, each member's debt schedule as of its own date, and their lines of credit, keyed \"member/line\" as its analyses read them: change those on the members.",
+        "A borrower's profile, its spread periods, its existing loans (the debt schedule, with each loan's payment and maturity), its lines of credit (each limit in words, and as a term when it changes by season or step, the rate, and whether it's margined, with its borrowing base's latest month when it is), its covenants in force and its analyses. For a consolidated client, its members and their loans, each member's debt schedule as of its own date, and their lines of credit, keyed \"member/line\" as its analyses read them: change those on the members.",
       inputSchema: z.object({ borrowerId }),
       annotations: READ,
     },
     ({ borrowerId }) =>
       respond(async () => {
         const entity = await getEntity(db, ctx, borrowerId);
-        const [spread, scoringModel, analyses, debt, lines] = await Promise.all(
-          [
+        const [spread, scoringModel, analyses, debt, lines, margined] =
+          await Promise.all([
             getSpread(db, ctx, entity.id),
             getScoringModel(db, ctx, entity.scoringModelId),
             listAnalyses(db, ctx, { entityId: entity.id }),
             getDebtSchedules(db, ctx, entity.id),
             getCreditLines(db, ctx, entity.id),
-          ],
-        );
+            listBorrowingBases(db, ctx),
+          ]);
+        // A consolidated client's lines are keyed "member/line".
+        const bases = new Map(margined.map((b) => [b.lineId, b]));
+        const baseOf = (id: string) =>
+          bases.get(id.slice(id.lastIndexOf("/") + 1));
         const { consolidation } = spread;
         return {
           id: entity.id,
@@ -104,8 +110,16 @@ export function borrowerTools(server: McpServer, db: Db, ctx: Context) {
                 ...describeDebtSchedule(schedule),
               }))
             : describeDebtSchedule(entity.debtSchedule),
-          // Their terms in force; analyses assume their usage.
-          linesOfCredit: describeCreditLines(lines),
+          // Their terms in force; analyses assume their usage. A margined
+          // line's latest month, as list_borrowing_bases has it.
+          linesOfCredit: describeCreditLines(lines).map((line) => {
+            const base = baseOf(line.id);
+            return {
+              ...line,
+              margined: Boolean(base),
+              ...(base ? { borrowingBase: describeLatest(base) } : {}),
+            };
+          }),
           // The credit agreement's covenants in force, which every analysis
           // tests.
           covenants: describeCovenants(entity.covenants),

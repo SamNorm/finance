@@ -32,6 +32,14 @@ const upToCents = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 2 });
 export const amount = (value: Amount | string) =>
   upToCents.format(Number(new Dec(value).toFixed(2)));
 
+// An exchange rate as entered, to its last decimal: "1.37", "1.3725".
+const fx = new Intl.NumberFormat("en-CA", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+});
+export const exchangeRate = (value: string | null) =>
+  value === null ? null : fx.format(Number(value));
+
 // An annual rate stored as a fraction: "0.065" → "6.5%".
 export const rate = (value: string) =>
   `${new Dec(value).times(100).toDecimalPlaces(3).toString()}%`;

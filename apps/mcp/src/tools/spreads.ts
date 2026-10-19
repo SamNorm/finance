@@ -87,10 +87,11 @@ export const describeControls = (p: StatementPeriod) => ({
 });
 
 // The paste a preview read, so an import can be held to it: the text as
-// the model sent it, less line endings and trailing spaces.
-const fingerprint = (borrowerId: string, text: string) =>
+// the model sent it, less line endings and trailing spaces, for what it's
+// pasted into (a borrower, a line of credit).
+export const fingerprint = (id: string, text: string) =>
   createHash("sha256")
-    .update(borrowerId)
+    .update(id)
     .update("\n")
     .update(
       text

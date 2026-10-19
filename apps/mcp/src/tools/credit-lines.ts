@@ -14,6 +14,7 @@ import {
   updateCreditLine,
   updateScenario,
   type Context,
+  type CreditLine,
   type LineTerms,
   type LineUsage,
   type OwnedLine,
@@ -34,7 +35,7 @@ import { ADD, CHANGE, invalid, respond } from "../respond";
 // drawn instead; a scenario can override that usage and propose the deal's
 // lines, as it proposes covenants.
 
-const MONTHS = [
+export const MONTHS = [
   "January",
   "February",
   "March",
@@ -70,47 +71,55 @@ function monthsInWords(months: readonly number[]): string {
   return `${sorted.slice(0, -1).join(", ")} and ${sorted.at(-1)}`;
 }
 
-const seasonsInWords = (seasons: Term["seasons"]) =>
-  seasons?.length
-    ? ` (${seasons.map((s) => `${showAmount(s.value)} ${monthsInWords(s.months)}`).join(", ")})`
-    : "";
-
 // "2026-06" → "June 2026".
 const monthInWords = (month: string) =>
   `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
 
-// A limit in words: "2,000,000 (2,500,000 October to March); from June
-// 2026, 3,000,000".
-export function limitInWords(term: Term): string {
+// A term in words, each value shown by `show`: a limit reads "2,000,000
+// (2,500,000 October to March); from June 2026, 3,000,000", an advance rate
+// "75%; from June 2026, 70%".
+export function termInWords(
+  term: Term,
+  show: (value: string) => string = showAmount,
+): string {
+  const seasons = (list: Term["seasons"]) =>
+    list?.length
+      ? ` (${list.map((s) => `${show(s.value)} ${monthsInWords(s.months)}`).join(", ")})`
+      : "";
   return [
-    `${showAmount(term.value)}${seasonsInWords(term.seasons)}`,
+    `${show(term.value)}${seasons(term.seasons)}`,
     ...(term.steps ?? []).map(
       (s) =>
-        `from ${monthInWords(s.from)}, ${showAmount(s.value)}${seasonsInWords(s.seasons)}`,
+        `from ${monthInWords(s.from)}, ${show(s.value)}${seasons(s.seasons)}`,
     ),
   ].join("; ");
 }
 
-// A term as the tools take it, so a limit can be sent back with a step or a
-// season changed.
-function termAsTyped(term: Term) {
+export const limitInWords = (term: Term) => termInWords(term);
+
+// A term as the tools take it, so it can be sent back with a step or a
+// season changed; each value typed by `show`.
+export function termAsTyped(
+  term: Term,
+  show: (value: string) => string = showAmount,
+) {
   const seasons = (list: Term["seasons"]) =>
     list?.length
       ? {
           seasons: list.map((s) => ({
             months: s.months,
-            value: showAmount(s.value),
+            value: show(s.value),
           })),
         }
       : {};
   return {
-    value: showAmount(term.value),
+    value: show(term.value),
     ...seasons(term.seasons),
     ...(term.steps?.length
       ? {
           steps: term.steps.map((s) => ({
             from: s.from,
-            value: showAmount(s.value),
+            value: show(s.value),
             ...seasons(s.seasons),
           })),
         }
@@ -120,7 +129,7 @@ function termAsTyped(term: Term) {
 
 // A fraction kept by the app, typed back exactly with its percent sign: a
 // share of 100% kept as "1" would otherwise read as 1%.
-const typedPercent = (fraction: string) =>
+export const typedPercent = (fraction: string) =>
   `${new Dec(fraction).times(100).toFixed()}%`;
 
 // A line's terms: its limit in words, and as the tools take it when it
@@ -273,6 +282,14 @@ const fields = {
   closedOn: date(
     "The day it was closed: analyses count it up to that month, and no longer after",
   ),
+  certificateDueDays: z
+    .number()
+    .int()
+    .min(0)
+    .max(120)
+    .describe(
+      "For a margined line: days after each month's end the client's borrowing base certificate is due, e.g. 20. A month past due with no figures is flagged as overdue.",
+    ),
 };
 
 // A consolidated client's lines are its members', keyed "member/line".
@@ -285,17 +302,27 @@ function ownLine(id: string) {
 }
 
 export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
-  // The borrower's lines after an edit, and the line it was about.
-  const after = async (entityId: string, id?: string) => {
+  // The borrower's lines after an edit, and the line it was about, with
+  // when its certificates are due.
+  const after = async (entityId: string, edited?: CreditLine) => {
     const [entity, lines] = await Promise.all([
       getEntity(db, ctx, entityId),
       getCreditLines(db, ctx, entityId),
     ]);
     const described = describeCreditLines(lines);
-    const line = id && described.find((l) => l.id === id);
+    const line = edited && described.find((l) => l.id === edited.id);
     return {
       borrower: entity.name,
-      ...(line ? { line } : {}),
+      ...(line
+        ? {
+            line: {
+              ...line,
+              ...(edited.certificateDueDays !== null
+                ? { certificateDueDays: edited.certificateDueDays }
+                : {}),
+            },
+          }
+        : {}),
       linesOfCredit: described,
     };
   };
@@ -332,13 +359,14 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
         limit,
         rate: fields.rate,
         closedOn: fields.closedOn.optional(),
+        certificateDueDays: fields.certificateDueDays.optional(),
       }),
       annotations: ADD,
     },
     ({ borrowerId, ...input }) =>
       respond(async () => {
         const line = await addCreditLine(db, ctx, borrowerId, input);
-        return after(line.entityId, line.id);
+        return after(line.entityId, line);
       }),
   );
 
@@ -347,7 +375,7 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
     {
       title: "Change a line of credit",
       description:
-        "Changes some of the terms in force of one of the borrower's lines of credit; the others stay. A limit given replaces the whole limit, its seasons and steps with it: for an amendment from a month, send the limit as it is (limitTerm from get_borrower, or its amount) with a step added. closedOn closes the line on that day, and analyses no longer count it after that month; null reopens it. What a deal would change goes in its scenario instead (set_proposed_line).",
+        "Changes some of the terms in force of one of the borrower's lines of credit; the others stay. A limit given replaces the whole limit, its seasons and steps with it: for an amendment from a month, send the limit as it is (limitTerm from get_borrower, or its amount) with a step added. closedOn closes the line on that day, and analyses no longer count it after that month; null reopens it. certificateDueDays says when a margined line's certificates are due; null for no due date. What a deal would change goes in its scenario instead (set_proposed_line); a borrowing base's own terms change with set_borrowing_base_term.",
       inputSchema: z.object({
         lineId,
         name: fields.name.optional(),
@@ -355,6 +383,7 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
         limit: limit.optional(),
         rate: fields.rate.optional(),
         closedOn: fields.closedOn.nullable().optional(),
+        certificateDueDays: fields.certificateDueDays.nullable().optional(),
       }),
       annotations: CHANGE,
     },
@@ -363,7 +392,7 @@ export function creditLineTools(server: McpServer, db: Db, ctx: Context) {
         if (Object.values(patch).every((v) => v === undefined))
           throw invalid("Give at least one field to change.");
         const line = await updateCreditLine(db, ctx, ownLine(lineId), patch);
-        return after(line.entityId, line.id);
+        return after(line.entityId, line);
       }),
   );
 
