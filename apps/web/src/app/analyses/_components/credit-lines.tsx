@@ -184,8 +184,8 @@ function ExchangeRateFields({
         <p className="text-sm font-medium">Exchange rates</p>
         <p className="text-xs text-muted">
           Lines in another currency count in {currency} at{" "}
-          {inherited ? "the scenario's rate, or else the analysis's" : "these"}
-          : their interest, limit and average usage. Their usage below stays in
+          {inherited ? "the scenario's rate, or else the analysis's" : "these"}:
+          their interest, limit and average usage. Their usage below stays in
           their own currency.
         </p>
       </div>

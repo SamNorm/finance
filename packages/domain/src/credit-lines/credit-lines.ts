@@ -593,7 +593,8 @@ export function linesWithoutRate(
   rates: ExchangeRates,
 ): LineTerms[] {
   return lines.filter(
-    (l) => !l.closed && l.currency !== currency && rates[l.currency] === undefined,
+    (l) =>
+      !l.closed && l.currency !== currency && rates[l.currency] === undefined,
   );
 }
 

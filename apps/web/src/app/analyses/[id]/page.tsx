@@ -620,8 +620,8 @@ function LinesNotCounted({
           ))}
         </ul>
         <p className="text-muted">
-          Assume an average usage, or give the exchange rate, under
-          Assumptions &amp; project, Lines of credit.
+          Assume an average usage, or give the exchange rate, under Assumptions
+          &amp; project, Lines of credit.
         </p>
       </div>
     </div>
